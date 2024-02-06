@@ -1,0 +1,24 @@
+set(ODINDATA_DPDK_LIBRARY "OdinDataDpdk")
+file(GLOB DPDK_LIB_SOURCES *.cpp)
+
+include_directories(
+  ${ODINDATA_ROOT_DIR}/include
+  ${ODINDATA_ROOT_DIR}/include/frameProcessor
+  ${LIBDPDK_INCLUDE_DIRS}
+)
+
+add_library(${ODINDATA_DPDK_LIBRARY} SHARED ${DPDK_LIB_SOURCES})
+
+target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${LIBDPDK_CFLAGS})
+target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${LIBDPDK_LIBRARY_DIRS})
+target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
+    rte_eal rte_kvargs rte_telemetry ${LIBDPDK_LDFLAGS}
+)
+
+get_target_property(PLUGIN_INSTALL_RPATH ${ODINDATA_DPDK_LIBRARY} INSTALL_RPATH)
+
+set_target_properties(${ODINDATA_DPDK_LIBRARY} PROPERTIES
+  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${LIBDPDK_LIBRARY_DIRS}"
+)
+
+install(TARGETS ${ODINDATA_DPDK_LIBRARY} DESTINATION lib)
