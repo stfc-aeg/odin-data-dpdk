@@ -3,6 +3,7 @@
 #include "PacketRxCore.h"
 #include "DpdkUtils.h"
 
+
 namespace FrameProcessor
 {
     PacketRxCore::PacketRxCore(
@@ -12,7 +13,11 @@ namespace FrameProcessor
         port_id_(dpdkWorkCoreReferences.port_id),
         proc_idx_(proc_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
-        logger_(Logger::getLogger("FP.PacketRxCore"))
+        logger_(Logger::getLogger("FP.PacketRxCore")),
+        first_frame_number_(-1),
+        rx_enable_(true),
+        rx_frames_(100000),
+        first_seen_frame_number_(-1)
     {
 
         // Resolve configuration parameters for this core from the config object passed as an
@@ -137,6 +142,8 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_ << " starting up");
 
+        
+
         struct rte_mbuf *pkt_bufs[config_.rx_burst_size_];
         struct rte_mbuf *pkt;
         struct rte_mbuf *release_pkt[config_.rx_burst_size_];
@@ -216,18 +223,7 @@ namespace FrameProcessor
                                 );
 
                                 packet_counter_++;
-                                
-                                if(unlikely(packet_counter_ == 1))
-                                {
-                                    first = rte_get_tsc_cycles();
-                                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " First packet: " <<  first );
-                                }                             //15000000
-                                if (unlikely(packet_counter_ == 15000000))
-                                {
-                                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Time to recieve data: " << (float) (rte_get_tsc_cycles() - first) / (float) ticks_per_sec );
-                                }
-
-                                
+                                                                
                                 break;
 
                             default:
@@ -432,8 +428,11 @@ namespace FrameProcessor
     {
         bool pkt_forwarded = false;
 
+
         // Get the destination port from the UDP packet
         uint16_t dst_port = rte_bswap16((*pkt_udp_hdr)->dst_port);
+
+        uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
 
         LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
             << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
@@ -452,16 +451,60 @@ namespace FrameProcessor
             // number
             PacketHeader* pkt_header =
                 (PacketHeader *)((uint8_t *)*pkt_udp_hdr + sizeof(struct rte_udp_hdr));
-            uint64_t frame_number = decoder_->get_frame_number(pkt_header);
+
+
+            // check to see if rx_enable is true and if the packet should be discarded or
+            // forwarded
+            if(unlikely(rx_enable_ == false))
+            {
+                return pkt_forwarded;
+            }
+            
+            // This statement allows the code to reset the "starting" frame number in code
+            // When first_frame_number_ is set to -1 the next first packet of a frame will be use
+            // to create a variable to offset the frame number by, allow for frames to be
+            // distributed as it the first frame has a frame number of 0
+
+            if(unlikely(first_frame_number_ == -1))
+            {
+                uint64_t packet_number = decoder_->get_packet_number(pkt_header);
+                uint64_t frame_number = decoder_->get_frame_number(pkt_header);
+
+                // Check if this is the first packet of a frame or the first seen packet of a new frame
+
+                if (packet_number == 0 || frame_number > first_seen_frame_number_)
+                {
+                    first_frame_number_ = decoder_->get_frame_number(pkt_header);
+                    LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
+                }
+                else
+                {
+                    first_seen_frame_number_ = frame_number;
+                    // If the packet recieved is not the start of the frame, then it is sent
+                    // back  to the main fast loop to be discarded
+                    return pkt_forwarded;
+                }
+            }
+
+            uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
+
+            // Check to see if the packet recieved is within the current aquisition
+            // if not then return this function and discard the packet
+
+            if(rx_frames_ != 0 && current_frame_number >= rx_frames_)
+            {
+                return pkt_forwarded;
+            }
+
 
             LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-                << " protocol header: frame: " << frame_number
+                << " protocol header: frame: " << current_frame_number
                 << " packet: " << decoder_->get_packet_number(pkt_header)
             );
 
             // Queue the packet on the appropriate forwarding ring based on the frame number
             int rc = rte_ring_enqueue(
-                packet_forward_rings_[frame_number % config_.num_downstream_cores], *pkt
+                packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores], *pkt
             );
 
             // If the queueing failed, attempt to retry
@@ -472,11 +515,12 @@ namespace FrameProcessor
                 {
                     rte_delay_us(1);
                     rc = rte_ring_enqueue(
-                        packet_forward_rings_[frame_number % config_.num_downstream_cores],
+                        packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores],
                         *pkt
                     );
                 }
             }
+
 
             if (likely(rc == 0))
             {
@@ -503,6 +547,33 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Has no upstream resources.");
         
         return true;
+    }
+
+    void PacketRxCore::configure(OdinData::IpcMessage& config)
+    {
+        // Update the config based from the passed IPCmessage
+
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
+
+        if (config.has_param("rx_enable"))
+        {
+            
+            rx_enable_ = config.get_param("rx_enable", false);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting rx_enable_ to: " <<  rx_enable_);
+        }
+
+        // Only update the other config is rx_enable is currently false
+        // Whenever rx_enabled is false then make sure first_frame_number_ is ready for when it's turned on
+        if (!rx_enable_)
+        {   
+            first_frame_number_ = -1;
+            first_seen_frame_number_ = -1;
+            rx_frames_ = config.get_param("rx_frames", rx_frames_);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reseting frame latch and setting rx_frames_ to: " <<  rx_frames_);
+        }
+
+
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketRxCore, "PacketRxCore");

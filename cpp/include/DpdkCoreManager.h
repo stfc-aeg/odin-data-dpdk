@@ -42,6 +42,7 @@ namespace FrameProcessor
         void register_worker_core(boost::shared_ptr<DpdkWorkerCore> worker_core);
         bool start(void);
         void stop(void);
+        void configure(OdinData::IpcMessage& config);
 
     private:
 

@@ -52,14 +52,14 @@ namespace FrameProcessor
         blosc_compcode_to_compname(1, &p_compressor_name);
 
         // Frame variables
-        struct RawFrameHeader *current_frame_buffer_;
+        struct SuperFrameHeader *current_super_frame_buffer_;
         dimensions_t dims(2);
 
         // Specific frame variables from decoder
         dims[0] = decoder_->get_frame_x_resolution();
         dims[1] = decoder_->get_frame_y_resolution();
-        std::size_t frame_size = 
-            dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
+        std::size_t frame_size = decoder_->get_frame_data_size() * decoder_->get_frame_outer_chunk_size();
+            //dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
         std::size_t frame_header_size = decoder_->get_frame_header_size();
 
         // Status reporting variables
@@ -70,6 +70,7 @@ namespace FrameProcessor
         uint64_t average_wrapping_cycles = 1;
         uint64_t last_Frame = -1;
         uint64_t frames_wrapped_ = 0;
+        uint64_t data_pointer_offset = (frame_header_size * decoder_->get_frame_outer_chunk_size()) + decoder_->get_super_frame_header_size();
 
         //While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
@@ -89,7 +90,7 @@ namespace FrameProcessor
                 last = now;
             }
             // Attempt to dequeue a new frame object
-            if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer_) < 0)
+            if (rte_ring_dequeue(upstream_ring_, (void**) &current_super_frame_buffer_) < 0)
             {
                 // No frame was dequeued, try again
                 idle_loops_++;
@@ -97,8 +98,10 @@ namespace FrameProcessor
             }
             else
             {
-                uint64_t frame_number = decoder_->get_frame_number(current_frame_buffer_);
+                uint64_t frame_number = decoder_->get_super_frame_number(current_super_frame_buffer_);
                 last_Frame = frame_number;
+
+                decoder_->set_super_frame_image_size(current_super_frame_buffer_, frame_size);
 
                 // Create new frame metadata object
                 FrameMetaData frame_meta;
@@ -108,9 +111,9 @@ namespace FrameProcessor
                 frame_meta.set_data_type(decoder_->get_frame_bit_depth());
 
                 // Get the image size, with this we can work out if the frame has been compressed
-                uint64_t image_size = decoder_->get_image_size(current_frame_buffer_);
+                uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);
 
-                if (image_size != frame_size)
+                if (frame_size != image_size)
                 {
                     frame_meta.set_compression_type(blosc);
                 }
@@ -122,12 +125,12 @@ namespace FrameProcessor
                 // Create the shared boost pointer to allow the plugin chain to access huge pages
                 boost::shared_ptr<Frame> complete_frame =
                         boost::shared_ptr<Frame>(new DpdkSharedBufferFrame(
-                                                    frame_meta, current_frame_buffer_,
+                                                    frame_meta, current_super_frame_buffer_,
                                                     decoder_->get_frame_buffer_size(),
-                                                    clear_frames_ring_, frame_header_size));
+                                                    clear_frames_ring_, data_pointer_offset));
 
-                complete_frame->set_image_size(decoder_->get_image_size(current_frame_buffer_));
-                complete_frame->set_outer_chunk_size(1);
+                complete_frame->set_image_size(decoder_->get_super_frame_image_size(current_super_frame_buffer_));
+                complete_frame->set_outer_chunk_size(decoder_->get_frame_outer_chunk_size());
                 frame_callback_(complete_frame);
 
                 // Update monitoring variables now that the Frame has been pushed
@@ -136,6 +139,13 @@ namespace FrameProcessor
 
                 frames_per_second++;
                 frames_wrapped_++;
+
+                // if(frame_number % 1000 == 0)
+                // {
+                //     LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number * decoder_->get_frame_outer_chunk_size());
+                // }
+
+                //LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number);
             }
         }
 
@@ -212,6 +222,14 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
 
         return true;
+    }
+
+    void FrameWrapperCore::configure(OdinData::IpcMessage& config)
+    {
+        // Update the config based from the passed IPCmessage
+
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
     }
 
     DPDKREGISTER(DpdkWorkerCore, FrameWrapperCore, "FrameWrapperCore");

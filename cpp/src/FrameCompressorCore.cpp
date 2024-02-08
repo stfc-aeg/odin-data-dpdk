@@ -121,7 +121,7 @@ namespace FrameProcessor
             {
                 // Update any monitoring variables every second
                 built_frames_hz_ = frames_per_second;
-                avg_us_spent_compressing_ = (average_compression_cycles * 1000000 )/ cycles_per_sec;
+                avg_us_spent_compressing_ = (average_compression_cycles * 1000000 ) / cycles_per_sec;
 
                 // Reset any counters
                 frames_per_second = 0;
@@ -243,6 +243,16 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
 
         return true;
+    }
+
+
+
+    void FrameCompressorCore::configure(OdinData::IpcMessage& config)
+    {
+        // Update the config based from the passed IPCmessage
+
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
     }
 
     DPDKREGISTER(DpdkWorkerCore, FrameCompressorCore, "FrameCompressorCore");

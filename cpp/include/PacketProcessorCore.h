@@ -30,6 +30,7 @@ namespace FrameProcessor
         void stop(void);
         void status(OdinData::IpcMessage& status, const std::string& path);
         bool connect(void);
+        void configure(OdinData::IpcMessage& config);
 
     private:
 
@@ -47,6 +48,8 @@ namespace FrameProcessor
         uint64_t incomplete_frames_;
         uint64_t complete_frames_;
         uint64_t frames_complete_hz_;
+
+        int64_t first_frame_number_;
 
         struct rte_ring* packet_fwd_ring_;
         struct rte_ring* packet_release_ring_;

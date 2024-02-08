@@ -515,6 +515,21 @@ namespace FrameProcessor
         }
     }
 
+    void DpdkCoreManager::configure(OdinData::IpcMessage& config)
+    {
+        // Function for update the core configs based on a runtime provided config IPC message
+
+
+        LOG4CXX_INFO(logger_, "DpdkCoreManager: Got update message: " << config.get_msg_val());
+
+        for (boost::shared_ptr<DpdkWorkerCore>& core: registered_cores_)
+        {
+            core.get()->configure(config);
+        }
+
+
+    }
+
 
     
 

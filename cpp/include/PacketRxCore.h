@@ -36,6 +36,7 @@ namespace FrameProcessor
         void stop(void);
         void status(OdinData::IpcMessage& status, const std::string& path);
         bool connect(void);
+        void configure(OdinData::IpcMessage& config);
 
 
     private:
@@ -62,6 +63,12 @@ namespace FrameProcessor
         uint64_t packet_counter_;
         uint16_t port_id_;
         ProtocolDecoder* decoder_;
+
+        int64_t first_frame_number_;
+        uint64_t first_seen_frame_number_;
+        uint64_t rx_frames_;
+        bool rx_enable_;
+
 
         struct rte_ether_addr dev_eth_addr_;
         uint32_t dev_ip_addr_;

@@ -25,6 +25,7 @@ namespace FrameProcessor
         incomplete_frames_(0),
         complete_frames_(0),
         frames_complete_hz_(0),
+        first_frame_number_(-1),
         logger_(Logger::getLogger("FP.PacketProcCore"))
     {
 
@@ -126,22 +127,27 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up");
         
-        std::unordered_map<uint64_t, RawFrameHeader*> frame_buffer_map_;
+        std::unordered_map<uint64_t, SuperFrameHeader*> frame_buffer_map_;
+
+        uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
 
         // Set up structs needed for the various layers of packets
-        struct RawFrameHeader *current_frame_buffer_;
-        struct RawFrameHeader *dropped_frame_buffer_;
+        struct RawFrameHeader *current_frame_header_;
+        struct SuperFrameHeader *current_super_frame_buffer_;
+        struct SuperFrameHeader *dropped_frame_buffer_;
         struct rte_mbuf* pkt;
         struct rte_ether_hdr *pkt_ether_hdr;
         struct rte_udp_hdr *pkt_udp_hdr;
         PacketHeader* pkt_header;
         uint8_t *pkt_payload;
+        
 
         // Calculate offsets to the various layers of incoming packets
         const std::size_t udp_hdr_offset =
             sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr);
         const std::size_t pkt_hdr_offset = udp_hdr_offset + sizeof(struct rte_udp_hdr);
         const std::size_t pkt_payload_offset = pkt_hdr_offset + decoder_->get_packet_header_size();
+        const std::size_t super_frame_header_size = decoder_->get_super_frame_header_size();
         const std::size_t frame_header_size = decoder_->get_frame_header_size();
         
         // Variable set from the decoder based on packet size
@@ -157,9 +163,11 @@ namespace FrameProcessor
         uint64_t start_of_compression = rte_get_tsc_cycles();
         uint64_t frame_timeout_cycles = convert_ms_to_cycles(config_.frame_timeout_);
 
+        uint64_t superframe_const = (decoder_->get_packets_per_frame() / frame_outer_chunk_size);
+
         // malloc a memory location for this core to use as it's dropped frame buffer
         dropped_frame_buffer_ = 
-            reinterpret_cast<RawFrameHeader *>(rte_malloc(NULL, decoder_->get_frame_buffer_size(), 0));
+            reinterpret_cast<SuperFrameHeader *>(rte_malloc(NULL, decoder_->get_frame_buffer_size(), 0));
 
         while (likely(run_lcore_))
         {
@@ -178,44 +186,69 @@ namespace FrameProcessor
 
                 // Get any frame/packet specific fields required for processing
                 uint16_t rx_port = rte_bswap16(pkt_udp_hdr->dst_port);
-                uint64_t frame_number = decoder_->get_frame_number(pkt_header);
-                uint32_t packet_number = decoder_->get_packet_number(pkt_header);
 
-                LOG4CXX_DEBUG_LEVEL(3, logger_, "Proc core idx " << proc_idx_
-                    << " on lcore " << lcore_id_
-                    << " got packet on port: " << rx_port
-                    << " frame: " << frame_number << " packet " << packet_number
-                );
+                // This statement allows the code to reset the "starting" frame number in code
+                // When first_frame_number_ is set to -1 the next first packet of a frame will be use
+                // to create a variable to offset the frame number by, allow for frames to be
+                // distributed as it the first frame has a frame number of 0
+
+                if(unlikely(first_frame_number_ == -1))
+                {
+                    first_frame_number_ = decoder_->get_frame_number(pkt_header) - (proc_idx_ * decoder_->get_frame_outer_chunk_size());
+
+                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Updated frame latch to: " << first_frame_number_ 
+                        << " Frame number will be: " << (decoder_->get_frame_number(pkt_header) - first_frame_number_) / frame_outer_chunk_size);
+                }
+
+                uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
+
+                uint64_t current_super_frame_number = (current_frame_number / frame_outer_chunk_size);
+
+                uint64_t current_frame_index = current_frame_number - (current_super_frame_number * 1000);
+
+
+                // LOG4CXX_INFO(logger_, "Core " << lcore_id_
+                //             << " current_frame_number: " << current_frame_number
+                //             << " current_super_frame_number: " << current_super_frame_number
+                //             << " current_frame_index: " << current_frame_index
+                //             );
+
+                // Get the packet offset for the bulk frame
+
+                // packet number = pkt_num_from_packet + (packets per frame )
+                uint32_t packet_number = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
+
+                //uint32_t packet_number = decoder_->get_packet_number(pkt_header) + (current_frame_number * packets_per_frame);
 
                 // Check if the packet frame number matches the frame currently being captured
-                if (unlikely(current_frame_ != frame_number))
+                if (unlikely(current_frame_ != current_super_frame_number))
                 {
 
                     // If the packet frame number does not match the current frame, search the
                     // frame buffer map to see if it is currently being processed
-                    auto result = frame_buffer_map_.find(frame_number);
+                    auto result = frame_buffer_map_.find(current_super_frame_number);
 
                     // If a valid frame reference is found, swap to that frame
                     if (result != frame_buffer_map_.end())
                     {
-                        current_frame_buffer_ = result->second;
-                        // current_frame_ = current_frame_buffer_->frame_number;
-                        current_frame_ = decoder_->get_frame_number(current_frame_buffer_);
+                        current_super_frame_buffer_ = result->second;
+                        // current_frame_ = current_frame_buffer_->current_frame_number;
+                        current_frame_ = decoder_->get_super_frame_number(current_super_frame_buffer_);
                     }
                     else
                     {
                         // If a valid frame reference is not found for this packet, then obtain
                         // and map a new buffer for it
-                        current_frame_ = frame_number;
+                        current_frame_ = current_super_frame_number;
 
                         // Try and dequeue a shared buffer from the frame processed ring for the
                         // frame to be built into
                         if (unlikely(rte_ring_dequeue(
-                            clear_frames_ring_, (void **) &current_frame_buffer_
+                            clear_frames_ring_, (void **) &current_super_frame_buffer_
                         )) != 0)
                         {
                             // If a memory location cannot be found start dropping this frame
-                            current_frame_buffer_ = dropped_frame_buffer_;
+                            current_super_frame_buffer_ = dropped_frame_buffer_;
                             dropped_frames_++;
                             LOG4CXX_WARN(logger_,
                                  "dropping frame: " << current_frame_);
@@ -224,31 +257,48 @@ namespace FrameProcessor
                         {
                             // If a buffer was successfully obtained, then add it to the buffer map
                             frame_buffer_map_.insert(
-                                std::make_pair(frame_number, current_frame_buffer_)
+                                std::make_pair(current_super_frame_number, current_super_frame_buffer_)
                             );
 
                             // Zero out the frame header to clear old data
-                            memset(current_frame_buffer_, 0, frame_header_size);
+                            memset(current_super_frame_buffer_, 0, decoder_->get_frame_buffer_size());
 
                             // Set the frame number and start time in the header
-                            decoder_->set_frame_number(current_frame_buffer_, frame_number);
-                            decoder_->set_frame_start_time(
-                                current_frame_buffer_, rte_get_tsc_cycles()
+                            decoder_->set_super_frame_number(current_super_frame_buffer_, current_super_frame_number);
+                            decoder_->set_super_frame_start_time(
+                                current_super_frame_buffer_, rte_get_tsc_cycles()
                             );
                         }
                     }
                 }
 
+                current_frame_header_ = decoder_->get_frame_header(current_super_frame_buffer_, current_frame_index);
+                
                 // Copy the packet payload into the appropriate location in the frame buffer
                 rte_memcpy(
-                    reinterpret_cast<char *>(current_frame_buffer_) + frame_header_size +
+                    decoder_->get_image_data_start(current_super_frame_buffer_) + (current_frame_index * payload_size * packets_per_frame) + 
                     (packet_number * payload_size), pkt_payload, payload_size
                 );
 
-                // Set the current packet as received in the frame header
-                if (!decoder_->set_packet_received(current_frame_buffer_, packet_number))
+                //LOG4CXX_INFO(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
+                // // Set the current packet as received in the frame header
+                if (decoder_->set_packet_received(current_frame_header_, packet_number))
                 {
-                    // TODO handle illegal packet number here - maybe too late since already
+                    //LOG4CXX_INFO(logger_,"Checking frame " << current_frame_number << " with " << decoder_->get_packets_received(decoder_->get_frame_header(current_super_frame_buffer_, current_frame_number)) << " Packets");
+                    // Check to see if that frames has been completed in the superframe
+                    if(decoder_->get_packets_received(current_frame_header_) == packets_per_frame)
+                    {
+                        
+                        // All packets for this sub-frame have been captured, mark it as complete
+                        if (decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
+                        {
+                            // TODO handle illegal frame number here
+                        }
+                    }
+                }
+                else
+                {
+                    // TODO handle illegal f number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
                 }
@@ -256,19 +306,19 @@ namespace FrameProcessor
                 // Look to check the SOF & EOF markers
                 // check to see if the frame is complete
 
-                if (decoder_->get_packets_received(current_frame_buffer_) == packets_per_frame)
+                if (decoder_->get_super_frame_frames_recieved(current_super_frame_buffer_) == decoder_->get_frame_outer_chunk_size())
                 {
                     // The frame is complete, so enqueue the frame reference for the
                     // FrameBuilderCore to pick up. Check if the current frame is 'dropped' and
                     // don't enqueue if that is the case
 
-                    if (likely(current_frame_buffer_ != dropped_frame_buffer_))
+                    if (likely(current_super_frame_buffer_ != dropped_frame_buffer_))
                     {
                         rte_ring_enqueue(
                             downstream_rings_[
-                                decoder_->get_frame_number(current_frame_buffer_) %
+                                (decoder_->get_super_frame_number(current_super_frame_buffer_) / frame_outer_chunk_size) % 
                                 config_.num_downstream_cores
-                            ], current_frame_buffer_
+                            ], current_super_frame_buffer_
                         );
 
                         // Remove the frame reference from the unordered map
@@ -276,6 +326,8 @@ namespace FrameProcessor
                         
                         complete_frames_++;
                         frame_hz_counter++;
+
+                        //LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
                     }
                     current_frame_ = -1;
                 }
@@ -288,7 +340,7 @@ namespace FrameProcessor
             // appropriate
             uint64_t now = rte_get_tsc_cycles();
 
-            if (unlikely((now - last) >= (ticks_per_sec)))
+            if (unlikely((now - last) >= (ticks_per_sec * 2)))
             {
                 frames_complete_hz_ = frame_hz_counter;
                 frame_hz_counter = 0;
@@ -298,26 +350,26 @@ namespace FrameProcessor
                 {
                     // Check if the time since the first packet received for the frame has
                     // exceeded the configured timeout
-                    if (now - decoder_->get_frame_start_time(it->second) >= frame_timeout_cycles)
+                    if (now - decoder_->get_super_frame_start_time(it->second) >= frame_timeout_cycles)
                     {
                         // set the frame metadata for dropped packets
                         
-                        LOG4CXX_INFO (logger_, "Core " << lcore_id_
-                            << " dropping frame " << decoder_->get_frame_number(it->second)
-                            << " with " << decoder_->get_packets_dropped(it->second)
-                            << " missing packets"
+                        LOG4CXX_INFO(logger_, "Core " << lcore_id_
+                            << " dropping super frame " << decoder_->get_super_frame_number(it->second)
+                            << " with " << decoder_->get_super_frame_frames_recieved(it->second)
+                            << " complete sub frames"
                             );
 
                         // Increment the total dropped packets counter with the number of packets
                         // dropped from the frame
-                        dropped_packets_ += decoder_->get_packets_dropped(it->second);
+                        //dropped_packets_ += decoder_->get_packets_dropped(it->second);
 
                         // Enqueue the frame reference for the FrameBuilderCore to pick up
                         // there will always be space on this ring, so no retry checks are needed
 
                         rte_ring_enqueue(
                             downstream_rings_[
-                                decoder_->get_frame_number(it->second) %
+                                (decoder_->get_super_frame_number(it->second) / frame_outer_chunk_size) %
                                 config_.num_downstream_cores
                             ], it->second
                         );
@@ -419,6 +471,21 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
 
         return true;
+    }
+
+
+    void PacketProcessorCore::configure(OdinData::IpcMessage& config)
+    {
+        // Update the config based from the passed IPCmessage
+
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
+        if (config.get_param("proc_enable", false))
+        {
+            first_frame_number_ = -1;
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << "Reset frame latch");
+        }
+
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketProcessorCore, "PacketProcessorCore");

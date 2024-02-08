@@ -7,6 +7,8 @@ struct PacketHeader { };
 
 struct RawFrameHeader { };
 
+struct SuperFrameHeader { };
+
 class ProtocolDecoder
 {
 public:
@@ -37,10 +39,43 @@ public:
         return payload_size_;
     }
 
+
+    // static SuperFrame virtual functions
+
+    virtual const std::size_t get_super_frame_header_size(void) const = 0; //
+    
+
+    // Getters and Setters for superFrame metadata
+
+    virtual const uint64_t get_super_frame_number(SuperFrameHeader* superframe_hdr) const = 0;
+    virtual void set_super_frame_number(SuperFrameHeader* superframe_hdr, uint64_t frame_number) = 0;
+    
+    virtual const uint64_t get_super_frame_start_time(SuperFrameHeader* superframe_hdr) const = 0;
+    virtual void set_super_frame_start_time(SuperFrameHeader* superframe_hdr, uint64_t start_time) = 0;
+    
+    virtual const uint64_t get_super_frame_complete_time(SuperFrameHeader* superframe_hdr) const = 0;
+    virtual void set_super_frame_complete_time(SuperFrameHeader* superframe_hdr, uint64_t end_time) = 0;
+    
+    virtual const uint32_t get_super_frame_frames_recieved(SuperFrameHeader* superframe_hdr) const = 0;
+    virtual bool set_super_frame_frames_recieved(SuperFrameHeader* superframe_hdr, uint32_t frame_number ) = 0;
+    
+    virtual const uint8_t get_super_frame_frames_state(SuperFrameHeader* superframe_hdr, uint32_t frame_number) const = 0;
+
+    virtual RawFrameHeader* get_frame_header(SuperFrameHeader* superframe_hdr, uint32_t frame_number) = 0;
+    
+
+    virtual char* get_image_data_start(SuperFrameHeader* superframe_hdr) = 0;
+    virtual const uint64_t get_super_frame_image_size(SuperFrameHeader* frame_hdr) const = 0;
+    virtual void set_super_frame_image_size(SuperFrameHeader* frame_hdr, uint64_t image_size) const = 0;
+
+
+
     virtual const std::size_t get_frame_header_size(void) const = 0;
     virtual const std::size_t get_frame_data_size(void) const = 0;
     virtual const std::size_t get_frame_buffer_size(void) const = 0;
     virtual const std::size_t get_packet_header_size(void) const = 0;
+
+    virtual const uint64_t get_frame_outer_chunk_size(void) const = 0;
 
 
     
@@ -68,8 +103,8 @@ public:
     virtual const uint64_t get_image_size(RawFrameHeader* frame_hdr) const = 0;
     virtual void set_image_size(RawFrameHeader* frame_hdr, uint64_t image_size) const = 0;
 
-    virtual RawFrameHeader* reorder_frame(RawFrameHeader* frame_hdr, RawFrameHeader* reordered_frame) = 0;
-    virtual RawFrameHeader* reorder_frame(RawFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame) = 0;
+    virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame) = 0;
+    virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame) = 0;
     
 protected:
 

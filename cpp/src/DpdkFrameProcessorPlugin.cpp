@@ -81,12 +81,23 @@ namespace FrameProcessor
     OdinData::IpcMessage& config, OdinData::IpcMessage& reply,
     ProtocolDecoder* decoder_ptr, FrameCallback& frame_callback)
   {
-    LOG4CXX_DEBUG(logger_, "Configuring DPDKFrameProcessor plugin");
+    LOG4CXX_INFO(logger_, "Configuring DPDKFrameProcessor plugin");
 
-    core_manager_.reset(
-      new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback)
-    );
-    core_manager_->start();
+    if (config.get_param("update_config", false))
+    {
+      LOG4CXX_INFO(logger_, "Got update config");
+      if (core_manager_ != nullptr)
+      {
+        core_manager_->configure(config);
+      }
+    }
+    else
+    {
+      core_manager_.reset(
+        new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback)
+      );
+      core_manager_->start();
+    }
 
   }
 

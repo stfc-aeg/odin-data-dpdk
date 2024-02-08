@@ -84,9 +84,9 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up");
 
         // Generic frame variables
-        struct RawFrameHeader *current_frame_buffer_;
-        struct RawFrameHeader *reordered_frame_location_;
-        struct RawFrameHeader *returned_frame_location_;
+        struct SuperFrameHeader *current_frame_buffer_;
+        struct SuperFrameHeader *reordered_frame_location_;
+        struct SuperFrameHeader *returned_frame_location_;
         dimensions_t dims(2);
 
         // Specific frame variables from decoder
@@ -133,40 +133,54 @@ namespace FrameProcessor
             }
             else
             {
-                uint64_t frame_number = decoder_->get_frame_number(current_frame_buffer_);
+                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
+
+                //LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
 
                 // If the frame has any dropped packets, iterate through the frame and clear
                 // the payload of the dropped packets
-                uint32_t packets_dropped = decoder_->get_packets_dropped(current_frame_buffer_);
+                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_recieved(current_frame_buffer_);
 
-                if (packets_dropped)
+                if (incomplete_frames)
                 {
-                    uint32_t packet_idx = 0;
-                    uint32_t packets_cleared = 0;
+                    uint32_t frame_idx = 0;
+                    uint32_t frames_cleared = 0;
 
-                    while (packets_cleared < packets_dropped)
+                    while(frames_cleared < incomplete_frames)
                     {
-                        if (decoder_->get_packet_state(current_frame_buffer_, packet_idx) == 0)
+                        uint32_t packet_idx = 0;
+                        uint32_t packets_cleared = 0;
+
+                        uint32_t packets_dropped = decoder_->get_packets_dropped(
+                            decoder_->get_frame_header(current_frame_buffer_, frame_idx)
+                        );
+
+                        while (packets_cleared < packets_dropped)
                         {
-                            // This is a dropped packet and needs to be zeroed out
-                            // to prevent corrupting the data
-                            memset(
-                                (reinterpret_cast<char *>(current_frame_buffer_) +
-                                 frame_header_size + (packet_idx * payload_size)),
-                                0, payload_size);
-                            packets_cleared++;
+                            if (decoder_->get_packet_state(decoder_->get_frame_header(current_frame_buffer_, frame_idx), packet_idx) == 0)
+                            {
+                                // This is a dropped packet and needs to be zeroed out
+                                // to prevent corrupting the data
+                                memset(
+                                    decoder_->get_image_data_start(current_frame_buffer_) + ((frame_idx * payload_size * decoder_->get_packets_per_frame())) + (packet_idx * payload_size),
+                                    0, payload_size);
+
+                                packets_cleared++;
+                            }
+                            packet_idx++;
                         }
-                        packet_idx++;
+                        frames_cleared++;
                     }
-                    LOG4CXX_WARN(logger_,
-                                 "Got incomplete frame with " << packets_dropped << " dropped packets");
+
+                    LOG4CXX_INFO(logger_,
+                                 "Got incomplete super frame with " << incomplete_frames << " incomplete frames");
                 }
 
                 // Use the decoder to build that frame into another HP location
-                    returned_frame_location_ =
-                        decoder_->reorder_frame(current_frame_buffer_, reordered_frame_location_);
+                returned_frame_location_ =
+                    decoder_->reorder_frame(current_frame_buffer_, reordered_frame_location_);
                 
-                decoder_->set_image_size(returned_frame_location_, frame_size);
+                decoder_->set_super_frame_image_size(returned_frame_location_, frame_size * decoder_->get_frame_outer_chunk_size());
 
                 // Enqueue the built frame object to the next set of cores
                 rte_ring_enqueue(
@@ -259,6 +273,16 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
 
         return true;
+    }
+
+
+
+    void FrameBuilderCore::configure(OdinData::IpcMessage& config)
+    {
+        // Update the config based from the passed IPCmessage
+
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
     }
 
     DPDKREGISTER(DpdkWorkerCore, FrameBuilderCore, "FrameBuilderCore");

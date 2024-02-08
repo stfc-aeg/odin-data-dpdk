@@ -38,6 +38,7 @@ namespace FrameProcessor
         virtual void stop(void) = 0;
         virtual void status(OdinData::IpcMessage& status, const std::string& path) = 0;
         virtual bool connect(void) = 0;
+        virtual void configure(OdinData::IpcMessage& config) = 0;
 
         inline unsigned int lcore_id(void) const { return lcore_id_; }
         inline unsigned int socket_id(void) const { return socket_id_; }
