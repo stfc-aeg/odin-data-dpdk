@@ -117,7 +117,11 @@ namespace FrameProcessor
     // Record the plugin's status items
     LOG4CXX_DEBUG(logger_, "Status requested for DPDKFrameProcessor plugin");
 
-    core_manager_->status(status);
+    if (core_manager_ != nullptr)
+    {
+      core_manager_->status(status);
+    }
+    
   }
 
   /**

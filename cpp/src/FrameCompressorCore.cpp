@@ -89,7 +89,7 @@ namespace FrameProcessor
         blosc_compcode_to_compname(1, &p_compressor_name);
 
         // Generic frame variables
-        struct RawFrameHeader *current_frame_buffer_, *compressed_frame_;
+        struct SuperFrameHeader *current_frame_buffer_, *compressed_frame_;
         dimensions_t dims(2);
         int compressed_size = 0;
 
@@ -141,7 +141,7 @@ namespace FrameProcessor
             else
             {
                 built_frames_++;
-                uint64_t frame_number = decoder_->get_frame_number(current_frame_buffer_);
+                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
 
                 start_compressing = rte_get_tsc_cycles();
 
@@ -149,16 +149,16 @@ namespace FrameProcessor
                 compressed_size = blosc_compress_ctx(
                     1, 1,
                     get_size_from_enum(decoder_->get_frame_bit_depth()), frame_size,
-                    reinterpret_cast<char *>(current_frame_buffer_) + frame_header_size,
-                    reinterpret_cast<char *>(compressed_frame_) + frame_header_size, dest_data_size, p_compressor_name,
+                    decoder_->get_image_data_start(current_frame_buffer_),
+                    decoder_->get_image_data_start(compressed_frame_), dest_data_size, p_compressor_name,
                     0, 1
                 );
 
                 // Copy the Frame_Header to the new memory location
-                rte_memcpy(compressed_frame_, current_frame_buffer_, frame_header_size);
+                rte_memcpy(compressed_frame_, current_frame_buffer_, decoder_->get_super_frame_header_size() + decoder_->get_frame_header_size());
 
                 // Set the correct image size to ensure that correct data is saved out
-                decoder_->set_image_size(compressed_frame_, compressed_size);
+                decoder_->set_super_frame_image_size(compressed_frame_, compressed_size);
 
                 // Enqueue the frame to be wrapped into a shared pointer
                 rte_ring_enqueue(downstream_rings_[frame_number % (config_.num_downstream_cores)], compressed_frame_);
@@ -169,6 +169,8 @@ namespace FrameProcessor
                 // Resuse the old frame location for the next frame to be compressed
                 compressed_frame_ = current_frame_buffer_;
                 frames_per_second++;
+
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Compressed frame: " << frame_number);
                 
             }
         }

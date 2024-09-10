@@ -207,15 +207,14 @@ namespace FrameProcessor
                 uint64_t current_frame_index = current_frame_number - (current_super_frame_number * 1000);
 
 
-                // LOG4CXX_INFO(logger_, "Core " << lcore_id_
-                //             << " current_frame_number: " << current_frame_number
-                //             << " current_super_frame_number: " << current_super_frame_number
-                //             << " current_frame_index: " << current_frame_index
-                //             );
+                LOG4CXX_DEBUG(logger_, "Core " << lcore_id_
+                            << " current_frame_number: " << current_frame_number
+                            << " current_super_frame_number: " << current_super_frame_number
+                            << " current_frame_index: " << current_frame_index
+                            );
 
                 // Get the packet offset for the bulk frame
 
-                // packet number = pkt_num_from_packet + (packets per frame )
                 uint32_t packet_number = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
 
                 //uint32_t packet_number = decoder_->get_packet_number(pkt_header) + (current_frame_number * packets_per_frame);
@@ -293,6 +292,10 @@ namespace FrameProcessor
                         if (decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
                         {
                             // TODO handle illegal frame number here
+                            LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                                        << " Error:  illegal frame number: "
+                                        << current_frame_number
+                                    );
                         }
                     }
                 }
@@ -301,6 +304,12 @@ namespace FrameProcessor
                     // TODO handle illegal f number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
+                    LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                                        << " Error:  illegal frame packet number: "
+                                        << packet_number
+                                        << " in frame: "
+                                        << current_frame_number
+                                    );
                 }
 
                 // Look to check the SOF & EOF markers
@@ -327,7 +336,8 @@ namespace FrameProcessor
                         complete_frames_++;
                         frame_hz_counter++;
 
-                        //LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
+                        LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
+
                     }
                     current_frame_ = -1;
                 }
@@ -362,7 +372,7 @@ namespace FrameProcessor
 
                         // Increment the total dropped packets counter with the number of packets
                         // dropped from the frame
-                        //dropped_packets_ += decoder_->get_packets_dropped(it->second);
+                        // dropped_packets_ += decoder_->get_packets_dropped(it->second);
 
                         // Enqueue the frame reference for the FrameBuilderCore to pick up
                         // there will always be space on this ring, so no retry checks are needed

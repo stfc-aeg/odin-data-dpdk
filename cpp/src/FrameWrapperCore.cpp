@@ -140,12 +140,7 @@ namespace FrameProcessor
                 frames_per_second++;
                 frames_wrapped_++;
 
-                // if(frame_number % 1000 == 0)
-                // {
-                //     LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number * decoder_->get_frame_outer_chunk_size());
-                // }
-
-                //LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number);
+                LOG4CXX_DEBUG(logger_,  config_.core_name << " : " << proc_idx_ << " Wrapped frame: " << frame_number);
             }
         }
 

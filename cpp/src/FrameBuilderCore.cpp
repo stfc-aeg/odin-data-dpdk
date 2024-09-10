@@ -71,7 +71,6 @@ namespace FrameProcessor
     FrameBuilderCore::~FrameBuilderCore(void)
     {
         LOG4CXX_DEBUG_LEVEL(2, logger_, "FrameBuilderCore destructor");
-        std::cout << "FBC Destory" << std::endl;
         stop();
     }
 
@@ -135,7 +134,7 @@ namespace FrameProcessor
             {
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
 
-                //LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
 
                 // If the frame has any dropped packets, iterate through the frame and clear
                 // the payload of the dropped packets
@@ -170,6 +169,8 @@ namespace FrameProcessor
                             packet_idx++;
                         }
                         frames_cleared++;
+                        LOG4CXX_INFO(logger_,
+                                 "Got incomplete super frame with " << incomplete_frames << " incomplete frames");
                     }
 
                     LOG4CXX_INFO(logger_,
@@ -198,6 +199,8 @@ namespace FrameProcessor
 
                 frames_per_second++;
                 built_frames_++;
+
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Built frame: " << frame_number);
             }
         }
 
