@@ -53,14 +53,16 @@ namespace FrameProcessor
 
         if (memzone_ == NULL)
         {
-            LOG4CXX_ERROR(logger_, "Could not create memzone: " << name_ << " with error: " 
-                << rte_strerror(rte_errno)
-            );
+            LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
+                        << " on socket " << socket_id_
+                        << " : " << rte_strerror(rte_errno)
+                        << " " << name_
+                );
             
             memzone_ = rte_memzone_lookup(name_.c_str());
             if (memzone_ == NULL)
             {
-                LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
+                LOG4CXX_ERROR(logger_, "Error looking up shared memory buffer " << name_
                         << " on socket " << socket_id_
                         << " : " << rte_strerror(rte_errno)
                         << " " << name_

@@ -124,7 +124,7 @@ namespace FrameProcessor
                 last = now;
             }
             // Attempt to dequeue a new frame object
-            if (rte_ring_dequeue(upstream_ring, (void **)&current_frame_buffer_) < 0)
+            if (rte_ring_dequeue(upstream_ring_, (void **)&current_frame_buffer_) < 0)
             {
                 // No frame was dequeued, try again
                 idle_loops_++;
@@ -136,34 +136,43 @@ namespace FrameProcessor
 
                 LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
 
+                // If a superframe has any incomplete frames, iterate through them
                 // If the frame has any dropped packets, iterate through the frame and clear
                 // the payload of the dropped packets
                 uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_recieved(current_frame_buffer_);
 
                 if (incomplete_frames)
                 {
+                    // Incomplete frames have been found
                     uint32_t frame_idx = 0;
                     uint32_t frames_cleared = 0;
 
+                    // While there are still incomplete frames
                     while(frames_cleared < incomplete_frames)
                     {
                         uint32_t packet_idx = 0;
                         uint32_t packets_cleared = 0;
 
+
+                        // Get the number of dropped packets of this sub frame
                         uint32_t packets_dropped = decoder_->get_packets_dropped(
                             decoder_->get_frame_header(current_frame_buffer_, frame_idx)
                         );
 
+
+                        // Loop over packets in the subframe
                         while (packets_cleared < packets_dropped)
                         {
+                            // Check to see if this subframe is missing packets
                             if (decoder_->get_packet_state(decoder_->get_frame_header(current_frame_buffer_, frame_idx), packet_idx) == 0)
                             {
                                 // This is a dropped packet and needs to be zeroed out
                                 // to prevent corrupting the data
+                                // This is becuase we reuse memory
                                 memset(
                                     decoder_->get_image_data_start(current_frame_buffer_) + ((frame_idx * payload_size * decoder_->get_packets_per_frame())) + (packet_idx * payload_size),
                                     0, payload_size);
-
+                                    
                                 packets_cleared++;
                             }
                             packet_idx++;
@@ -236,6 +245,8 @@ namespace FrameProcessor
         status.set_param(status_path + "idle_loops", idle_loops_);
 
         status.set_param(status_path + "average_us_compressing", avg_us_spent_building_);
+
+        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(upstream_ring_));
     }
 
     bool FrameBuilderCore::connect(void)
@@ -243,8 +254,8 @@ namespace FrameProcessor
 
         // connect to the ring for incoming packets
         std::string upstream_ring_name = ring_name_str(config_.upstream_core, socket_id_, proc_idx_);
-        upstream_ring = rte_ring_lookup(upstream_ring_name.c_str());
-        if (upstream_ring == NULL)
+        upstream_ring_ = rte_ring_lookup(upstream_ring_name.c_str());
+        if (upstream_ring_ == NULL)
         {
             // this needs to error out as there should always be upstream resources at this point
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Failed to Connect to upstream resources!");

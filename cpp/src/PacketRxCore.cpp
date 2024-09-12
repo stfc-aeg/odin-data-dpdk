@@ -15,8 +15,8 @@ namespace FrameProcessor
         decoder_(dpdkWorkCoreReferences.decoder),
         logger_(Logger::getLogger("FP.PacketRxCore")),
         first_frame_number_(-1),
-        rx_enable_(true),
-        rx_frames_(100000),
+        rx_enable_(false),
+        rx_frames_(0),
         first_seen_frame_number_(-1)
     {
 
@@ -540,6 +540,15 @@ namespace FrameProcessor
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
 
         status.set_param(status_path + "total_packets", packet_counter_);
+
+        status.set_param(status_path + "rx_enable", rx_enable_);
+
+        status.set_param(status_path + "rx_frames", rx_frames_);
+
+        status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
+
+        status.set_param(status_path + "first_frame_number", first_frame_number_);
+
     }
 
     bool PacketRxCore::connect(void)

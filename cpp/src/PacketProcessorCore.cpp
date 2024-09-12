@@ -289,7 +289,7 @@ namespace FrameProcessor
                     {
                         
                         // All packets for this sub-frame have been captured, mark it as complete
-                        if (decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
+                        if (!decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
                         {
                             // TODO handle illegal frame number here
                             LOG4CXX_ERROR(logger_, "Core " << lcore_id_
@@ -439,6 +439,10 @@ namespace FrameProcessor
         status.set_param(status_path + "frames_complete_total", complete_frames_);
 
         status.set_param(status_path + "frames_complete_hz", frames_complete_hz_);
+
+        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(packet_fwd_ring_));
+
+        status.set_param(status_path + ring_name_clear_frames(socket_id_), rte_ring_count(clear_frames_ring_));
     }
 
     bool PacketProcessorCore::connect(void)

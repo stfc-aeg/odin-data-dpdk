@@ -46,7 +46,7 @@ namespace FrameProcessor
         uint64_t avg_us_spent_building_;
 
 
-        struct rte_ring* upstream_ring;
+        struct rte_ring* upstream_ring_;
         struct rte_ring* clear_frames_ring_;
         std::vector<struct rte_ring*> downstream_rings_;
     };
