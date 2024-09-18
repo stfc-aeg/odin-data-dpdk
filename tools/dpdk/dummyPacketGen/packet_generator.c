@@ -184,6 +184,9 @@ int main(int argc, char **argv) {
         rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
     }
 
+    argc -= ret;
+	argv += ret;
+
     config_.interval = DEFAULT_INTERVAL;
 	config_.starting_frame_number = DEFAULT_STARTING_FRAME_NUMBER;
 	config_.number_of_frames = DEFAULT_NUMBER_OF_FRAMES;
