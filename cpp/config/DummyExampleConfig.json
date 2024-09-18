@@ -68,7 +68,7 @@
                     "rx_ports": [
                         1234
                     ],
-                    "device_ip": "10.0.100.3",
+                    "device_ip": "10.0.100.6",
                     "rx_burst_size": 128,
                     "fwd_ring_size": 32786,
                     "release_ring_size": 32768,
@@ -87,7 +87,7 @@
                     "core_name": "FrameBuilderCore",
                     "num_cores": 1,
                     "connect": "packet_processor",
-                    "secondary_fanout": true
+                    "secondary_fanout": false
                 },
                 "frame_wrapper": {
                     "core_name": "FrameWrapperCore",

@@ -204,7 +204,7 @@ namespace FrameProcessor
 
                 uint64_t current_super_frame_number = (current_frame_number / frame_outer_chunk_size);
 
-                uint64_t current_frame_index = current_frame_number - (current_super_frame_number * 1000);
+                uint64_t current_frame_index = current_frame_number - (current_super_frame_number * decoder_->get_frame_outer_chunk_size());
 
 
                 LOG4CXX_DEBUG(logger_, "Core " << lcore_id_
@@ -213,7 +213,7 @@ namespace FrameProcessor
                             << " current_frame_index: " << current_frame_index
                             );
 
-                // Get the packet offset for the bulk frame
+                // Get the packet offset for the super frame
 
                 uint32_t packet_number = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
 
@@ -283,7 +283,7 @@ namespace FrameProcessor
                 // // Set the current packet as received in the frame header
                 if (decoder_->set_packet_received(current_frame_header_, packet_number))
                 {
-                    //LOG4CXX_INFO(logger_,"Checking frame " << current_frame_number << " with " << decoder_->get_packets_received(decoder_->get_frame_header(current_super_frame_buffer_, current_frame_number)) << " Packets");
+                    // LOG4CXX_INFO(logger_,"Checking frame " << current_frame_number << " with " << decoder_->get_packets_received(decoder_->get_frame_header(current_super_frame_buffer_, current_frame_number)) << " Packets");
                     // Check to see if that frames has been completed in the superframe
                     if(decoder_->get_packets_received(current_frame_header_) == packets_per_frame)
                     {

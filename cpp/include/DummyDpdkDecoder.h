@@ -163,12 +163,12 @@ public:
 
     virtual const std::size_t get_frame_x_resolution(void) const
     {
-        return 16;
+        return 1000;
     }
 
     virtual const std::size_t get_frame_y_resolution(void) const
     {
-        return 16;
+        return 1000;
     }
 
     virtual const uint64_t get_frame_outer_chunk_size(void) const
