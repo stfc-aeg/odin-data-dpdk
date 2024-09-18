@@ -91,7 +91,7 @@
                 },
                 "frame_wrapper": {
                     "core_name": "FrameWrapperCore",
-                    "dataset_name": "raw",
+                    "dataset_name": "dummy",
                     "num_cores": 1,
                     "connect": "frame_builder"
                 }
@@ -101,16 +101,11 @@
     {
         "hdf": {
             "dataset": {
-                "raw": {
+                "dummy": {
                     "datatype": "uint16",
                     "dims": [
-                        16,
-                        16
-                    ],
-                    "chunks": [
                         1000,
-                        16,
-                        16
+                        1000
                     ],
                     "compression": "none"
                 }
