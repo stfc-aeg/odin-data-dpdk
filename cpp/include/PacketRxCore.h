@@ -60,7 +60,9 @@ namespace FrameProcessor
         PacketRxConfiguration config_;
 
         int proc_idx_;
-        uint64_t packet_counter_;
+        uint64_t total_packets_;
+        uint64_t dropped_packets_;
+        uint64_t captured_packets_;
         uint16_t port_id_;
         ProtocolDecoder* decoder_;
 

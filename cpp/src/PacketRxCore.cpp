@@ -17,7 +17,10 @@ namespace FrameProcessor
         first_frame_number_(-1),
         rx_enable_(false),
         rx_frames_(0),
-        first_seen_frame_number_(-1)
+        first_seen_frame_number_(-1),
+        dropped_packets_(0),
+        captured_packets_(0),
+        total_packets_(0)
     {
 
         // Resolve configuration parameters for this core from the config object passed as an
@@ -158,8 +161,6 @@ namespace FrameProcessor
 
         uint16_t num_replies = 0;
 
-        uint64_t packet_counter_ = 0;
-
         bool pkt_tx_reply = false;
         bool pkt_forwarded = false;
 
@@ -222,7 +223,7 @@ namespace FrameProcessor
                                     &pkt, &pkt_ether_hdr, &pkt_ipv4_hdr, &pkt_udp_hdr
                                 );
 
-                                packet_counter_++;
+                                
                                                                 
                                 break;
 
@@ -237,20 +238,26 @@ namespace FrameProcessor
 
                 } // switch(rte_bswap16(pkt_ether_hdr->ether_type))
 
+
+                total_packets_++;
+
                 // If a handler wants to send a reply to the packet, add it to the buffer
                 // and increment the number of replies. If the packet has been forwarded by a
                 // handler (e.g. valid UDP packets) do nothing, otherwise free the packet mbuf
                 if (pkt_tx_reply)
                 {
                     pkt_bufs[num_replies++] = pkt;
+                    dropped_packets_++;
                 }
                 else if (pkt_forwarded)
                 {
                     // Do nothing with the packet - handler has forwarded it
+                    captured_packets_++;
                 }
                 else
                 {
                     rte_pktmbuf_free(pkt);
+                    dropped_packets_++;
                 }
             } // for (uint16_t idx = 0; idx < num_rx_pkts; idx++)
 
@@ -525,6 +532,7 @@ namespace FrameProcessor
             if (likely(rc == 0))
             {
                 pkt_forwarded = true;
+                // The packet was enqueued to a packet ring, increment the captured packet counter
             }
         }
 
@@ -539,7 +547,11 @@ namespace FrameProcessor
 
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
 
-        status.set_param(status_path + "total_packets", packet_counter_);
+        status.set_param(status_path + "total_packets", total_packets_);
+
+        status.set_param(status_path + "dropped_packets", dropped_packets_);
+
+        status.set_param(status_path + "captured_packets", captured_packets_);
 
         status.set_param(status_path + "rx_enable", rx_enable_);
 

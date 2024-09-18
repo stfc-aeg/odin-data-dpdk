@@ -301,7 +301,7 @@ namespace FrameProcessor
                 }
                 else
                 {
-                    // TODO handle illegal f number here - maybe too late since already
+                    // TODO handle illegal frame number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
                     LOG4CXX_ERROR(logger_, "Core " << lcore_id_
