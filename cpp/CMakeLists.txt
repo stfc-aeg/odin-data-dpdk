@@ -83,3 +83,6 @@ add_subdirectory(include)
 
 # Add the cmake subdirectory so that CMake finders are installed
 add_subdirectory(cmake)
+
+# Add the config subdirectory
+add_subdirectory(config)

@@ -201,9 +201,13 @@ namespace FrameProcessor
         std::string status_path = path + "/FrameCompressorCore_" + std::to_string(proc_idx_) + "/";
 
         status.set_param(status_path + "frames_compressed", built_frames_);
+        
         status.set_param(status_path + "frames_compressed_hz", built_frames_hz_);
+
         status.set_param(status_path + "idle_loops", idle_loops_);
+
         status.set_param(status_path + "average_us_compressing", avg_us_spent_compressing_);
+
         status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(upstream_ring_));
     }
 
