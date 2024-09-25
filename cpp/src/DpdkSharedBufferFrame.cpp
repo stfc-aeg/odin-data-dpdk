@@ -39,7 +39,10 @@ DpdkSharedBufferFrame::DpdkSharedBufferFrame(const DpdkSharedBufferFrame &frame)
  */
 DpdkSharedBufferFrame::~DpdkSharedBufferFrame () {
     /** Enqueue the memory location back to the starting ring */
-    rte_ring_enqueue(frame_processed_, data_ptr_);
+    if(frame_processed_ != nullptr)
+    {
+        rte_ring_enqueue(frame_processed_, data_ptr_);
+    }
 }
 
 /**

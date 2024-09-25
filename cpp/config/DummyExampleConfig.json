@@ -79,7 +79,7 @@
                 },
                 "packet_processor": {
                     "core_name": "PacketProcessorCore",
-                    "num_cores": 4,
+                    "num_cores": 1,
                     "connect": "packet_rx",
                     "frame_timeout": 1000
                 },

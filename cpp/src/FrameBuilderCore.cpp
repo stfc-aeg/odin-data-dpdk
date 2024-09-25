@@ -16,7 +16,8 @@ namespace FrameProcessor
                                         built_frames_(0),
                                         built_frames_hz_(0),
                                         idle_loops_(0),
-                                        avg_us_spent_building_(0)
+                                        avg_us_spent_building_(0),
+                                        core_useage_(1)
     {
 
         // Get the configuration container for this worker
@@ -101,6 +102,8 @@ namespace FrameProcessor
         uint64_t frames_per_second = 0;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
+        float core_useage = 1;
+        uint64_t cycles_working = 1;
         uint64_t start_building = 1;
         uint64_t average_building_cycles = 1;
 
@@ -117,10 +120,14 @@ namespace FrameProcessor
                 built_frames_hz_ = frames_per_second;
                 avg_us_spent_building_ = (average_building_cycles * 1000000) / cycles_per_sec;
 
+                core_useage_ = cycles_working / cycles_per_sec;
+                
+
                 // Reset any counters
                 frames_per_second = 0;
                 idle_loops_ = 0;
                 average_building_cycles = 0;
+                cycles_working = 1;
                 last = now;
             }
             // Attempt to dequeue a new frame object
@@ -132,6 +139,8 @@ namespace FrameProcessor
             }
             else
             {
+                start_building = rte_get_tsc_cycles();
+
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
 
                 LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
@@ -192,6 +201,8 @@ namespace FrameProcessor
                 
                 decoder_->set_super_frame_image_size(returned_frame_location_, frame_size * decoder_->get_frame_outer_chunk_size());
 
+                rte_delay_ms(100);
+
                 // Enqueue the built frame object to the next set of cores
                 rte_ring_enqueue(
                     downstream_rings_[frame_number % (config_.num_downstream_cores)], returned_frame_location_);
@@ -205,6 +216,8 @@ namespace FrameProcessor
 
                 average_building_cycles = 
                     (average_building_cycles + (rte_get_tsc_cycles() - start_building)) / 2;
+
+                cycles_working = cycles_working + (rte_get_tsc_cycles() - start_building);
 
                 frames_per_second++;
                 built_frames_++;
@@ -237,6 +250,7 @@ namespace FrameProcessor
                                                                         << " from the DPDK plugin");
 
         std::string status_path = path + "/framebuildercore_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "upstream_rings/";
 
         status.set_param(status_path + "frames_built", built_frames_);
 
@@ -244,9 +258,12 @@ namespace FrameProcessor
 
         status.set_param(status_path + "idle_loops", idle_loops_);
 
-        status.set_param(status_path + "average_us_compressing", avg_us_spent_building_);
+        status.set_param(status_path + "average_us_per_frame", avg_us_spent_building_);
 
-        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(upstream_ring_));
+        status.set_param(status_path + "core_useage", (int) core_useage_);
+
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
     }
 
     bool FrameBuilderCore::connect(void)

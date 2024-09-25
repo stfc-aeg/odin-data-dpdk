@@ -199,6 +199,7 @@ namespace FrameProcessor
             << " from the DPDK plugin");
 
         std::string status_path = path + "/FrameCompressorCore_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "upstream_rings/";
 
         status.set_param(status_path + "frames_compressed", built_frames_);
         
@@ -208,7 +209,8 @@ namespace FrameProcessor
 
         status.set_param(status_path + "average_us_compressing", avg_us_spent_compressing_);
 
-        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
     }
 
     bool FrameCompressorCore::connect(void)

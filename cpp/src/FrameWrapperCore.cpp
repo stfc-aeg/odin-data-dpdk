@@ -168,6 +168,7 @@ namespace FrameProcessor
             << " from the DPDK plugin");
 
         std::string status_path = path + "/FrameWrapperCore_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "upstream_rings/";
 
         status.set_param(status_path + "frames_wrapped", frames_wrapped_);
 
@@ -177,7 +178,8 @@ namespace FrameProcessor
 
         status.set_param(status_path + "frames_wrapped_us_compressing", avg_us_spent_wrapping_);
 
-        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
     }
 
     bool FrameWrapperCore::connect(void)

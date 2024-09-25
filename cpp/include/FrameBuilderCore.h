@@ -44,6 +44,7 @@ namespace FrameProcessor
         uint64_t built_frames_hz_;
         uint64_t idle_loops_;
         uint64_t avg_us_spent_building_;
+        float core_useage_;
 
 
         struct rte_ring* upstream_ring_;

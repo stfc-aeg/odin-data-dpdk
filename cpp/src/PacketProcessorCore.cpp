@@ -427,12 +427,13 @@ namespace FrameProcessor
             << " from the DPDK plugin");
 
         std::string status_path = path + "/packetprocessorcore_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "upstream_rings/";
 
         status.set_param(status_path + "dropped_frames", dropped_frames_);
 
         status.set_param(status_path + "dropped_packets", dropped_packets_);
 
-        status.set_param(status_path + "current_frame", current_frame_);
+        status.set_param(status_path + "current_frame_number", current_frame_);
 
         status.set_param(status_path + "frames_incomplete", incomplete_frames_);
 
@@ -440,9 +441,12 @@ namespace FrameProcessor
 
         status.set_param(status_path + "frames_complete_hz", frames_complete_hz_);
 
-        status.set_param(status_path + ring_name_str(config_.upstream_core, socket_id_, proc_idx_), rte_ring_count(packet_fwd_ring_));
+        
 
-        status.set_param(status_path + ring_name_clear_frames(socket_id_), rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(packet_fwd_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(packet_fwd_ring_));
+
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_), rte_ring_count(clear_frames_ring_));
     }
 
     bool PacketProcessorCore::connect(void)
