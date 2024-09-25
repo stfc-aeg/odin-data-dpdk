@@ -446,7 +446,7 @@ namespace FrameProcessor
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(packet_fwd_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(packet_fwd_ring_));
 
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_), rte_ring_count(clear_frames_ring_));
+        
     }
 
     bool PacketProcessorCore::connect(void)

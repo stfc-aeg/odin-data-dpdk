@@ -120,7 +120,7 @@ namespace FrameProcessor
                 built_frames_hz_ = frames_per_second;
                 avg_us_spent_building_ = (average_building_cycles * 1000000) / cycles_per_sec;
 
-                core_useage_ = cycles_working / cycles_per_sec;
+                core_useage_ = (cycles_working / cycles_per_sec) * 100;
                 
 
                 // Reset any counters
@@ -258,12 +258,11 @@ namespace FrameProcessor
 
         status.set_param(status_path + "idle_loops", idle_loops_);
 
-        status.set_param(status_path + "average_us_per_frame", avg_us_spent_building_);
-
         status.set_param(status_path + "core_useage", (int) core_useage_);
 
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+
     }
 
     bool FrameBuilderCore::connect(void)
