@@ -45,7 +45,6 @@ namespace FrameProcessor
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating shared memory buffer " << name_
             << " of size " << mem_size_
             << " on socket " << socket_id_
-            << memzone_->name
         );
         memzone_ = rte_memzone_reserve(
             name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB | RTE_MEMZONE_IOVA_CONTIG
@@ -56,7 +55,6 @@ namespace FrameProcessor
             LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
                         << " on socket " << socket_id_
                         << " : " << rte_strerror(rte_errno)
-                        << " " << name_
                 );
             
             memzone_ = rte_memzone_lookup(name_.c_str());
@@ -65,7 +63,6 @@ namespace FrameProcessor
                 LOG4CXX_ERROR(logger_, "Error looking up shared memory buffer " << name_
                         << " on socket " << socket_id_
                         << " : " << rte_strerror(rte_errno)
-                        << " " << name_
                 );
                 // TODO - this is fatal and should raise an exception
             }

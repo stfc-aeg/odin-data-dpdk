@@ -304,12 +304,12 @@ namespace FrameProcessor
                     // TODO handle illegal frame number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
-                    LOG4CXX_ERROR(logger_, "Core " << lcore_id_
-                                        << " Error:  illegal frame packet number: "
-                                        << packet_number
-                                        << " in frame: "
-                                        << current_frame_number
-                                    );
+                    // LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                    //                     << " Error:  illegal frame packet number: "
+                    //                     << packet_number
+                    //                     << " in frame: "
+                    //                     << current_frame_number
+                    //                 );
                 }
 
                 // Look to check the SOF & EOF markers

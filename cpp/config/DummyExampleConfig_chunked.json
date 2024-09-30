@@ -1,0 +1,134 @@
+[
+    {
+        "fr_setup": {
+            "fr_ready_cnxn": "tcp://0.0.0.0:6969",
+            "fr_release_cnxn": "tcp://0.0.0.0:6970"
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "DummyDpdk",
+                "name": "DummyDpdkPlugin",
+                "library": "./lib/libDummyDpdkPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "Liveview",
+                "name": "LiveViewPlugin",
+                "library": "./lib/libLiveViewPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "hdf",
+                "name": "FileWriterPlugin",
+                "library": "./lib/libHdf5Plugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "DummyDpdk",
+                "connection": "frame_receiver"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "hdf",
+                "connection": "DummyDpdk"
+            }
+        }
+    },
+    {
+        "DummyDpdk": {
+            "update_config": false,
+            "dpdk_process_rank": 0,
+            "num_secondary_processes": 0,
+            "shared_buffer_size": 17179869184,
+            "dpdk_eal": {
+                "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
+                "loglevel": "debug",
+                "allowdevice": "0000:2c:00.0",
+                "proc-type": "Primary",
+                "file-prefix": "odin-data"
+            },
+            "worker_cores": {
+                "packet_rx": {
+                    "core_name": "PacketRxCore",
+                    "num_cores": 1,
+                    "rx_ports": [
+                        1234
+                    ],
+                    "device_ip": "10.0.100.6",
+                    "rx_burst_size": 128,
+                    "fwd_ring_size": 32786,
+                    "release_ring_size": 32768,
+                    "rx_queue_id": 0,
+                    "tx_queue_id": 0,
+                    "max_packet_tx_retries": 64,
+                    "max_packet_queue_retries": 64
+                },
+                "packet_processor": {
+                    "core_name": "PacketProcessorCore",
+                    "num_cores": 1,
+                    "connect": "packet_rx",
+                    "frame_timeout": 1000
+                },
+                "frame_builder": {
+                    "core_name": "FrameBuilderCore",
+                    "num_cores": 1,
+                    "connect": "packet_processor",
+                    "secondary_fanout": false
+                },
+                "frame_wrapper": {
+                    "core_name": "FrameWrapperCore",
+                    "dataset_name": "dummy",
+                    "num_cores": 1,
+                    "connect": "frame_builder"
+                }
+            }
+        }
+    },
+    {
+        "hdf": {
+            "dataset": {
+                "dummy": {
+                    "datatype": "uint16",
+                    "dims": [
+                        1000,
+                        1000
+                    ],
+                    "chunks":
+                    [
+                        5,
+                        1000,
+                        1000
+                    ],
+                    "compression": "none"
+                }
+            },
+            "file": {
+                "path": "/tmp/"
+            },
+            "frames": 0,
+            "acquisition_id": "test_1",
+            "write": false,
+            "timeout_timer_period": 10000,
+            "process": {
+                "number": 1,
+                "rank": 0,
+                "frames_per_block": 1,
+                "blocks_per_file": 1
+            }
+        }
+    }
+]
