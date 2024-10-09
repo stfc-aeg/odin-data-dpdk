@@ -42,12 +42,26 @@ namespace FrameProcessor
 
         LoggerPtr logger_;
 
-        uint64_t dropped_frames_;
-        uint64_t dropped_packets_;
+        
+        
         int64_t current_frame_;
+        
+        uint64_t total_packets_;
+        uint64_t packets_hz_;
+        uint64_t dropped_packets_;
+        uint64_t last_frame_;
+        uint64_t processed_frames_;
+        uint64_t processed_frames_hz_;
+        uint64_t dropped_frames_;
         uint64_t incomplete_frames_;
-        uint64_t complete_frames_;
-        uint64_t frames_complete_hz_;
+        uint64_t idle_loops_;
+        uint64_t mean_us_on_frame_;
+        uint64_t maximum_us_on_frame_;
+        uint8_t  core_usage_;
+
+
+        uint64_t frame_buffer_size_;
+
 
         int64_t first_frame_number_;
 

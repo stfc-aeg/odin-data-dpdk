@@ -530,14 +530,15 @@ int main(int argc, char **argv) {
             nb_tx = rte_eth_tx_burst(0, 0, *PacketBuffs[counter] + temp_sent, 1);
             //if not all packets got queued then try and resend them
             while(nb_tx != 1){
-                
+                                
                 nb_tx = rte_eth_tx_burst(0, 0, *PacketBuffs[counter] + temp_sent, 1);
                 
             }
+            rte_delay_us(config_.interval);
 
             temp_sent++;
             //rte_delay_us(1);
-            rte_delay_us(config_.interval);
+            
         }
 
         

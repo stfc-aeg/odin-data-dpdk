@@ -6,7 +6,7 @@
 
 #include <rte_memcpy.h>
 
-#define FRAME_OUTER_CHUNK_SIZE 5
+#define FRAME_OUTER_CHUNK_SIZE 10
 #define PACKETS_PER_FRAME 250
 #define PACKET_PAYLOAD_SIZE 8000
 
@@ -31,7 +31,7 @@ struct X10GRawFrameHeader : RawFrameHeader
 	uint64_t frame_complete_time;
 	uint32_t frame_time_delta;
     uint64_t image_size;
-    uint8_t packet_state[PACKETS_PER_FRAME];  // struct array trick
+    uint8_t packet_state[1];  // One for each packet in the frame
 } __rte_packed;
 
 
@@ -44,7 +44,7 @@ struct X10GSuperFrameHeader : SuperFrameHeader
     uint64_t super_frame_time_delta;
     uint64_t super_frame_image_size;
     uint64_t image_size;
-    uint8_t frame_state[FRAME_OUTER_CHUNK_SIZE];
+    uint8_t frame_state[1]; // One for each frame in the superframe
 }__rte_packed;
 
 namespace Defaults
@@ -121,7 +121,7 @@ public:
     {
 
         X10GSuperFrameHeader* X10GSuperhdr = reinterpret_cast<X10GSuperFrameHeader *>(super_frame_hdr);
-        //X10GSuperhdr->frame_state[frame_number] = 1;
+        X10GSuperhdr->frame_state[frame_number] = 1;
         X10GSuperhdr->frames_received++;
 
         return true;

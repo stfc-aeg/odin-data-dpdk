@@ -40,10 +40,14 @@ namespace FrameProcessor
 
         LoggerPtr logger_;
 
-        uint64_t built_frames_;
-        uint64_t built_frames_hz_;
+        // Status reporting variables
+        uint64_t last_frame_;
+        uint64_t processed_frames_;
+        uint64_t processed_frames_hz_;
         uint64_t idle_loops_;
-        uint64_t avg_us_spent_compressing_;
+        uint64_t mean_us_on_frame_;
+        uint64_t maximum_us_on_frame_;
+        uint8_t core_usage_;
 
         struct rte_ring* frame_ready_ring_;
         struct rte_ring* clear_frames_ring_;

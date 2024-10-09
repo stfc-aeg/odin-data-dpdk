@@ -109,7 +109,7 @@
                     ],
                     "chunks":
                     [
-                        5,
+                        10,
                         1000,
                         1000
                     ],
@@ -119,14 +119,14 @@
             "file": {
                 "path": "/tmp/"
             },
-            "frames": 0,
+            "frames": 1000,
             "acquisition_id": "test_1",
-            "write": false,
+            "write": true,
             "timeout_timer_period": 10000,
             "process": {
                 "number": 1,
                 "rank": 0,
-                "frames_per_block": 1,
+                "frames_per_block": 4,
                 "blocks_per_file": 1
             }
         }

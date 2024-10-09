@@ -23,9 +23,15 @@ namespace FrameProcessor
         dropped_packets_(0),
         current_frame_(-1),
         incomplete_frames_(0),
-        complete_frames_(0),
-        frames_complete_hz_(0),
+        last_frame_(0),
+        processed_frames_(0),
+        processed_frames_hz_(0),
+        idle_loops_(0),
+        mean_us_on_frame_(0),
+        maximum_us_on_frame_(0),
+        core_usage_(0),
         first_frame_number_(-1),
+        total_packets_(0),
         logger_(Logger::getLogger("FP.PacketProcCore"))
     {
 
@@ -153,17 +159,20 @@ namespace FrameProcessor
         // Variable set from the decoder based on packet size
         const std::size_t payload_size = decoder_->get_payload_size();
         const std::size_t packets_per_frame = decoder_->get_packets_per_frame();
-
-        // Initialise counters and timers
-        uint64_t ticks_per_sec = rte_get_tsc_hz();
-        uint64_t last = rte_get_tsc_cycles();
-        uint64_t loops_per_sec = 0;
-        uint64_t frame_hz_counter = 0;
-        uint64_t start = rte_get_tsc_cycles();
-        uint64_t start_of_compression = rte_get_tsc_cycles();
         uint64_t frame_timeout_cycles = convert_ms_to_cycles(config_.frame_timeout_);
-
         uint64_t superframe_const = (decoder_->get_packets_per_frame() / frame_outer_chunk_size);
+
+        // Status reporting variables
+        uint64_t frames_per_second = 1;
+        uint64_t last = rte_get_tsc_cycles();
+        uint64_t cycles_per_sec = rte_get_tsc_hz();
+        uint64_t cycles_working = 1;
+        uint64_t start_frame_cycles = 1;
+        uint64_t average_frame_cycles = 1;
+        uint64_t total_frame_cycles = 1;
+        uint64_t maximum_frame_cycles = 1;
+        uint64_t idle_loops = 0;
+        uint64_t packets_per_second = 0;
 
         // malloc a memory location for this core to use as it's dropped frame buffer
         dropped_frame_buffer_ = 
@@ -177,6 +186,9 @@ namespace FrameProcessor
             // If a packet was deqeued process it
             if (likely(rc == 0))
             {
+
+                start_frame_cycles = rte_get_tsc_cycles();
+                total_packets_++;
 
                 // Get pointers to the ethernet, UDP, packet headers and payload
                 pkt_ether_hdr = rte_pktmbuf_mtod(pkt, rte_ether_hdr *);
@@ -207,17 +219,17 @@ namespace FrameProcessor
                 uint64_t current_frame_index = current_frame_number - (current_super_frame_number * decoder_->get_frame_outer_chunk_size());
 
 
-                LOG4CXX_DEBUG(logger_, "Core " << lcore_id_
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
                             << " current_frame_number: " << current_frame_number
                             << " current_super_frame_number: " << current_super_frame_number
                             << " current_frame_index: " << current_frame_index
                             );
 
                 // Get the packet offset for the super frame
+                
+                uint32_t packet_offset = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
 
-                uint32_t packet_number = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
-
-                //uint32_t packet_number = decoder_->get_packet_number(pkt_header) + (current_frame_number * packets_per_frame);
+                uint32_t packet_number = decoder_->get_packet_number(pkt_header);
 
                 // Check if the packet frame number matches the frame currently being captured
                 if (unlikely(current_frame_ != current_super_frame_number))
@@ -250,7 +262,7 @@ namespace FrameProcessor
                             current_super_frame_buffer_ = dropped_frame_buffer_;
                             dropped_frames_++;
                             LOG4CXX_WARN(logger_,
-                                 "dropping frame: " << current_frame_);
+                                "dropping frame: " << current_frame_);
                         }
                         else
                         {
@@ -279,7 +291,7 @@ namespace FrameProcessor
                     (packet_number * payload_size), pkt_payload, payload_size
                 );
 
-                //LOG4CXX_INFO(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
+                // LOG4CXX_INFO(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
                 // // Set the current packet as received in the frame header
                 if (decoder_->set_packet_received(current_frame_header_, packet_number))
                 {
@@ -287,6 +299,12 @@ namespace FrameProcessor
                     // Check to see if that frames has been completed in the superframe
                     if(decoder_->get_packets_received(current_frame_header_) == packets_per_frame)
                     {
+                        LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
+                            << " current_frame_number: " << current_frame_number
+                            << " current_super_frame_number: " << current_super_frame_number
+                            << " current_frame_index: " << current_frame_index
+                            << " Got all packets for sub frame"
+                            );
                         
                         // All packets for this sub-frame have been captured, mark it as complete
                         if (!decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
@@ -304,12 +322,12 @@ namespace FrameProcessor
                     // TODO handle illegal frame number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
-                    // LOG4CXX_ERROR(logger_, "Core " << lcore_id_
-                    //                     << " Error:  illegal frame packet number: "
-                    //                     << packet_number
-                    //                     << " in frame: "
-                    //                     << current_frame_number
-                    //                 );
+                    LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                                        << " Error:  illegal frame packet number: "
+                                        << packet_number
+                                        << " in frame: "
+                                        << current_frame_number
+                                    );
                 }
 
                 // Look to check the SOF & EOF markers
@@ -333,10 +351,10 @@ namespace FrameProcessor
                         // Remove the frame reference from the unordered map
                         frame_buffer_map_.erase(current_frame_);
                         
-                        complete_frames_++;
-                        frame_hz_counter++;
+                        processed_frames_++;
+                        frames_per_second++;
 
-                        LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
+                        LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
 
                     }
                     current_frame_ = -1;
@@ -344,16 +362,47 @@ namespace FrameProcessor
 
                 // Enqueue the packet to be released as it's been copied onwards
                 rte_ring_enqueue(packet_release_ring_, (void *)pkt);
+
+                // Calculate status
+                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                total_frame_cycles += cycles_spent;
+                cycles_working += cycles_spent;
+                
+                if (maximum_frame_cycles < cycles_spent)
+                {
+                    maximum_frame_cycles = cycles_spent;
+                }
+
+                packets_per_second++;
             }
 
             // Periodically check mapped frames to see if any have timed out and enqueue as
             // appropriate
             uint64_t now = rte_get_tsc_cycles();
 
-            if (unlikely((now - last) >= (ticks_per_sec * 2)))
+            if (unlikely((now - last) >= (cycles_per_sec)))
             {
-                frames_complete_hz_ = frame_hz_counter;
-                frame_hz_counter = 0;
+                // Update any monitoring variables every second
+                processed_frames_hz_ = frames_per_second - 1;
+                packets_hz_ = packets_per_second;
+                mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
+                core_usage_ = (cycles_working * 255) / cycles_per_sec;
+
+                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
+
+                frame_buffer_size_ = frame_buffer_map_.size();
+
+                idle_loops_ = idle_loops;
+
+                
+
+                // Reset any counters
+                packets_per_second = 0;
+                frames_per_second = 1;
+                idle_loops = 0;
+                total_frame_cycles = 1;
+                cycles_working = 1;
+                last = now;
 
                 // Iterate through frames currently mapped
                 for (auto it = frame_buffer_map_.begin(); it != frame_buffer_map_.end();)
@@ -399,9 +448,8 @@ namespace FrameProcessor
 
                 // Update the timestamp for checking for timed-out frames
                 last = now;
-                loops_per_sec = 0;
             }
-            loops_per_sec++;
+            
         }
         rte_free(dropped_frame_buffer_);
         return true;
@@ -423,25 +471,34 @@ namespace FrameProcessor
 
     void PacketProcessorCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Status requested for packetprocessorcore_" << proc_idx_
+        LOG4CXX_DEBUG_LEVEL(2, logger_, "Status requested for packetprocessorcore_" << proc_idx_
             << " from the DPDK plugin");
 
         std::string status_path = path + "/packetprocessorcore_" + std::to_string(proc_idx_) + "/";
+        
+        // Create path for updstream ring status
         std::string ring_status = status_path + "upstream_rings/";
+
+        // Create path for timing status
+        std::string timing_status = status_path + "timing/";
 
         status.set_param(status_path + "dropped_frames", dropped_frames_);
 
         status.set_param(status_path + "dropped_packets", dropped_packets_);
 
-        status.set_param(status_path + "current_frame_number", current_frame_);
-
+        // Frame status reporting
+        status.set_param(status_path + "frames_processes", processed_frames_);
+        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
+        status.set_param(status_path + "idle_loops", idle_loops_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
         status.set_param(status_path + "frames_incomplete", incomplete_frames_);
+        status.set_param(status_path + "packets_total", total_packets_);
+        status.set_param(status_path + "frame_buffer_size", frame_buffer_size_);
 
-        status.set_param(status_path + "frames_complete_total", complete_frames_);
+        // Core timing status reporting
+        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
 
-        status.set_param(status_path + "frames_complete_hz", frames_complete_hz_);
-
-        
 
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(packet_fwd_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(packet_fwd_ring_));

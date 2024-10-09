@@ -107,13 +107,19 @@
                         1000,
                         1000
                     ],
+                    "chunks":
+                    [
+                        10,
+                        1000,
+                        1000
+                    ],
                     "compression": "none"
                 }
             },
             "file": {
                 "path": "/tmp/"
             },
-            "frames": 0,
+            "frames": 90,
             "acquisition_id": "test_1",
             "write": false,
             "timeout_timer_period": 10000,
