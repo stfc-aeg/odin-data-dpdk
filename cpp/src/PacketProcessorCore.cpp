@@ -487,7 +487,7 @@ namespace FrameProcessor
         status.set_param(status_path + "dropped_packets", dropped_packets_);
 
         // Frame status reporting
-        status.set_param(status_path + "frames_processes", processed_frames_);
+        status.set_param(status_path + "frames_processed", processed_frames_);
         status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
         status.set_param(status_path + "idle_loops", idle_loops_);
         status.set_param(status_path + "core_usage", (int)core_usage_);

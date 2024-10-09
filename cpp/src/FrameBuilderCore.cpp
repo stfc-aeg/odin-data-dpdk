@@ -264,10 +264,10 @@ namespace FrameProcessor
         std::string timing_status = status_path + "timing/";
 
         // Frame status reporting
-        status.set_param(status_path + "frames_processes", built_frames_);
+        status.set_param(status_path + "frames_processed", built_frames_);
         status.set_param(status_path + "frames_processed_per_second", built_frames_hz_);
         status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "core_useage", (int)core_usage_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
 
         // Core timing status reporting
         status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
