@@ -12,12 +12,12 @@ namespace FrameProcessor {
  * @param image_offset 
  */
 DpdkSharedBufferFrame::DpdkSharedBufferFrame(const FrameMetaData & meta_data,
-                                                 void *data_src,
-                                                 size_t nbytes,
-                                                 rte_ring *frame_processed,
-                                                 const int& image_offset)
+                                                void *data_src,
+                                                size_t nbytes,
+                                                rte_ring *frame_processed,
+                                                const int& image_offset)
     : Frame(meta_data, nbytes, image_offset) {
-                                                    
+    
     data_ptr_ = data_src;
     frame_processed_ = frame_processed;
 }

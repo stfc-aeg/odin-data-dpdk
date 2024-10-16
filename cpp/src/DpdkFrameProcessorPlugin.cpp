@@ -105,6 +105,8 @@ namespace FrameProcessor
   {
     // Return the configuration of the plugin
     LOG4CXX_DEBUG(logger_, "Configuration requested for DPDKFrameProcessor plugin");
+
+
   }
 
   /**

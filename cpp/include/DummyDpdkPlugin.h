@@ -55,6 +55,8 @@ namespace FrameProcessor
 
     DummyDpdkDecoder decoder_;
 
+    OdinData::IpcMessage config_;
+
   };
 
   /**

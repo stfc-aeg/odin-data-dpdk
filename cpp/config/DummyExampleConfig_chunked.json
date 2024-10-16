@@ -57,7 +57,6 @@
             "dpdk_eal": {
                 "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
                 "loglevel": "debug",
-                "allowdevice": "0000:2c:00.0",
                 "proc-type": "Primary",
                 "file-prefix": "odin-data"
             },
@@ -65,6 +64,7 @@
                 "packet_rx": {
                     "core_name": "PacketRxCore",
                     "num_cores": 1,
+                    "pcie_device": "0000:2c:00.0",
                     "rx_ports": [
                         1234
                     ],

@@ -44,6 +44,10 @@ namespace FrameProcessor
     LOG4CXX_INFO(logger_, "Configuring DummyDpdk plugin");
 
     LOG4CXX_INFO(logger_, "Plugin name: " << this->get_name());
+
+    // Make a copy of the config to return when the config if requested
+    config_.update(config);
+
     FrameCallback frame_callback = boost::bind(&DummyDpdkPlugin::process_frame, this, _1);
 
     DpdkFrameProcessorPlugin::configure(config, reply, &decoder_, frame_callback);
@@ -51,12 +55,25 @@ namespace FrameProcessor
   }
 
   void DummyDpdkPlugin::requestConfiguration(OdinData::IpcMessage& reply)
-  {
-    // Return the configuration of the plugin
-    LOG4CXX_INFO(logger_, "Configuration requested for DummyDpdk plugin");
+{
+  // Return the configuration of the plugin
+  LOG4CXX_INFO(logger_, "Configuration requested for DummyDpdk plugin");
 
-    DpdkFrameProcessorPlugin::requestConfiguration(reply);
+  // Encode config_ parameters to a JSON string
+  const char* config_params_json = config_.encode_params();
+
+  // Parse the JSON string into a rapidjson::Document
+  rapidjson::Document config_params_doc;
+  config_params_doc.Parse(config_params_json);
+
+  // Check for parsing errors
+  if (config_params_doc.HasParseError())
+  {
+    throw OdinData::IpcMessageException("Failed to parse config_ parameters JSON");
   }
+
+  reply.update(config_params_doc, "DummyDpdk");
+}
 
   /**
    * Collate status information for the plugin.  The status is added to the status IpcMessage object.

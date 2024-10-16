@@ -47,7 +47,7 @@ namespace FrameProcessor
             << " on socket " << socket_id_
         );
         memzone_ = rte_memzone_reserve(
-            name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB | RTE_MEMZONE_IOVA_CONTIG
+            name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB
         );
 
         if (memzone_ == NULL)
@@ -55,6 +55,7 @@ namespace FrameProcessor
             LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
                         << " on socket " << socket_id_
                         << " : " << rte_strerror(rte_errno)
+                        << " : " << rte_errno
                 );
             
             memzone_ = rte_memzone_lookup(name_.c_str());

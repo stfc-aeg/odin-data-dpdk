@@ -10,7 +10,6 @@ namespace FrameProcessor
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
         DpdkWorkerCore(socket_id),
-        port_id_(dpdkWorkCoreReferences.port_id),
         proc_idx_(proc_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
         logger_(Logger::getLogger("FP.PacketRxCore")),
@@ -20,7 +19,10 @@ namespace FrameProcessor
         first_seen_frame_number_(-1),
         dropped_packets_(0),
         captured_packets_(0),
-        total_packets_(0)
+        total_packets_(0),
+        port_id_(UINT16_MAX),
+        device_configured_(false),
+        device_(nullptr)
     {
 
         // Resolve configuration parameters for this core from the config object passed as an
@@ -34,6 +36,13 @@ namespace FrameProcessor
             << " | num_downsteam_cores: " << config_.num_downstream_cores
         );
 
+
+        // Add devices provided in the configuration
+        if (!config_.pcie_device_.empty()) {
+            if (!add_device(config_.pcie_device_)) {
+                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << config_.pcie_device_);
+            }
+        }
 
         // Resolve the device MAC address for this port, to allow ARP requests to be responded to
         int rc = rte_eth_macaddr_get(port_id_, &dev_eth_addr_);
@@ -136,6 +145,10 @@ namespace FrameProcessor
         // Free the packet release ring
         rte_ring_free(packet_release_ring_);
 
+        if (device_) {
+            delete device_;
+        }
+
     }
 
     bool PacketRxCore::run(unsigned int lcore_id)
@@ -163,6 +176,12 @@ namespace FrameProcessor
 
         bool pkt_tx_reply = false;
         bool pkt_forwarded = false;
+
+        // check to see if a valid device has been configured
+        if (!device_configured_ || !device_) {
+            LOG4CXX_ERROR(logger_, "No device configured. Stopping RxCore.");
+            return false;
+        }
 
         while (likely(run_lcore_))
         {
@@ -537,6 +556,62 @@ namespace FrameProcessor
         }
 
         return pkt_forwarded;
+    }
+
+    bool PacketRxCore::add_device(const std::string& pci_address)
+    {
+        if (device_configured_) {
+            LOG4CXX_WARN(logger_, "Device already configured. Ignoring: " << pci_address);
+            return false;
+        }
+
+        int ret = rte_eal_hotplug_add("pci", pci_address.c_str(), "");
+        if (ret < 0) {
+            LOG4CXX_ERROR(logger_, "Failed to hot plug device: " << pci_address);
+            return false;
+        }
+
+        ret = rte_eth_dev_get_port_by_name(pci_address.c_str(), &port_id_);
+        if (ret != 0) {
+            LOG4CXX_ERROR(logger_, "Failed to get port ID for device: " << pci_address);
+            return false;
+        }
+
+        device_ = new DpdkDevice(port_id_);
+        if (!device_->start()) {
+            LOG4CXX_ERROR(logger_, "Failed to start device: " << pci_address);
+            delete device_;
+            device_ = nullptr;
+            return false;
+        }
+
+        device_configured_ = true;
+        LOG4CXX_INFO(logger_, "Successfully added device: " << pci_address << " (Port ID: " << port_id_ << ")");
+        return true;
+    }
+    
+    bool PacketRxCore::remove_device()
+    {
+        if (!device_configured_) {
+            return true;
+        }
+
+        if (device_) {
+            device_->stop();
+            delete device_;
+            device_ = nullptr;
+        }
+
+        int ret = rte_eal_hotplug_remove("pci", config_.pcie_device_.c_str());
+        if (ret < 0) {
+            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << config_.pcie_device_);
+            return false;
+        }
+
+        device_configured_ = false;
+        port_id_ = UINT16_MAX;
+        LOG4CXX_INFO(logger_, "Successfully removed device: " << config_.pcie_device_);
+        return true;
     }
 
     void PacketRxCore::status(OdinData::IpcMessage& status, const std::string& path)

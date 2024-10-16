@@ -19,7 +19,7 @@ using namespace log4cxx;
 using namespace log4cxx::helpers;
 #include <DebugLevelLogger.h>
 #include <IpcMessage.h>
-#include "DpdkDevice.h"
+
 #include "DpdkWorkerCore.h"
 
 #include "DpdkSharedBuffer.h"
@@ -69,7 +69,6 @@ namespace FrameProcessor
         typedef std::map<std::string, const char*> DpdkEalParamMap;
         static DpdkEalParamMap dpdk_eal_param_map_;
 
-        std::vector<DpdkDevice *> devices_;
         std::vector<std::vector<int> > available_core_ids_;
         std::vector<int> used_core_ids_;
         std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;

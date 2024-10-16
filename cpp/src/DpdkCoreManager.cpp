@@ -154,110 +154,81 @@ namespace FrameProcessor
             }
         }
 
-        
-
-
-
-        // Loop over all the ethernet devices available to DPDK, creating a device for each of them
-        int port_id;
-        RTE_ETH_FOREACH_DEV(port_id)
-        {
-            DpdkDevice* device = new DpdkDevice(port_id);
-            devices_.push_back(device);
-            LOG4CXX_INFO(logger_, "Device on port " << port_id
-                << " socket " << device->socket_id()
-                << " has " << available_core_ids_[device->socket_id()].size()
-                << " lcores available"
-            );
-        }
-
-        // Loop over initialised devices, creating a shared memory buffer and registering worker
-        // cores for each as appropriate
-        for (auto& device: devices_)
-        {
             
-            // Create a shared buffer for packet processor cores to build raw frames into. This will
-            // be shared between all PPCs, where the first to start will set up the frame processed
-            // ring
-            DpdkSharedBuffer* shared_buffer =
-                new DpdkSharedBuffer(
-                    core_config_.shared_buffer_size_, decoder->get_frame_buffer_size(),
-                    device->socket_id()
-                );
-            shared_buffers_.push_back(shared_buffer);
-            LOG4CXX_DEBUG(logger_, "Created shared buffer for device on port " << device->port_id()
-                << " socket " << device->socket_id()
-                << " total size " << shared_buffer->get_mem_size()
-                << " buffer size " << shared_buffer->get_buffer_size()
-                << " num buffers " << shared_buffer->get_num_buffers()
+        // Create a shared buffer for packet processor cores to build raw frames into. This will
+        // be shared between all PPCs, where the first to start will set up the frame processed
+        // ring
+        DpdkSharedBuffer* shared_buffer =
+            new DpdkSharedBuffer(
+                core_config_.shared_buffer_size_, decoder->get_frame_buffer_size(),
+                0
             );
 
-            // Declare composite data structure to hold the configuration that all workers will likely require
+        shared_buffers_.push_back(shared_buffer);
+        LOG4CXX_DEBUG(logger_, "Created shared buffer for worker cores"
+            << " socket " << 0
+            << " total size " << shared_buffer->get_mem_size()
+            << " buffer size " << shared_buffer->get_buffer_size()
+            << " num buffers " << shared_buffer->get_num_buffers()
+        );
 
-            // change name
-            DpdkWorkCoreReferences dpdkWorkCoreReferences = 
+        // Declare composite data structure to hold the configuration that all workers will likely require
+        DpdkWorkCoreReferences dpdkWorkCoreReferences = 
+        {
+            core_config_,
+            decoder,
+            frame_callback_,
+            shared_buffer,
+        };
+
+
+        if(core_config_.worker_core_params_.IsObject()) {
+            for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
+                itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
             {
-                core_config_,
-                decoder,
-                frame_callback_,
-                shared_buffer,
-                device->port_id()
-
-            };
-
-
-            if(core_config_.worker_core_params_.IsObject()) {
-                for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
-                    itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
+                // Check if the current worker has "num_cores" and "core_name"
+                if(itr->value.HasMember("num_cores") && itr->value["num_cores"].IsInt() &&
+                itr->value.HasMember("core_name") && itr->value["core_name"].IsString())
                 {
-                    // Check if the current worker has "num_cores" and "core_name"
-                    if(itr->value.HasMember("num_cores") && itr->value["num_cores"].IsInt() &&
-                    itr->value.HasMember("core_name") && itr->value["core_name"].IsString())
+                    // Extract the number of cores and the worker class name
+                    unsigned int num_cores = itr->value["num_cores"].GetUint();
+                    std::string worker_class_name = itr->value["core_name"].GetString();
+
+                    unsigned int process_offset = num_cores * core_config_.dpdk_process_rank_;
+
+                    // Launch each worker core
+                    for(unsigned int i = 0; i < num_cores; i++)
                     {
-                        // Extract the number of cores and the worker class name
-                        unsigned int num_cores = itr->value["num_cores"].GetUint();
-                        std::string worker_class_name = itr->value["core_name"].GetString();
+                        LOG4CXX_INFO(logger_, "Launching worker core from class: " << worker_class_name);
 
-                        unsigned int process_offset = num_cores * core_config_.dpdk_process_rank_;
+                        boost::shared_ptr<DpdkWorkerCore> core = FrameProcessor::DpdkCoreLoader<DpdkWorkerCore>::load_class(
+                            worker_class_name.c_str(),
+                            i + process_offset,
+                            0,
+                            dpdkWorkCoreReferences
+                        );
 
-                        // Launch each worker core
-                        for(unsigned int i = 0; i < num_cores; i++)
-                        {
-                            LOG4CXX_INFO(logger_, "Launching worker core from class: " << worker_class_name);
-
-                            boost::shared_ptr<DpdkWorkerCore> core = FrameProcessor::DpdkCoreLoader<DpdkWorkerCore>::load_class(
-                                worker_class_name.c_str(),
-                                i + process_offset,
-                                device->socket_id(),
-                                dpdkWorkCoreReferences
-                            );
-
-                            register_worker_core(core);
+                        
+                        register_worker_core(core);
                         }
                     }
                 }
             }
         }
-    }
+
 
 
     DpdkCoreManager::~DpdkCoreManager()
     {
         LOG4CXX_INFO(logger_, "Cleaning up DPDK core manager");
 
-        // Stop all running worker cores and ethernet devices
+        // Stop all running worker cores
         stop();
 
         // Delete shared buffers
         for (auto& shared_buffer: shared_buffers_)
         {
             delete shared_buffer;
-        }
-
-        // Delete devices
-        for (auto& device: devices_)
-        {
-            delete device;
         }
 
         // Clean up the DPDK runtime environment
@@ -277,14 +248,6 @@ namespace FrameProcessor
             <<" socket: " << rte_socket_id());
         LOG4CXX_INFO(logger_, "Main lcore:    " << rte_get_main_lcore());
 
-        if (core_config_.dpdk_process_rank_ == 0)
-        {
-            // Start the ethernet devices
-            for (auto& device: devices_)
-            {
-                device->start();
-            }
-        }
 
         // Connect all cores to their upstream resources
 
@@ -399,17 +362,7 @@ namespace FrameProcessor
         running_cores_.clear();
         std::vector<boost::shared_ptr<DpdkWorkerCore>>(running_cores_).swap(running_cores_);
 
-        // Warn if there are no ethernet devices to stop
-        if (devices_.empty())
-        {
-            LOG4CXX_WARN(logger_, "No devices to stop");
-        }
 
-        // Stop all the ethernet devices
-        for (auto& device: devices_)
-        {
-            device->stop();
-        }
     }
 
     ssize_t DpdkCoreManager::dpdk_log_writer(void *, const char *data, size_t len)
@@ -529,11 +482,5 @@ namespace FrameProcessor
 
 
     }
-
-
-    
-
-
-
 
 }
