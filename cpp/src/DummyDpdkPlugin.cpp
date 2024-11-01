@@ -93,7 +93,7 @@ namespace FrameProcessor
    */
   bool DummyDpdkPlugin::reset_statistics(void)
   {
-    LOG4CXX_INFO(logger_, "Statistics reset requested for DummyDpdk plugin")
+    LOG4CXX_INFO(logger_, "Statistics reset requested for DummyDpdk plugin");
 
     bool reset_ok = true;
 

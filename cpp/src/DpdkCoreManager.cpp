@@ -43,7 +43,7 @@ namespace FrameProcessor
 
         // Update core configuration parameters from the config message provided in the arguments
         ParamContainer::Document config_params;
-        config.encode_params(config_params);
+        config.copy_params(config_params);
         core_config_.update(config_params);
 
         // Create a custom IO stream bound to a local method, which can be used to redirect DPDK

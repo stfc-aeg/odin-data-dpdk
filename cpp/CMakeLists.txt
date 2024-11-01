@@ -53,6 +53,20 @@ find_package( Boost 1.41.0
 find_package(LOG4CXX 0.10.0 REQUIRED)
 find_package(DPDK 21.1.0 REQUIRED)
 find_package(Blosc)
+message(STATUS "LIBDPDK_LIBRARY_DIRS: ${LIBDPDK_LIBRARY_DIRS}")
+
+# Check if Boost version has placeholders and set definition accordingly
+message("\nChecking Boost version placeholder support")
+if (NOT DEFINED Boost_VERSION_STRING)
+  set(Boost_VERSION_STRING "${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
+endif ()
+if ((Boost_VERSION_STRING EQUAL 1.60.0) OR (Boost_VERSION_STRING GREATER 1.60.0))
+  message(STATUS "Boost version ${Boost_VERSION_STRING} has placeholders")
+  ADD_DEFINITIONS(-DBOOST_HAS_PLACEHOLDERS)
+  #ADD_DEFINITIONS(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
+else ()
+  message(STATUS "Boost version ${Boost_VERSION_STRING} does not have placeholders")
+endif ()
 
 message("Determining odin-data-dpdk version")
 include(GetGitRevisionDescription)

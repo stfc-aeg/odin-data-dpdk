@@ -131,7 +131,7 @@ namespace FrameProcessor
    */
   bool DpdkFrameProcessorPlugin::reset_statistics(void)
   {
-    LOG4CXX_DEBUG(logger_, "Statistics reset requested for DPDKFrameProcessor plugin")
+    LOG4CXX_DEBUG(logger_, "Statistics reset requested for DPDKFrameProcessor plugin");
 
     return true;
   }
