@@ -4,7 +4,7 @@ file(GLOB DPDK_LIB_SOURCES *.cpp)
 include_directories(
   ${ODINDATA_ROOT_DIR}/include
   ${ODINDATA_ROOT_DIR}/include/frameProcessor
-  ${LIBDPDK_INCLUDE_DIRS}
+  ${DPDK_INCLUDE_DIRS}
 )
 
 add_library(${ODINDATA_DPDK_LIBRARY} SHARED 
@@ -21,16 +21,16 @@ add_library(${ODINDATA_DPDK_LIBRARY} SHARED
         PacketRxCore.cpp
 )
 
-target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${LIBDPDK_CFLAGS})
-target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${LIBDPDK_LIBRARY_DIRS})
+target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_CFLAGS})
+target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_LIBRARY_DIRS})
 target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
-    rte_eal rte_kvargs rte_telemetry ${LIBDPDK_LDFLAGS}
+    rte_eal rte_kvargs rte_telemetry ${DPDK_LDFLAGS}
 )
 
 get_target_property(PLUGIN_INSTALL_RPATH ${ODINDATA_DPDK_LIBRARY} INSTALL_RPATH)
 
 set_target_properties(${ODINDATA_DPDK_LIBRARY} PROPERTIES
-  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${LIBDPDK_LIBRARY_DIRS}"
+  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${DPDK_LIBRARY_DIRS}"
 )
 
 install(TARGETS ${ODINDATA_DPDK_LIBRARY} DESTINATION lib)
@@ -50,18 +50,18 @@ add_library(DummyDpdkPlugin SHARED
         DummyDpdkPlugin.cpp
 )
 
-target_compile_options(DummyDpdkPlugin PRIVATE ${LIBDPDK_CFLAGS})
-target_link_directories(DummyDpdkPlugin PRIVATE ${ODINDATA_LIBRARY_DIR} ${LIBDPDK_LIBRARY_DIRS})
+target_compile_options(DummyDpdkPlugin PRIVATE ${DPDK_CFLAGS})
+target_link_directories(DummyDpdkPlugin PRIVATE ${ODINDATA_LIBRARY_DIR} ${DPDK_LIBRARY_DIRS})
 target_link_libraries(DummyDpdkPlugin
         PRIVATE OdinDataDpdk rte_eal rte_kvargs rte_telemetry
-        ${LIBDPDK_LDFLAGS} ${BLOSC_LIBRARIES}
+        ${DPDK_LDFLAGS} ${BLOSC_LIBRARIES}
 )
 
 get_target_property(PLUGIN_INSTALL_RPATH DummyDpdkPlugin INSTALL_RPATH)
 
 
 set_target_properties(DummyDpdkPlugin PROPERTIES
-  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${LIBDPDK_LIBRARY_DIRS}"
+  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${DPDK_LIBRARY_DIRS}"
 )
 
 install(TARGETS DummyDpdkPlugin DESTINATION lib)

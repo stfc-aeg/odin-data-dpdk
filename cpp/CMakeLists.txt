@@ -53,7 +53,6 @@ find_package( Boost 1.41.0
 find_package(LOG4CXX 0.10.0 REQUIRED)
 find_package(DPDK 21.1.0 REQUIRED)
 find_package(Blosc)
-message(STATUS "LIBDPDK_LIBRARY_DIRS: ${LIBDPDK_LIBRARY_DIRS}")
 
 # Check if Boost version has placeholders and set definition accordingly
 message("\nChecking Boost version placeholder support")
