@@ -11,7 +11,7 @@ namespace FrameProcessor
     ) :
         DpdkWorkerCore(socket_id),
         proc_idx_(proc_idx),
-        decoder_(dpdkWorkCoreReferences.decoder),
+        decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         logger_(Logger::getLogger("FP.PacketRxCore")),
         first_frame_number_(-1),
         rx_enable_(false),

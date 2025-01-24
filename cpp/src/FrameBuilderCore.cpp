@@ -8,18 +8,18 @@ namespace FrameProcessor
 {
     FrameBuilderCore::FrameBuilderCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
-                                        ) : DpdkWorkerCore(socket_id),
-                                        logger_(Logger::getLogger("FP.FrameBuilderCore")),
-                                        proc_idx_(fb_idx),
-                                        decoder_(dpdkWorkCoreReferences.decoder),
-                                        shared_buf_(dpdkWorkCoreReferences.shared_buf),
-                                        built_frames_(0),
-                                        built_frames_hz_(1),
-                                        idle_loops_(0),
-                                        mean_us_on_frame_(0),
-                                        maximum_us_on_frame_(0),
-                                        core_usage_(1)
-    {
+    ) : DpdkWorkerCore(socket_id),
+        logger_(Logger::getLogger("FP.FrameBuilderCore")),
+        proc_idx_(fb_idx),
+        decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
+        shared_buf_(dpdkWorkCoreReferences.shared_buf),
+        built_frames_(0),
+        built_frames_hz_(1),
+        idle_loops_(0),
+        mean_us_on_frame_(0),
+        maximum_us_on_frame_(0),
+        core_usage_(1)
+{
 
         // Get the configuration container for this worker
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -150,7 +150,7 @@ namespace FrameProcessor
                 // If a superframe has any incomplete frames, iterate through them
                 // If the frame has any dropped packets, iterate through the frame and clear
                 // the payload of the dropped packets
-                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_recieved(current_frame_buffer_);
+                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_received(current_frame_buffer_);
 
                 if (incomplete_frames)
                 {

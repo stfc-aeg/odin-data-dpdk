@@ -10,7 +10,7 @@ using namespace log4cxx::helpers;
 #include "DpdkSharedBuffer.h"
 #include "DpdkCoreConfiguration.h"
 #include "FrameBuilderConfiguration.h"
-#include "ProtocolDecoder.h"
+#include "PacketProtocolDecoder.h"
 #include <rte_ring.h>
 #include <blosc.h>
 
@@ -34,7 +34,7 @@ namespace FrameProcessor
 
     private:
         int proc_idx_;
-        ProtocolDecoder* decoder_;
+        PacketProtocolDecoder* decoder_;
         DpdkSharedBuffer* shared_buf_;
         FrameBuilderConfiguration config_;
 

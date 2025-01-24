@@ -17,7 +17,7 @@ namespace FrameProcessor
     ) :
         DpdkWorkerCore(socket_id),
         proc_idx_(proc_idx),
-        decoder_(dpdkWorkCoreReferences.decoder),
+        decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         dropped_frames_(0),
         dropped_packets_(0),
@@ -307,7 +307,7 @@ namespace FrameProcessor
                             );
                         
                         // All packets for this sub-frame have been captured, mark it as complete
-                        if (!decoder_->set_super_frame_frames_recieved(current_super_frame_buffer_, current_frame_number))
+                        if (!decoder_->set_super_frame_frames_received(current_super_frame_buffer_, current_frame_number))
                         {
                             // TODO handle illegal frame number here
                             LOG4CXX_ERROR(logger_, "Core " << lcore_id_
@@ -333,7 +333,7 @@ namespace FrameProcessor
                 // Look to check the SOF & EOF markers
                 // check to see if the frame is complete
 
-                if (decoder_->get_super_frame_frames_recieved(current_super_frame_buffer_) == decoder_->get_frame_outer_chunk_size())
+                if (decoder_->get_super_frame_frames_received(current_super_frame_buffer_) == decoder_->get_frame_outer_chunk_size())
                 {
                     // The frame is complete, so enqueue the frame reference for the
                     // FrameBuilderCore to pick up. Check if the current frame is 'dropped' and
@@ -415,7 +415,7 @@ namespace FrameProcessor
                         
                         LOG4CXX_INFO(logger_, "Core " << lcore_id_
                             << " dropping super frame " << decoder_->get_super_frame_number(it->second)
-                            << " with " << decoder_->get_super_frame_frames_recieved(it->second)
+                            << " with " << decoder_->get_super_frame_frames_received(it->second)
                             << " complete sub frames"
                             );
 

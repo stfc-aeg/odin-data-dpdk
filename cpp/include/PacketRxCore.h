@@ -13,7 +13,7 @@ using namespace log4cxx::helpers;
 #include "DpdkWorkerCore.h"
 #include "DpdkCoreConfiguration.h"
 #include "PacketRxConfiguration.h"
-#include "ProtocolDecoder.h"
+#include "PacketProtocolDecoder.h"
 #include "DpdkDevice.h"
 
 #include <rte_ether.h>
@@ -70,7 +70,7 @@ namespace FrameProcessor
         uint64_t captured_packets_;
         uint16_t port_id_;
         bool device_configured_;
-        ProtocolDecoder* decoder_;
+        PacketProtocolDecoder* decoder_;
 
         int64_t first_frame_number_;
         uint64_t first_seen_frame_number_;
