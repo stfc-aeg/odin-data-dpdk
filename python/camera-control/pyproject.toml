@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=59.0.0", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camera_control"
+dynamic = ["version"]
+description = "Generic camera adapter for ODIN Data DPDK cameras"
+authors = [{name = "Evelyn Johns", email = "evelyn.johns@stfc.ac.uk"}]
+requires-python = ">=3.9"
+dependencies = [
+    "odin-control @ git+https://git@github.com/odin-detector/odin-control.git@1.6.0"
+]
+
