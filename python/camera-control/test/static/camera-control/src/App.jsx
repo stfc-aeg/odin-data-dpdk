@@ -2,23 +2,24 @@ import React from 'react'
 
 import { useState } from 'react'
 import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
+// import viteLogo from '/vite.svg'
 import './App.css'
 
 import { OdinApp } from 'odin-react'
-import 'odin-react/dist/index.css'
+// import 'odin-react/dist/index.css'
 
 import 'bootstrap/dist/css/bootstrap.min.css'
 import Container from 'react-bootstrap/Container'
 import InputGroup from 'react-bootstrap/InputGroup'
 
 import { useAdapterEndpoint } from 'odin-react'
-import { StatusBox } from 'odin-react'
+// import { StatusBox } from 'odin-react'
+import { OdinEventLog } from 'odin-react'
 
 function App() {
   // const [count, setCount] = useState(0)
 
-  const endpoint = useAdapterEndpoint("camera_control/cameras/aravis", "http://192.168.0.138:8888", 1000);
+  const endpoint = useAdapterEndpoint("camera_control/cameras/aravis",  import.meta.env.VITE_ENDPOINT_URL, 1000);
 
   const connected = endpoint.data?.aravis?.connection?.connected ? endpoint.data?.aravis?.connection?.connected : false;
   const state = endpoint.data?.aravis?.status?.state ? endpoint.data?.aravis?.status?.state : "disconnected";
@@ -57,6 +58,8 @@ function App() {
           <InputGroup.Text>state</InputGroup.Text>
           <InputGroup.Text>{state || "not found"}</InputGroup.Text>
         </InputGroup>
+        <p></p>
+        <OdinEventLog></OdinEventLog>
       </Container>
 
       <Container>Page two</Container>
