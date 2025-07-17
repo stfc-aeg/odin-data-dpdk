@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "odin-react": "github:stfc-aeg/odin-react#update-vite"
-  }
-}

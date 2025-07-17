@@ -114,9 +114,14 @@ class Camera():
 
                 if msg_val == 'status':
                     self.status = params['camera']
+
                     if not self.status_initialised:
                         self._build_tree_status()
                         self.status_initialised = True
+
+                    if self.config['num_frames'] == self.status['frame_number'] and self.status['state'] == 'capturing':
+                        logging.debug("num frames = frame_number")
+                        self.send_command('stop')
 
                 if msg_val == 'configure':
                     sent_msg = self.pending_commands.get(response.get_msg_id())
@@ -139,6 +144,8 @@ class Camera():
         logging.debug(f"Command sent: {value}")
 
         state = self.param_tree.get('status/state')['state']
+
+        # any of these even needed anymore??
 
         if value != "stop" and state == "capturing":
             logging.error(f"Command {value} not valid whilst capturing")
