@@ -12,8 +12,8 @@ using namespace log4cxx::helpers;
 
 #include "DpdkWorkerCore.h"
 #include "DpdkCoreConfiguration.h"
-#include "PacketRxConfiguration.h"
-#include "PacketProtocolDecoder.h"
+#include "network/PacketRxConfiguration.h"
+#include "network/PacketProtocolDecoder.h"
 #include "DpdkDevice.h"
 
 #include <rte_ether.h>

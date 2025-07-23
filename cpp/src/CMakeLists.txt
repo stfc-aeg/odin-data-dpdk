@@ -1,13 +1,19 @@
 set(ODINDATA_DPDK_LIBRARY "OdinDataDpdk")
-file(GLOB DPDK_LIB_SOURCES *.cpp)
+
+
 
 include_directories(
   ${ODINDATA_ROOT_DIR}/include
   ${ODINDATA_ROOT_DIR}/include/frameProcessor
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include/camera
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include/network
   ${DPDK_INCLUDE_DIRS}
+  ${HDF5_INCLUDE_DIRS}
 )
 
-add_library(${ODINDATA_DPDK_LIBRARY} SHARED 
+add_library(${ODINDATA_DPDK_LIBRARY} SHARED
+        # Core DPDK files
         DpdkCoreManager.cpp
         DpdkDevice.cpp
         DpdkFrameProcessorPlugin.cpp
@@ -17,20 +23,32 @@ add_library(${ODINDATA_DPDK_LIBRARY} SHARED
         FrameBuilderCore.cpp
         FrameCompressorCore.cpp
         FrameWrapperCore.cpp
-        PacketProcessorCore.cpp
-        PacketRxCore.cpp
+        PythonAccessCore.cpp
+        
+        # Camera-related
+        camera/CameraCaptureCore.cpp
+        camera/CameraControlCore.cpp
+        camera/CameraController.cpp
+        camera/CameraStateMachine.cpp
+        camera/DpdkCamera.cpp
+        camera/HDF5ImageLoader.cpp
+        camera/SimulatedDpdkCamera.cpp
+        
+        # Network-related
+        network/PacketProcessorCore.cpp
+        network/PacketRxCore.cpp
 )
 
 target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_CFLAGS})
 target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_LIBRARY_DIRS})
 target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
-    rte_eal rte_kvargs rte_telemetry ${DPDK_LDFLAGS}
+    rte_eal rte_kvargs rte_telemetry
+    ${DPDK_LDFLAGS} ${DCAMAPI_LIBRARY} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
 )
 
 get_target_property(PLUGIN_INSTALL_RPATH ${ODINDATA_DPDK_LIBRARY} INSTALL_RPATH)
-
 set_target_properties(${ODINDATA_DPDK_LIBRARY} PROPERTIES
-  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${DPDK_LIBRARY_DIRS}"
+  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${LIBDPDK_LIBRARY_DIRS}"
 )
 
 install(TARGETS ${ODINDATA_DPDK_LIBRARY} DESTINATION lib)
@@ -45,23 +63,41 @@ include_directories(
         ${BLOSC_INCLUDE_DIR}
 )
 
-# Add library for dummy plugin
+# Add library for network dummy plugin
 add_library(DummyDpdkPlugin SHARED
-        DummyDpdkPlugin.cpp
+        network/DummyDpdkPlugin.cpp
 )
 
 target_compile_options(DummyDpdkPlugin PRIVATE ${DPDK_CFLAGS})
 target_link_directories(DummyDpdkPlugin PRIVATE ${ODINDATA_LIBRARY_DIR} ${DPDK_LIBRARY_DIRS})
 target_link_libraries(DummyDpdkPlugin
         PRIVATE OdinDataDpdk rte_eal rte_kvargs rte_telemetry
-        ${DPDK_LDFLAGS} ${BLOSC_LIBRARIES}
+        ${DPDK_LDFLAGS} ${BLOSC_LIBRARIES} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
 )
 
 get_target_property(PLUGIN_INSTALL_RPATH DummyDpdkPlugin INSTALL_RPATH)
-
-
 set_target_properties(DummyDpdkPlugin PROPERTIES
   INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${DPDK_LIBRARY_DIRS}"
 )
 
 install(TARGETS DummyDpdkPlugin DESTINATION lib)
+
+
+# Add library for dummy plugin
+add_library(DummyDpdkCameraPlugin SHARED
+        camera/DummyDpdkCameraPlugin.cpp
+)
+
+target_compile_options(DummyDpdkCameraPlugin PRIVATE ${DPDK_CFLAGS})
+target_link_directories(DummyDpdkCameraPlugin PRIVATE ${ODINDATA_LIBRARY_DIR} ${DPDK_LIBRARY_DIRS})
+target_link_libraries(DummyDpdkCameraPlugin
+        PRIVATE OdinDataDpdk rte_eal rte_kvargs rte_telemetry
+        ${DPDK_LDFLAGS} ${BLOSC_LIBRARIES} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
+)
+
+get_target_property(PLUGIN_INSTALL_RPATH DummyDpdkCameraPlugin INSTALL_RPATH)
+set_target_properties(DummyDpdkCameraPlugin PROPERTIES
+  INSTALL_RPATH "${PLUGIN_INSTALL_RPATH}:${DPDK_LIBRARY_DIRS}"
+)
+
+install(TARGETS DummyDpdkCameraPlugin DESTINATION lib)

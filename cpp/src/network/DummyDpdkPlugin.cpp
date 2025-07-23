@@ -5,7 +5,7 @@
  *      Author: Dominic Banks, STFC Detector Systems Software Group
  */
 
-#include "DummyDpdkPlugin.h"
+#include "network/DummyDpdkPlugin.h"
 #include "version.h"
 
 namespace FrameProcessor

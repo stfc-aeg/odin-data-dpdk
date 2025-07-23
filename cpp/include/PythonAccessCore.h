@@ -1,5 +1,5 @@
-#ifndef INCLUDE_FRAMEBUILDERCORE_H_
-#define INCLUDE_FRAMEBUILDERCORE_H_
+#ifndef INCLUDE_PYTHONACCESSCORE_H_
+#define INCLUDE_PYTHONACCESSCORE_H_
 
 #include <log4cxx/logger.h>
 using namespace log4cxx;
@@ -7,24 +7,24 @@ using namespace log4cxx::helpers;
 #include <DebugLevelLogger.h>
 
 #include "DpdkWorkerCore.h"
-#include "DpdkSharedBuffer.h"
 #include "DpdkCoreConfiguration.h"
-#include "FrameBuilderConfiguration.h"
-#include "network/PacketProtocolDecoder.h"
+#include "PythonAccessCoreConfiguration.h"
+#include "ProtocolDecoder.h"
+#include "DpdkSharedBuffer.h"
 #include <rte_ring.h>
 #include <blosc.h>
 
 namespace FrameProcessor
 {
 
-    class FrameBuilderCore : public DpdkWorkerCore
+    class PythonAccessCore : public DpdkWorkerCore
     {
     public:
 
-        FrameBuilderCore(
+        PythonAccessCore(
             int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
         );
-        ~FrameBuilderCore();
+        ~PythonAccessCore();
 
         bool run(unsigned int lcore_id);
         void stop(void);
@@ -34,25 +34,27 @@ namespace FrameProcessor
 
     private:
         int proc_idx_;
-        PacketProtocolDecoder* decoder_;
+        ProtocolDecoder* decoder_;
         DpdkSharedBuffer* shared_buf_;
-        FrameBuilderConfiguration config_;
+        PythonAccessConfiguration config_;
 
         LoggerPtr logger_;
 
         // Status reporting variables
-        uint64_t built_frames_;
-        uint64_t built_frames_hz_;
+        uint64_t last_frame_;
+        uint64_t processed_frames_;
+        uint64_t processed_frames_hz_;
         uint64_t idle_loops_;
         uint64_t mean_us_on_frame_;
         uint64_t maximum_us_on_frame_;
         uint8_t core_usage_;
 
-
-        struct rte_ring* upstream_ring_;
+        struct rte_ring* frame_ready_ring_;
         struct rte_ring* clear_frames_ring_;
+        struct rte_ring* upstream_ring_;
         std::vector<struct rte_ring*> downstream_rings_;
+        std::vector<struct rte_ring*> python_access_rings_;
     };
 }
 
-#endif // INCLUDE_FRAMEBUILDERCORE_H_
+#endif // INCLUDE_PYTHONACCESSCORE_H_

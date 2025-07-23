@@ -1,12 +1,12 @@
 /*
- * DummyDpdkPlugin.h
+ * DummyDpdkCameraPlugin.h
  *
  *  Created on: 18 September 2024
  *      Author: Dominic Banks, STFC Detector Systems Software Group
  */
 
-#ifndef INCLUDE_DUMMY_DPDK_PLUGIN_H_
-#define INCLUDE_DUMMY_DPDK_PLUGIN_H_
+#ifndef INCLUDE_DUMMY_DPDK_CAMERA_PLUGIN_H_
+#define INCLUDE_DUMMY_DPDK_CAMERA_PLUGIN_H_
 
 #include<string>
 #include<map>
@@ -21,7 +21,7 @@ using namespace log4cxx;
 using namespace log4cxx::helpers;
 
 #include <DpdkFrameProcessorPlugin.h>
-#include "DummyDpdkDecoder.h"
+#include "camera/DummyDpdkCameraDecoder.h"
 #include "ClassLoader.h"
 
 
@@ -30,16 +30,16 @@ namespace FrameProcessor
 
   /** DummyDpdk Plugin
    *
-   * The DummyDpdkPlugin class implements a DPDK-aware plugin capable of receiving data
+   * The DummyDpdkCameraPlugin class implements a DPDK-aware plugin capable of receiving data
    * frame packets from upstream DPDK packet processing cores and injecting them into the
    * frameProcessor frame data flow.
    */
-  class DummyDpdkPlugin : public DpdkFrameProcessorPlugin
+  class DummyDpdkCameraPlugin : public DpdkFrameProcessorPlugin
   {
 
   public:
-    DummyDpdkPlugin();
-    virtual ~DummyDpdkPlugin();
+    DummyDpdkCameraPlugin();
+    virtual ~DummyDpdkCameraPlugin();
 
     void configure(OdinData::IpcMessage& config, OdinData::IpcMessage& reply);
     void requestConfiguration(OdinData::IpcMessage& reply);
@@ -53,7 +53,7 @@ namespace FrameProcessor
     /** Pointer to logger **/
     LoggerPtr logger_;
 
-    DummyDpdkDecoder decoder_;
+    DummyDpdkCameraProtocolDecoder decoder_;
 
     OdinData::IpcMessage config_;
 
@@ -63,8 +63,8 @@ namespace FrameProcessor
    * Registration of this plugin through the ClassLoader.  This macro
    * registers the class without needing to worry about name mangling
    */
-  REGISTER(FrameProcessorPlugin, DummyDpdkPlugin, "DummyDpdkPlugin");
+  REGISTER(FrameProcessorPlugin, DummyDpdkCameraPlugin, "DummyDpdkCameraPlugin");
 
 } /* namespace FrameProcessor */
 
-#endif /* INCLUDE_DUMMY_DPDK_PLUGIN_H_ */
+#endif /* INCLUDE_DUMMY_DPDK_CAMERA_PLUGIN_H_ */

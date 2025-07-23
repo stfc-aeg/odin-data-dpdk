@@ -5,7 +5,7 @@
 #include <rte_byteorder.h>
 #include <rte_memcpy.h>
 
-#define FRAME_OUTER_CHUNK_SIZE 10
+#define FRAME_OUTER_CHUNK_SIZE 1
 #define PACKETS_PER_FRAME 250
 #define PACKET_PAYLOAD_SIZE 8000
 
