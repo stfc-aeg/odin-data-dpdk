@@ -7,75 +7,110 @@ import Row from 'react-bootstrap/Row';
 import Col from 'react-bootstrap/Col';
 import Card from 'react-bootstrap/Card';
 import { ListGroup } from 'react-bootstrap';
+import Form from 'react-bootstrap/Form';
 
 import { useAdapterEndpoint } from 'odin-react';
+import { WithEndpoint } from 'odin-react';
 
-
-// function Config(props) {
-//     const {keyName, value} = props;
-
-//     return (
-//         <Card>
-//             <ListGroup variant="flush">
-//             <ListGroup.Item>{keyName}</ListGroup.Item>
-//             <ListGroup.Item>{value}</ListGroup.Item>
-//             </ListGroup>
-//         </Card>
-//     )
+// function ConfigItem({ data, parentKey = 'config' }) {
+//     if (typeof data === 'object') {
+//         return (
+//             <Card>
+//                 <Card.Header>{parentKey}</Card.Header>
+//                 <ListGroup variant='flush'>
+//                     {Object.entries(data).map(([key, value]) => (
+//                         const currentPath = `${path}/${key}`;
+//                         console.debug(`Config path: ${currentPath}`);
+//                         return (
+//                         <ListGroup.Item key={key}>
+//                             <ConfigItem data={value} parentKey={key} />
+//                         </ListGroup.Item>
+//                         );
+//                     ))}
+//                 </ListGroup>
+//             </Card>
+//         );
+//     } else {
+//         return (
+//             <div>
+//                 {parentKey}: {String(data)}
+//             </div>
+//         );
+//     }
 // }
 
-function ConfigItem({ data, parentKey = 'config' }) {
-    if (typeof data === 'object') {
+function ConfigItem({ data, parentKey = 'config', path = 'config' }) {
+    if (typeof data === 'object' && data !== null) {
         return (
             <Card>
                 <Card.Header>{parentKey}</Card.Header>
                 <ListGroup variant='flush'>
-                    {Object.entries(data).map(([key, value]) => (
-                        <ListGroup.Item key={key}>
-                            <ConfigItem data={value} parentKey={key} />
-                        </ListGroup.Item>
-                    ))}
+                    {Object.entries(data).map(([key, value]) => {
+                        const currentPath = `${path}/${key}`;
+                        // console.debug(`Config path: ${currentPath}`);
+                        return (
+                            <ListGroup.Item key={currentPath}>
+                                <ConfigItem data={value} parentKey={key} path={currentPath}/>
+                            </ListGroup.Item>
+                        );
+                    })}
                 </ListGroup>
             </Card>
         );
     } else {
+        console.debug(`${String(parentKey)} Config path: ${path}`);
         return (
             <div>
-                {parentKey}: {String(data)}
+                <p>{parentKey}: {String(data)}</p>
+                <p>cameras/aravis/{path}</p>
             </div>
         );
     }
 }
 
 
+const EndpointInput = WithEndpoint(Form.Control)
+
+
 
 function PageTwo(props) {
 
     // const endpoint = props
+    // const endpoint = useAdapterEndpoint("camera_control",  import.meta.env.VITE_ENDPOINT_URL, 1000, {params: {wants_metadata: true}});
     const endpoint = useAdapterEndpoint("camera_control",  import.meta.env.VITE_ENDPOINT_URL, 1000);
 
     const configData = endpoint.data?.cameras?.aravis?.config;
 
-    // const ConfigList = endpoint.data?.cameras?.aravis?.config ? Object.entries(endpoint.data?.cameras.aravis.config).filter(([key, _]) => key !== 'trigger').map(
-    //     ([key, value]) => {
-    //         return (
-    //         <Container>
-    //             <p></p>
-    //             <Row>
-    //                 <Config keyName={key} value={value} />
-    //             </Row>
-    //         </Container>
-    //         )
-    //     }
-    // ) : <></>
+    const metadata = endpoint.metadata ? endpoint.metadata : {};
 
     return (
 
         <Container>
-            {/* {ConfigList} */}
             <Row>
                 <p></p>
                 {configData ? <ConfigItem data={configData} /> : <p></p>}
+            </Row>
+            <Row>
+                <p></p>
+                <Form.Label>Frame rate</Form.Label>
+                <EndpointInput
+                    endpoint={endpoint}
+                    event_type="change"
+                    type="number"
+                    step={1}
+                    fullpath={"cameras/aravis/config/frame_rate"}/>
+                <p></p>
+                <Form.Label>Exposure</Form.Label>
+                <EndpointInput
+                    endpoint={endpoint}
+                    event_type="change"
+                    type="number"
+                    step={0.001}
+                    fullpath={"cameras/aravis/config/exposure_time"}/>
+            </Row>
+            <Row>
+                <p></p>
+                <pre>{JSON.stringify(metadata, null, 2)}</pre>
             </Row>
         </Container>
 

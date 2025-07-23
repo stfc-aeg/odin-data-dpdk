@@ -125,14 +125,14 @@ class Camera():
 
                 if msg_val == 'configure':
                     sent_msg = self.pending_commands.get(response.get_msg_id())
-                    sent_command = sent_msg.get_params()['command']
+                    sent_command = sent_msg.get_params()
                     logging.debug(f"Command acknowledged: [{response.get_msg_id()}: {sent_command}]")
-
             else:
                 logging.error(f"Error: {params['error']}")
 
-        except Exception as e:
+        except Exception as e: ##!!!
             logging.error(f"Callback error: {e}")
+            print(response)
 
     def send_command(self, value):
         """Compose a command message to be sent to the camera.

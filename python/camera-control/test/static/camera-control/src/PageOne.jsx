@@ -17,7 +17,7 @@ import { OdinEventLog } from 'odin-react';
 import { WithEndpoint } from 'odin-react';
 import { OdinLiveView } from 'odin-react';
 
-import ClickableImage from './ClickableImage';
+// import ClickableImage from './ClickableImage';
 
 const EndPointFormControl = WithEndpoint(Form.Control);
 const EndpointToggleButton = WithEndpoint(ToggleButton);
