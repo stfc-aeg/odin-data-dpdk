@@ -8,49 +8,36 @@ import Col from 'react-bootstrap/Col';
 import Card from 'react-bootstrap/Card';
 import { ListGroup } from 'react-bootstrap';
 import Form from 'react-bootstrap/Form';
+import { InputGroup } from 'react-bootstrap';
+import Alert from 'react-bootstrap/Alert';
 
 import { useAdapterEndpoint } from 'odin-react';
 import { WithEndpoint } from 'odin-react';
 
-// function ConfigItem({ data, parentKey = 'config' }) {
-//     if (typeof data === 'object') {
-//         return (
-//             <Card>
-//                 <Card.Header>{parentKey}</Card.Header>
-//                 <ListGroup variant='flush'>
-//                     {Object.entries(data).map(([key, value]) => (
-//                         const currentPath = `${path}/${key}`;
-//                         console.debug(`Config path: ${currentPath}`);
-//                         return (
-//                         <ListGroup.Item key={key}>
-//                             <ConfigItem data={value} parentKey={key} />
-//                         </ListGroup.Item>
-//                         );
-//                     ))}
-//                 </ListGroup>
-//             </Card>
-//         );
-//     } else {
-//         return (
-//             <div>
-//                 {parentKey}: {String(data)}
-//             </div>
-//         );
-//     }
-// }
+function getMetadataByPath(metadata, path) {
+    const keys = path.split('/').slice(1);
+    let current = metadata;
+    for (const key of keys) {
+        if (current && typeof current === 'object') {
+            current = current[key];
+        } else {
+            return null;
+        }
+    }
+    return current;
+}
 
-function ConfigItem({ data, parentKey = 'config', path = 'config' }) {
+function ConfigItem({ data, metadata, endpoint, parentKey = 'config', path = 'config' }) {
     if (typeof data === 'object' && data !== null) {
         return (
-            <Card>
+            <Card className="px-0">
                 <Card.Header>{parentKey}</Card.Header>
-                <ListGroup variant='flush'>
+                <ListGroup variant="flush" className="px-0">
                     {Object.entries(data).map(([key, value]) => {
                         const currentPath = `${path}/${key}`;
-                        // console.debug(`Config path: ${currentPath}`);
                         return (
-                            <ListGroup.Item key={currentPath}>
-                                <ConfigItem data={value} parentKey={key} path={currentPath}/>
+                            <ListGroup.Item key={currentPath} className="px-2">
+                                <ConfigItem data={value} metadata={metadata} endpoint={endpoint} parentKey={key} path={currentPath}/>
                             </ListGroup.Item>
                         );
                     })}
@@ -58,13 +45,62 @@ function ConfigItem({ data, parentKey = 'config', path = 'config' }) {
             </Card>
         );
     } else {
-        console.debug(`${String(parentKey)} Config path: ${path}`);
         return (
-            <div>
-                <p>{parentKey}: {String(data)}</p>
-                <p>cameras/aravis/{path}</p>
-            </div>
+            <Container>
+                <Row>
+                    <Col>
+                        <p>{parentKey}</p>
+                    </Col>
+                    <Col>
+                        <ConfigInput writeable={getMetadataByPath(metadata, path)?.writeable} type={getMetadataByPath(metadata, path)?.type} endpoint={endpoint} path={path}/>
+                    </Col>
+                </Row>
+            </Container>
         );
+    }
+}
+
+
+
+function ConfigInput({ writeable, type, endpoint, path }) {
+    if (writeable === true) {
+        if (type === "int" || type === "float") {
+            return (
+                <Container>
+                {/* <p>{type}</p> */}
+                {/* <Form.Label>{path.split("/")[1]}</Form.Label> */}
+                    <EndpointInput
+                        endpoint={endpoint}
+                        event_type="change"
+                        type="number"
+                        // step={1}
+                        fullpath={`cameras/aravis/${path}`}/>
+                </Container>
+            );
+        } if (type === "str") {
+            return (
+                <Container>
+                    <EndpointInput
+                        endpoint={endpoint}
+                        event_type="change"
+                        type="string"
+                        fullpath={`cameras/aravis/${path}`}/>
+                </Container>
+            );
+        // Add option for boolean!
+        } else {
+            return (
+                <Container>
+                    <p>{type}</p>
+                </Container>
+            );
+        }
+    } else {
+        return (
+            <Container>
+                <Alert variant={'primary'}>Read Only</Alert>
+            </Container>
+        )
     }
 }
 
@@ -76,42 +112,23 @@ const EndpointInput = WithEndpoint(Form.Control)
 function PageTwo(props) {
 
     // const endpoint = props
-    // const endpoint = useAdapterEndpoint("camera_control",  import.meta.env.VITE_ENDPOINT_URL, 1000, {params: {wants_metadata: true}});
     const endpoint = useAdapterEndpoint("camera_control",  import.meta.env.VITE_ENDPOINT_URL, 1000);
 
     const configData = endpoint.data?.cameras?.aravis?.config;
 
-    const metadata = endpoint.metadata ? endpoint.metadata : {};
+    const metadata = endpoint.metadata?.cameras?.aravis?.config ? endpoint.metadata.cameras.aravis.config : {};
 
     return (
 
         <Container>
             <Row>
                 <p></p>
-                {configData ? <ConfigItem data={configData} /> : <p></p>}
+                {configData ? <ConfigItem data={configData} metadata={metadata} endpoint={endpoint}/> : <p></p>}
             </Row>
-            <Row>
-                <p></p>
-                <Form.Label>Frame rate</Form.Label>
-                <EndpointInput
-                    endpoint={endpoint}
-                    event_type="change"
-                    type="number"
-                    step={1}
-                    fullpath={"cameras/aravis/config/frame_rate"}/>
-                <p></p>
-                <Form.Label>Exposure</Form.Label>
-                <EndpointInput
-                    endpoint={endpoint}
-                    event_type="change"
-                    type="number"
-                    step={0.001}
-                    fullpath={"cameras/aravis/config/exposure_time"}/>
-            </Row>
-            <Row>
+            {/* <Row>
                 <p></p>
                 <pre>{JSON.stringify(metadata, null, 2)}</pre>
-            </Row>
+            </Row> */}
         </Container>
 
     )

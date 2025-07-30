@@ -61,15 +61,22 @@ class Camera():
 
         self.param_tree = ParameterTree(self.tree, mutable=True)
 
+    def _build_config_branch(self, config_dict, path=[]):
+        branch = {}
+        for key, value in config_dict.items():
+            current_path = path + [key]
+            if isinstance(value, dict):
+                branch[key] = self._build_config_branch(value, current_path)
+            else:
+                branch[key] = (
+                    partial(self.get_config, path=current_path),
+                    partial(self.set_config, path=current_path)
+                )
+        return branch
+
     def _build_tree_config(self):
         """Builds config branch of parameter tree."""
-        self.tree['config'] = {
-            param: (
-                partial(self.get_config, param=param),
-                partial(self.set_config, param=param)
-            )
-            for param in self.config
-        }
+        self.tree['config'] = self._build_config_branch(self.config)
         self.param_tree.replace('config', self.tree['config'])
 
     def _build_tree_status(self):
@@ -147,42 +154,49 @@ class Camera():
 
         # any of these even needed anymore??
 
-        if value != "stop" and state == "capturing":
-            logging.error(f"Command {value} not valid whilst capturing")
+        # if value != "stop" and state == "capturing":
+        #     logging.error(f"Command {value} not valid whilst capturing")
 
-        if value == "connect" and state == "connected":
-            logging.error("Camera already connected")
+        # if value == "connect" and state == "connected":
+        #     logging.error("Camera already connected")
 
-        if value == "disconnect" and state == "disconnected":
-            logging.error("Camera already disconnected")
+        # if value == "disconnect" and state == "disconnected":
+        #     logging.error("Camera already disconnected")
 
-        if value == "start" and state == "disconnected":
-            logging.error("Camera must be connected before starting capture")
+        # if value == "start" and state == "disconnected":
+        #     logging.error("Camera must be connected before starting capture")
 
-        if value == "stop" and state != "capturing":
-            logging.error("Camera not yet capturing")
+        # if value == "stop" and state != "capturing":
+        #     logging.error("Camera not yet capturing")
 
         # self.send(msg_type='cmd', msg_val='configure', param='command', value=value)
 
-    def get_config(self, param):
-        if param in self.config:
-            return self.config[param]
-        else:
-            return None
+    def get_config(self, path):
+        cfg = self.config
+        for key in path:
+            cfg = cfg.get(key, None)
+            if cfg is None:
+                return None
+        return cfg
 
-    def set_config(self, value, param):
+    def set_config(self, value, path):
         """Update local storage of config values and send a command to the camera to update it.
         :param value: argument passed by PUT request to param tree
         :param param: config parameter to update, e.g.: exposure_time
         """
 
-        self.config[param] = value
+        cfg = self.config
+        for key in path[:-1]:
+            cfg = cfg.setdefault(key, {})
+        cfg[path[-1]] = value
 
-        command_msg = {
-            param : value
-        }
+        param_dict = nested_dict_from_path(path, value)
+        self.send(msg_type='cmd', msg_val='configure', param='camera', value=param_dict)
 
-        self.send(msg_type='cmd', msg_val='configure', param='camera', value=command_msg)
+    def nested_dict_from_path(path, value):
+        if not path:
+            return value
+        return {path[0]: nested_dict_from_path(path[1:], value)}
 
     def send(self, msg_type, msg_val, param=None, value=None):
         """Construct and send an IPC message.

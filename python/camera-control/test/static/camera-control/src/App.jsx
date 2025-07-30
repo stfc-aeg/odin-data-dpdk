@@ -24,8 +24,8 @@ function App() {
 
     <OdinApp title="Camera Adapter" navLinks={["Preview", "Config"]}>
 
-      <PageOne endpoint = {endpoint}/>
-      <PageTwo endpoint = {endpoint}/>
+      <PageOne endpoint={endpoint}/>
+      <PageTwo endpoint={endpoint}/>
 
     </OdinApp>
   )
