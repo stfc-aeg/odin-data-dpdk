@@ -95,6 +95,7 @@ class Camera():
             logging.debug("Connected")
             self.connected = True
             self.get_configuration()
+            logging.debug(f"Config in tree: {self.config}")
             self.get_status()
         if msg['event'] == IpcTornadoChannel.DISCONNECTED:
             logging.debug("Disconnected")
@@ -179,6 +180,11 @@ class Camera():
                 return None
         return cfg
 
+    def nested_dict_from_path(self, path, value):
+        if not path:
+            return value
+        return {path[0]: self.nested_dict_from_path(path[1:], value)}
+
     def set_config(self, value, path):
         """Update local storage of config values and send a command to the camera to update it.
         :param value: argument passed by PUT request to param tree
@@ -190,13 +196,8 @@ class Camera():
             cfg = cfg.setdefault(key, {})
         cfg[path[-1]] = value
 
-        param_dict = nested_dict_from_path(path, value)
+        param_dict = self.nested_dict_from_path(path, value)
         self.send(msg_type='cmd', msg_val='configure', param='camera', value=param_dict)
-
-    def nested_dict_from_path(path, value):
-        if not path:
-            return value
-        return {path[0]: nested_dict_from_path(path[1:], value)}
 
     def send(self, msg_type, msg_val, param=None, value=None):
         """Construct and send an IPC message.

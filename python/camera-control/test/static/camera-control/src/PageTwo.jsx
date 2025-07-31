@@ -31,7 +31,7 @@ function ConfigItem({ data, metadata, endpoint, parentKey = 'config', path = 'co
     if (typeof data === 'object' && data !== null) {
         return (
             <Card className="px-0">
-                <Card.Header>{parentKey}</Card.Header>
+                <Card.Header>{parentKey.split("_").map((word, i) => i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(" ")}</Card.Header>
                 <ListGroup variant="flush" className="px-0">
                     {Object.entries(data).map(([key, value]) => {
                         const currentPath = `${path}/${key}`;
@@ -49,10 +49,12 @@ function ConfigItem({ data, metadata, endpoint, parentKey = 'config', path = 'co
             <Container>
                 <Row>
                     <Col>
-                        <p>{parentKey}</p>
+                        {/* <p>{(parentKey.split("_")[0].substring(0, 1).toUpperCase()).concat(parentKey.split("_")[0].slice(1).concat(" ",parentKey.split("_")[1]))}</p> */}
+                        <p>{parentKey.split("_").map((word, i) => i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(" ")}</p>
+                        {/* <Alert className="m-0 p-2">{parentKey}</Alert> */}
                     </Col>
                     <Col>
-                        <ConfigInput writeable={getMetadataByPath(metadata, path)?.writeable} type={getMetadataByPath(metadata, path)?.type} endpoint={endpoint} path={path}/>
+                        <ConfigInput writeable={getMetadataByPath(metadata, path)?.writeable} type={getMetadataByPath(metadata, path)?.type} value={getMetadataByPath(metadata, path)?.value} endpoint={endpoint} path={path}/>
                     </Col>
                 </Row>
             </Container>
@@ -62,14 +64,13 @@ function ConfigItem({ data, metadata, endpoint, parentKey = 'config', path = 'co
 
 
 
-function ConfigInput({ writeable, type, endpoint, path }) {
+function ConfigInput({ writeable, type, value, endpoint, path }) {
     if (writeable === true) {
         if (type === "int" || type === "float") {
             return (
                 <Container>
-                {/* <p>{type}</p> */}
-                {/* <Form.Label>{path.split("/")[1]}</Form.Label> */}
                     <EndpointInput
+                        className="m-0 p-2"
                         endpoint={endpoint}
                         event_type="change"
                         type="number"
@@ -81,6 +82,7 @@ function ConfigInput({ writeable, type, endpoint, path }) {
             return (
                 <Container>
                     <EndpointInput
+                        className="m-0 p-2"
                         endpoint={endpoint}
                         event_type="change"
                         type="string"
@@ -91,14 +93,14 @@ function ConfigInput({ writeable, type, endpoint, path }) {
         } else {
             return (
                 <Container>
-                    <p>{type}</p>
+                    <Alert className="m-0 p-2" variant={'danger'}>Unsupported type: {type}</Alert>
                 </Container>
             );
         }
     } else {
         return (
             <Container>
-                <Alert variant={'primary'}>Read Only</Alert>
+                <p>{value}</p>
             </Container>
         )
     }
@@ -116,14 +118,14 @@ function PageTwo(props) {
 
     const configData = endpoint.data?.cameras?.aravis?.config;
 
-    const metadata = endpoint.metadata?.cameras?.aravis?.config ? endpoint.metadata.cameras.aravis.config : {};
+    const configMetadata = endpoint.metadata?.cameras?.aravis?.config ? endpoint.metadata.cameras.aravis.config : {};
 
     return (
 
         <Container>
             <Row>
                 <p></p>
-                {configData ? <ConfigItem data={configData} metadata={metadata} endpoint={endpoint}/> : <p></p>}
+                {configData ? <ConfigItem data={configData} metadata={configMetadata} endpoint={endpoint}/> : <p></p>}
             </Row>
             {/* <Row>
                 <p></p>

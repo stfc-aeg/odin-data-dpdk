@@ -11,6 +11,7 @@ import ToggleButtonGroup from 'react-bootstrap/ToggleButtonGroup';
 import ToggleButton from 'react-bootstrap/ToggleButton';
 import Button from 'react-bootstrap/Button';
 import Card from 'react-bootstrap/Card';
+import Alert from 'react-bootstrap/Alert';
 
 import { useAdapterEndpoint } from 'odin-react';
 import { OdinEventLog } from 'odin-react';
@@ -69,6 +70,18 @@ function PageOne(props) {
                         variant={state===status[2] ? "warning" : "success"}>
                         {state===status[2] ? 'Stop Capturing' : 'Capture'}
                         </EndPointButton>
+                    </Row>
+                    <Row>
+                        <p></p>
+                        <Card>
+                            <Card.Body>Frames received:</Card.Body>
+                        </Card>
+                    </Row>
+                    <Row>
+                        <p></p>
+                        <Card>
+                            <Card.Body>Frames shown:</Card.Body>
+                        </Card>
                     </Row>
                 </Form>
                 </Col>
