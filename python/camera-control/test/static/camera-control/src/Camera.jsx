@@ -38,7 +38,6 @@ function CameraPreview(props) {
                     <Col xs={6}>
                             <Row>
                                 <TreeDisplay
-                                    name={name}
                                     endpoint={endpoint}
                                     metadata={endpoint.metadata?.cameras?.[name]?.status ?? {}}
                                     data={data.status}
@@ -73,7 +72,6 @@ function CameraPreview(props) {
                     </Col>
                     <Col xs={6}>
                         <TreeDisplay
-                            name={name}
                             endpoint={endpoint}
                             metadata={endpoint.metadata?.cameras?.[name]?.status ?? {}}
                             data={data.status}
@@ -105,7 +103,6 @@ function Camera(props) {
                 <Col xs={5}>
                     <p></p>
                     <TreeDisplay
-                    name={name}
                     endpoint={endpoint}
                     metadata={endpoint.metadata?.cameras?.[name]?.config ?? {}}
                     data={data.config}

@@ -144,7 +144,7 @@ function Parameter({ data, metadata, endpoint, basepath, relpath, parentKey}) {
 }
 
 function TreeDisplay(props) {
-    const {name, endpoint, metadata, data, path, paths} = props;
+    const {endpoint, metadata, data, path, paths} = props;
 
     //could get data and metadata params from endpoint and path?
 
