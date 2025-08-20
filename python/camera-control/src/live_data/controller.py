@@ -3,6 +3,7 @@ from functools import partial
 
 import re
 import cv2
+import numpy as np
 from collections import OrderedDict
 
 from odin.adapters.parameter_tree import ParameterTree, ParameterTreeError
@@ -374,7 +375,10 @@ class LiveDataController(BaseController):
 
                 if response is None:
                     #raise error here and send response in adapter?
-                    return {"response": "LiveViewAdapter: No Image Available"}, 'application/json', 200
+
+                    default_img = np.full((processor.size_y, processor.size_x, 3), 128, dtype=np.uint8)
+                    _, buffer = cv2.imencode(".png", default_img)
+                    response = buffer.tobytes()
 
                 content_type = 'image/png'
                 status = 200
