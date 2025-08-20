@@ -74,20 +74,50 @@ class Camera():
                 )
         return branch
 
+    def _build_status_branch(self, status_dict, path=[]):
+        branch = {}
+        for key, value in status_dict.items():
+            current_path = path + [key]
+            if isinstance(value, dict):
+                branch[key] = self._build_status_branch(value, current_path)
+            elif isinstance(value, list):
+                branch[key] = (
+                    partial(self.get_status_value, path=current_path),
+                    None  # no setter for status
+                )
+            else:
+                branch[key] = (
+                    partial(self.get_status_value, path=current_path),
+                    None  # no setter for status
+                )
+        return branch
+
+    def get_status_value(self, path):
+        val = self.status
+        for key in path:
+            val = val.get(key, None)
+            if val is None:
+                break
+        return val
+
+    def _build_tree_status(self):
+        self.tree['status'] = self._build_status_branch(self.status)
+        self.param_tree.replace('status', self.tree['status'])
+
     def _build_tree_config(self):
         """Builds config branch of parameter tree."""
         self.tree['config'] = self._build_config_branch(self.config)
         self.param_tree.replace('config', self.tree['config'])
 
-    def _build_tree_status(self):
-        """Builds status branch of parameter tree."""
-        self.tree['status'] = {
-            param: (
-                lambda param=param: self.status[param], None
-            )
-            for param in self.status
-        }
-        self.param_tree.replace('status', self.tree['status'])
+    # def _build_tree_status(self):
+    #     """Builds status branch of parameter tree."""
+    #     self.tree['status'] = {
+    #         param: (
+    #             lambda param=param: self.status[param], None
+    #         )
+    #         for param in self.status
+    #     }
+    #     self.param_tree.replace('status', self.tree['status'])
 
     def monitor_callback(self, msg):
         """Handles CONNECTED and DISCONNECTED messages."""
@@ -95,7 +125,7 @@ class Camera():
             logging.debug("Connected")
             self.connected = True
             self.get_configuration()
-            logging.debug(f"Config in tree: {self.config}")
+            # logging.debug(f"Config in tree: {self.config}")
             self.get_status()
         if msg['event'] == IpcTornadoChannel.DISCONNECTED:
             logging.debug("Disconnected")
@@ -127,6 +157,7 @@ class Camera():
                         self._build_tree_status()
                         self.status_initialised = True
 
+                    # shouldn't need this - quick fix!
                     if self.config['num_frames'] == self.status['frame_number'] and self.status['state'] == 'capturing':
                         logging.debug("num frames = frame_number")
                         self.send_command('stop')
