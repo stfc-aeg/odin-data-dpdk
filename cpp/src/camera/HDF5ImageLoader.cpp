@@ -65,6 +65,7 @@ void HDF5ImageLoader::loadImagesFromHDF5(const std::string& filePath) {
     
     totalFrames_ = dims[0];
     
+	// Might be worth adding a method for upscaling/downscaling the images to fit the expected buffer
     if (dims[1] != height_ || dims[2] != width_) {
         LOG4CXX_INFO(logger_, "Warning: Dataset dimensions (" << dims[2] << "x" << dims[1] 
                   << ") do not match expected dimensions (" << width_ << "x" << height_ << ")" );
@@ -195,7 +196,7 @@ void HDF5ImageLoader::generateImage(int cameraNumber, uint64_t frameNumber) {
     }
     
     // Always make a clean copy from the cache to the current frame
-    // to ensure we don't accumulate changes across frames
+    // to ensure changes don't accumulate across frames
     current_frame_ = frameCache_.data;
     
     // Draw text overlays if enabled
@@ -261,6 +262,8 @@ void HDF5ImageLoader::drawText(const std::string& text, int x, int y, uint16_t v
         drawChar(text[i], x + i * charSpacing, y, value, scale);
     }
 }
+
+// TODO: This should be changed out for another method for writing text to the images
 
 
 const uint8_t HDF5ImageLoader::Font40_Table[] = {

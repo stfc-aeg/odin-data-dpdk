@@ -1,4 +1,3 @@
-
 #include "network/PacketProcessorCore.h"
 
 #include <iostream>
@@ -8,6 +7,7 @@
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include <rte_malloc.h>
+#include <rte_prefetch.h>
 #include "DpdkUtils.h"
 
 namespace FrameProcessor
@@ -39,6 +39,10 @@ namespace FrameProcessor
         // argument, and the current port ID
         config_.resolve(dpdkWorkCoreReferences.core_config);
 
+        // Determine debug level for performance-critical logging
+        debug_enabled_ = false;
+        trace_enabled_ = false;
+
         LOG4CXX_INFO(logger_, "FP.PacketProcCore " << proc_idx_ << " Created with config:"
             << " | core_name" << config_.core_name
             << " | num_cores: " << config_.num_cores
@@ -56,7 +60,7 @@ namespace FrameProcessor
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
             if (downstream_ring == NULL)
             {
-                unsigned int downstream_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
+                unsigned int downstream_ring_size = nearest_power_two(shared_buf_->get_num_buffers()*8);
                 LOG4CXX_INFO(logger_, "Creating ring name "
                     << downstream_ring_name << " of size " << downstream_ring_size
                 );
@@ -73,9 +77,12 @@ namespace FrameProcessor
             }
             else
             {
-                LOG4CXX_DEBUG_LEVEL(2, logger_, "downstream ring with name "
-                    << downstream_ring_name << " has already been created"
-                );
+                if (unlikely(debug_enabled_))
+                {
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "downstream ring with name "
+                        << downstream_ring_name << " has already been created"
+                    );
+                }
             }
             if (downstream_ring)
             {
@@ -91,9 +98,12 @@ namespace FrameProcessor
         if (clear_frames_ring_ == NULL)
         {
             unsigned int clear_frames_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating frame processed ring name "
-                << clear_frames_ring_name << " of size " << clear_frames_ring_size
-            );
+            if (unlikely(debug_enabled_))
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating frame processed ring name "
+                    << clear_frames_ring_name << " of size " << clear_frames_ring_size
+                );
+            }
             clear_frames_ring_ = rte_ring_create(
                 clear_frames_ring_name.c_str(), clear_frames_ring_size, socket_id_, 0
             );
@@ -119,7 +129,10 @@ namespace FrameProcessor
 
     PacketProcessorCore::~PacketProcessorCore()
     {
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "PacketProcessorCore destructor");
+        if (unlikely(debug_enabled_))
+        {
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "PacketProcessorCore destructor");
+        }
 
         // Stop the core polling loop so the run method terminates
         stop();
@@ -208,8 +221,8 @@ namespace FrameProcessor
                 {
                     first_frame_number_ = decoder_->get_frame_number(pkt_header) - (proc_idx_ * decoder_->get_frame_outer_chunk_size());
 
-                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Updated frame latch to: " << first_frame_number_ 
-                        << " Frame number will be: " << (decoder_->get_frame_number(pkt_header) - first_frame_number_) / frame_outer_chunk_size);
+                    // LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Updated frame latch to: " << first_frame_number_ 
+                    //     << " Frame number will be: " << (decoder_->get_frame_number(pkt_header) - first_frame_number_) / frame_outer_chunk_size);
                 }
 
                 uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
@@ -219,11 +232,11 @@ namespace FrameProcessor
                 uint64_t current_frame_index = current_frame_number - (current_super_frame_number * decoder_->get_frame_outer_chunk_size());
 
 
-                LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
-                            << " current_frame_number: " << current_frame_number
-                            << " current_super_frame_number: " << current_super_frame_number
-                            << " current_frame_index: " << current_frame_index
-                            );
+                // LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
+                //             << " current_frame_number: " << current_frame_number
+                //             << " current_super_frame_number: " << current_super_frame_number
+                //             << " current_frame_index: " << current_frame_index
+                //             );
 
                 // Get the packet offset for the super frame
                 
@@ -261,8 +274,8 @@ namespace FrameProcessor
                             // If a memory location cannot be found start dropping this frame
                             current_super_frame_buffer_ = dropped_frame_buffer_;
                             dropped_frames_++;
-                            LOG4CXX_WARN(logger_,
-                                "dropping frame: " << current_frame_);
+                            // LOG4CXX_WARN(logger_,
+                            //     "dropping frame: " << current_frame_);
                         }
                         else
                         {
@@ -283,37 +296,41 @@ namespace FrameProcessor
                     }
                 }
 
+                uint64_t packet_memory_offset = (current_frame_index * payload_size * packets_per_frame) + (packet_number * payload_size);
+
                 current_frame_header_ = decoder_->get_frame_header(current_super_frame_buffer_, current_frame_index);
-                
+
+                // LOG4CXX_TRACE(logger_, "Copying packet " << packet_offset << " From frame: " << current_frame_index << "into memory at: " << packet_memory_offset);
+
                 // Copy the packet payload into the appropriate location in the frame buffer
                 rte_memcpy(
                     decoder_->get_image_data_start(current_super_frame_buffer_) + (current_frame_index * payload_size * packets_per_frame) + 
                     (packet_number * payload_size), pkt_payload, payload_size
                 );
 
-                // LOG4CXX_INFO(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
+                // LOG4CXX_TRACE(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
                 // // Set the current packet as received in the frame header
                 if (decoder_->set_packet_received(current_frame_header_, packet_number))
                 {
-                    // LOG4CXX_INFO(logger_,"Checking frame " << current_frame_number << " with " << decoder_->get_packets_received(decoder_->get_frame_header(current_super_frame_buffer_, current_frame_number)) << " Packets");
+                    // LOG4CXX_TRACE(logger_,"Checking frame " << current_frame_number << " with " << decoder_->get_packets_received(current_frame_header_) << " Packets");
                     // Check to see if that frames has been completed in the superframe
                     if(decoder_->get_packets_received(current_frame_header_) == packets_per_frame)
                     {
-                        LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
-                            << " current_frame_number: " << current_frame_number
-                            << " current_super_frame_number: " << current_super_frame_number
-                            << " current_frame_index: " << current_frame_index
-                            << " Got all packets for sub frame"
-                            );
+                        // LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_
+                        //     << " current_frame_number: " << current_frame_number
+                        //     << " current_super_frame_number: " << current_super_frame_number
+                        //     << " current_frame_index: " << current_frame_index
+                        //     << " Got all packets for sub frame"
+                        //     );
                         
                         // All packets for this sub-frame have been captured, mark it as complete
-                        if (!decoder_->set_super_frame_frames_received(current_super_frame_buffer_, current_frame_number))
+                        if (!decoder_->set_super_frame_frames_received(current_super_frame_buffer_, current_frame_index))
                         {
                             // TODO handle illegal frame number here
-                            LOG4CXX_ERROR(logger_, "Core " << lcore_id_
-                                        << " Error:  illegal frame number: "
-                                        << current_frame_number
-                                    );
+                            // LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                            //             << " Error:  illegal frame number: "
+                            //             << current_frame_number
+                            //         );
                         }
                     }
                 }
@@ -322,12 +339,12 @@ namespace FrameProcessor
                     // TODO handle illegal frame number here - maybe too late since already
                     // copied into buffer based on packet number? Swap order with rte_memcpy call
                     // above??
-                    LOG4CXX_ERROR(logger_, "Core " << lcore_id_
-                                        << " Error:  illegal frame packet number: "
-                                        << packet_number
-                                        << " in frame: "
-                                        << current_frame_number
-                                    );
+                    // LOG4CXX_ERROR(logger_, "Core " << lcore_id_
+                    //                     << " Error:  illegal frame packet number: "
+                    //                     << packet_number
+                    //                     << " in frame: "
+                    //                     << current_frame_number
+                    //                 );
                 }
 
                 // Look to check the SOF & EOF markers
@@ -354,7 +371,7 @@ namespace FrameProcessor
                         processed_frames_++;
                         frames_per_second++;
 
-                        LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
+                        // LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ << " Capture all packets for frame: " << current_frame_);
 
                     }
                     current_frame_ = -1;
@@ -464,15 +481,21 @@ namespace FrameProcessor
         }
         else
         {
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
+            if (unlikely(debug_enabled_))
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
+            }
         }
 
     }
 
     void PacketProcessorCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "Status requested for packetprocessorcore_" << proc_idx_
-            << " from the DPDK plugin");
+        if (unlikely(debug_enabled_))
+        {
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Status requested for packetprocessorcore_" << proc_idx_
+                << " from the DPDK plugin");
+        }
 
         std::string status_path = path + "/packetprocessorcore_" + std::to_string(proc_idx_) + "/";
         
@@ -521,9 +544,12 @@ namespace FrameProcessor
         else
         {
             packet_fwd_ring_ = upstream_ring;
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Frame ready ring with name "
-                << upstream_ring_name << " has already been created"
-            );  
+            if (unlikely(debug_enabled_))
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Frame ready ring with name "
+                    << upstream_ring_name << " has already been created"
+                );
+            }
         }
 
         // connect to the ring for dumping old packets
@@ -537,9 +563,12 @@ namespace FrameProcessor
         }
         else
         {
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Packet release ring with name "
-                << packet_release_ring_name << " has already been created"
-            );
+            if (unlikely(debug_enabled_))
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Packet release ring with name "
+                    << packet_release_ring_name << " has already been created"
+                );
+            }
         }
 
 

@@ -2,7 +2,7 @@
 #include <sstream>
 #include "network/PacketRxCore.h"
 #include "DpdkUtils.h"
-
+#include "dpdk_version_compatibiliy.h"
 
 namespace FrameProcessor
 {
@@ -25,7 +25,7 @@ namespace FrameProcessor
         device_(nullptr)
     {
 
-        // Resolve configuration parameters for this core from the config object passed as an
+        // Resolve configuration parameters for athis core from the config object passed as an
         // argument, and the current port ID
         config_.resolve(dpdkWorkCoreReferences.core_config);
 
@@ -292,7 +292,7 @@ namespace FrameProcessor
                     uint32_t retry = 0;
                     while ((num_tx_pkts < num_replies) && (retry++ < config_.max_packet_tx_retries_))
                     {
-                        rte_delay_us(1);
+                        //rte_delay_us(1);
                         num_tx_pkts += rte_eth_tx_burst(
                             port_id_, config_.tx_queue_id_, &pkt_bufs[num_tx_pkts],
                             num_replies - num_tx_pkts
@@ -312,9 +312,10 @@ namespace FrameProcessor
             }
 
             // Free packets fed back on the release ring from downstream cores
-            if (rte_ring_dequeue_bulk(packet_release_ring_, (void **)&release_pkt, config_.rx_burst_size_, NULL) > 0)
+            uint16_t num_released = rte_ring_dequeue_burst(packet_release_ring_, (void **)&release_pkt, config_.rx_burst_size_, NULL);
+            if (num_released > 0)
             {
-                rte_pktmbuf_free_bulk((struct rte_mbuf **)&release_pkt, config_.rx_burst_size_);
+                rte_pktmbuf_free_bulk((struct rte_mbuf **)&release_pkt, num_released);
             }
         }
 
@@ -460,12 +461,12 @@ namespace FrameProcessor
 
         uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
 
-        LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-            << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
-            << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
-            << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
-            << " rx port: " << dst_port
-        );
+        // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
+        //     << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
+        //     << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
+        //     << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
+        //     << " rx port: " << dst_port
+        // );
 
         // If the destination port is in the list of allowed RX ports continue to process the
         // packet
@@ -501,7 +502,7 @@ namespace FrameProcessor
                 if (packet_number == 0 || frame_number > first_seen_frame_number_)
                 {
                     first_frame_number_ = decoder_->get_frame_number(pkt_header);
-                    LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
+                    // LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
                 }
                 else
                 {
@@ -523,10 +524,10 @@ namespace FrameProcessor
             }
 
 
-            LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-                << " protocol header: frame: " << current_frame_number
-                << " packet: " << decoder_->get_packet_number(pkt_header)
-            );
+            // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
+            //     << " protocol header: frame: " << current_frame_number
+            //     << " packet: " << decoder_->get_packet_number(pkt_header)
+            // );
 
             // Queue the packet on the appropriate forwarding ring based on the frame number
             int rc = rte_ring_enqueue(
@@ -539,12 +540,13 @@ namespace FrameProcessor
                 uint32_t retry = 0;
                 while ((rc != 0) && (retry++ < config_.max_packet_queue_retries_))
                 {
-                    rte_delay_us(1);
+                    //rte_delay_us(1);
                     rc = rte_ring_enqueue(
                         packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores],
                         *pkt
                     );
                 }
+                LOG4CXX_INFO(logger_, "PacketRxCore failed to enqueue packet, ring full");
             }
 
 
@@ -616,26 +618,73 @@ namespace FrameProcessor
 
     void PacketRxCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-
         LOG4CXX_DEBUG(logger_, "Status requested for packetrxcore_" << port_id_
             << " from the DPDK plugin");
-
+        
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
-
+        
+        // Original status parameters
         status.set_param(status_path + "total_packets", total_packets_);
-
         status.set_param(status_path + "dropped_packets", dropped_packets_);
-
         status.set_param(status_path + "captured_packets", captured_packets_);
-
         status.set_param(status_path + "rx_enable", rx_enable_);
-
         status.set_param(status_path + "rx_frames", rx_frames_);
-
         status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
-
         status.set_param(status_path + "first_frame_number", first_frame_number_);
-
+        
+        // Memory pool monitoring - requires DpdkDevice::get_mbuf_pool() method
+        // TODO: Add getter method to DpdkDevice class: struct rte_mempool* get_mbuf_pool() const { return mbuf_pool_; }
+        if (device_) {
+            // Try to lookup mbuf pool by name (if mbuf_pool_name_str function is available)
+            std::string mbuf_pool_name = mbuf_pool_name_str(socket_id_);
+            struct rte_mempool* mbuf_pool = rte_mempool_lookup("mbuf_pool_4294967295");
+            
+            if (mbuf_pool) {
+                uint32_t mbuf_avail = rte_mempool_avail_count(mbuf_pool);
+                uint32_t mbuf_in_use = rte_mempool_in_use_count(mbuf_pool);
+                uint32_t mbuf_total = mbuf_avail + mbuf_in_use;
+                
+                status.set_param(status_path + "mbuf_pool_available", mbuf_avail);
+                status.set_param(status_path + "mbuf_pool_in_use", mbuf_in_use);
+                status.set_param(status_path + "mbuf_pool_total", mbuf_total);
+                status.set_param(status_path + "mbuf_pool_utilization_pct", 
+                                mbuf_total > 0 ? (mbuf_in_use * 100) / mbuf_total : 0);
+            }
+        }
+        
+        // Release ring monitoring
+        if (packet_release_ring_) {
+            uint64_t release_ring_count = (uint64_t)rte_ring_count(packet_release_ring_);
+            uint64_t release_ring_free = (uint64_t)rte_ring_free_count(packet_release_ring_);
+            uint64_t release_ring_size = (uint64_t)rte_ring_get_size(packet_release_ring_);
+            
+            status.set_param(status_path + "release_ring_count", release_ring_count);
+            status.set_param(status_path + "release_ring_free", release_ring_free);
+            status.set_param(status_path + "release_ring_size", release_ring_size);
+            uint64_t release_utilization_pct = release_ring_size > 0 ? (release_ring_count * 100) / release_ring_size : 0;
+            status.set_param(status_path + "release_ring_utilization_pct", release_utilization_pct);
+        }
+        
+        // Forward rings monitoring
+        for (size_t i = 0; i < packet_forward_rings_.size(); ++i) {
+            if (packet_forward_rings_[i]) {
+                std::string fwd_ring_path = status_path + "forward_ring_" + std::to_string(i) + "_";
+                uint64_t fwd_ring_count = (uint64_t)rte_ring_count(packet_forward_rings_[i]);
+                uint64_t fwd_ring_free = (uint64_t)rte_ring_free_count(packet_forward_rings_[i]);
+                uint64_t fwd_ring_size = (uint64_t)rte_ring_get_size(packet_forward_rings_[i]);
+                
+                status.set_param(fwd_ring_path + "count", fwd_ring_count);
+                status.set_param(fwd_ring_path + "free", fwd_ring_free);
+                status.set_param(fwd_ring_path + "size", fwd_ring_size);
+                uint64_t fwd_utilization_pct = fwd_ring_size > 0 ? (fwd_ring_count * 100) / fwd_ring_size : 0;
+                status.set_param(fwd_ring_path + "utilization_pct", fwd_utilization_pct);
+            }
+        }
+        
+        // Additional performance metrics
+        status.set_param(status_path + "num_downstream_cores", (uint64_t)config_.num_downstream_cores);
+        status.set_param(status_path + "rx_burst_size", (uint64_t)config_.rx_burst_size_);
+        status.set_param(status_path + "max_packet_queue_retries", (uint64_t)config_.max_packet_queue_retries_);
     }
 
     bool PacketRxCore::connect(void)

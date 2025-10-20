@@ -62,7 +62,7 @@ namespace FrameProcessor
 
         uint64_t frame_buffer_size_;
 
-
+        
         int64_t first_frame_number_;
 
         struct rte_ring* packet_fwd_ring_;

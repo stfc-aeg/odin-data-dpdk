@@ -144,7 +144,7 @@ bool CameraController::request_configuration(const std::string param_prefix, Odi
     }
     camera_config_prefix += CAMERA_CONFIG_PATH;
     
-    // Get configuration from camera - it will update config_reply directly
+    // Get configuration from camera update config_reply directly
     if (!camera_->request_configuration(config_reply, camera_config_prefix)) {
         config_reply.set_nack("Failed to get camera configuration");
         return false;

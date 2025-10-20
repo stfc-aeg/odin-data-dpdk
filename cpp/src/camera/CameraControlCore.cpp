@@ -123,7 +123,7 @@ namespace FrameProcessor
                             
                             ss << ": Got camera control configure request from client " << client_identity
                                 << " : " << ctrl_req_encoded << std::endl;
-                            LOG4CXX_INFO(logger_, "Core " << lcore_id_ << ss.str());
+                            LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ss.str());
 
 
                             CameraController_->configure(ctrl_req, ctrl_reply);
@@ -135,7 +135,7 @@ namespace FrameProcessor
                             ss << " Got camera control read configuration request from client " << client_identity
                             << " : " << ctrl_req_encoded << std::endl;
 
-                            LOG4CXX_INFO(logger_, "Core " << lcore_id_ << ss.str());
+                            LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ss.str());
 
                             CameraController_->request_configuration(std::string(""), ctrl_reply);
                             break;
@@ -146,7 +146,7 @@ namespace FrameProcessor
                             ss << " Got camera control status request from client " << client_identity
                                 << " : " << ctrl_req_encoded << std::endl;
 
-                            LOG4CXX_INFO(logger_, "Core " << lcore_id_ << ss.str());
+                            LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ss.str());
 
                             CameraController_->get_status(std::string(""), ctrl_reply);
                             break;

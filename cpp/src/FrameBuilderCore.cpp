@@ -189,12 +189,12 @@ namespace FrameProcessor
                             packet_idx++;
                         }
                         frames_cleared++;
-                        LOG4CXX_INFO(logger_,
-                                "Got incomplete super frame with " << incomplete_frames << " incomplete frames");
+                        //LOG4CXX_INFO(logger_,
+                        //        "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                     }
 
                     LOG4CXX_INFO(logger_,
-                                "Got incomplete super frame with " << incomplete_frames << " incomplete frames");
+                                "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                 }
 
                 // Use the decoder to build that frame into another HP location

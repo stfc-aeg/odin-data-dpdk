@@ -1,11 +1,12 @@
 #include "DpdkDevice.h"
 #include "DpdkUtils.h"
+#include "dpdk_version_compatibiliy.h"
 
 namespace FrameProcessor
 {
     DpdkDevice::DpdkDevice(uint16_t port_id) :
         port_id_(port_id),
-        mbuf_pool_size_(1048575), // TODO - parameterise these - pass in as input config?
+        mbuf_pool_size_(2000000), // TODO - parameterise these - pass in as input config?
         mbuf_cache_size_(500),
         mtu_(9600), 
         rx_rings_(1),

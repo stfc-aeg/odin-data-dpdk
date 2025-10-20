@@ -59,15 +59,16 @@ namespace FrameProcessor
         dimensions_t dims(2);
 
         // Specific frame variables from decoder
+        // dims[2] = 1024;
         dims[1] = decoder_->get_frame_y_resolution();
         dims[0] = decoder_->get_frame_x_resolution();
-        std::size_t frame_size = decoder_->get_frame_data_size() * decoder_->get_frame_outer_chunk_size();
+        std::size_t frame_size = dims[0] * dims[1] * 2 * decoder_->get_frame_outer_chunk_size();
             //dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
         std::size_t frame_header_size = decoder_->get_frame_header_size();
 
 
-        uint64_t data_pointer_offset = (frame_header_size * decoder_->get_frame_outer_chunk_size()) + decoder_->get_super_frame_header_size();
-
+        //uint64_t data_pointer_offset = (frame_header_size * decoder_->get_frame_outer_chunk_size()) + decoder_->get_super_frame_header_size();
+        uint64_t data_pointer_offset = decoder_->get_image_data_offset();
         // Status reporting variables
         uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
@@ -116,7 +117,7 @@ namespace FrameProcessor
                 last_frame_ = frame_number;
 
 
-                //decoder_->set_super_frame_image_size(current_super_frame_buffer_, frame_size);
+                decoder_->set_super_frame_image_size(current_super_frame_buffer_, frame_size);
 
                 // Create new frame metadata object
                 FrameMetaData frame_meta;

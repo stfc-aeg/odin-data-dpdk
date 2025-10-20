@@ -304,7 +304,6 @@ namespace FrameProcessor {
 
             try {
                 imageGenerator_->generateImage(sim_config()->camera_number_, sim_status()->frame_number_);
-                //sim_status()->frame_number_++;
 
                 return (char*) imageGenerator_->getImageData().data();
             }
@@ -318,8 +317,7 @@ namespace FrameProcessor {
     }
     
     void SimulatedDpdkCamera::initialize_image_generator() {
-        double frame_interval = (sim_config()->frames_per_second_ > 0) ? 
-                               (1.0 / sim_config()->frames_per_second_) : (1.0 / 30.0); // Default to 30 FPS
+        double frame_interval = (sim_config()->frames_per_second_ > 0) ? (1.0 / sim_config()->frames_per_second_) : (1.0 / 30.0); // Default to 30 FPS
         LOG4CXX_INFO(logger_, "Initializing HDF5 image generator");
         LOG4CXX_INFO(logger_, "HDF5 file path: " << sim_config()->image_file_path_);
         LOG4CXX_INFO(logger_, "Dataset name: " << sim_config()->dataset_name_);

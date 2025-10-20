@@ -1,0 +1,26 @@
+// DPDK compatibility macros for version transitions
+
+#ifndef DEV_TX_OFFLOAD_MBUF_FAST_FREE
+#define DEV_TX_OFFLOAD_MBUF_FAST_FREE RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE
+#endif
+
+#ifndef DEV_RX_OFFLOAD_SCATTER
+#define DEV_RX_OFFLOAD_SCATTER RTE_ETH_RX_OFFLOAD_SCATTER
+#endif
+
+// Deprecated ICMP constants
+#ifndef RTE_IP_ICMP_ECHO_REQUEST
+#ifdef RTE_ICMP_ECHO_REQUEST
+#define RTE_IP_ICMP_ECHO_REQUEST RTE_ICMP_ECHO_REQUEST
+#else
+#define RTE_IP_ICMP_ECHO_REQUEST 8
+#endif
+#endif
+
+#ifndef RTE_IP_ICMP_ECHO_REPLY
+#ifdef RTE_ICMP_ECHO_REPLY
+#define RTE_IP_ICMP_ECHO_REPLY RTE_ICMP_ECHO_REPLY
+#else
+#define RTE_IP_ICMP_ECHO_REPLY 0
+#endif
+#endif

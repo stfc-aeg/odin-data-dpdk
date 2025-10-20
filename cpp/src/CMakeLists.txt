@@ -83,7 +83,7 @@ set_target_properties(DummyDpdkPlugin PROPERTIES
 install(TARGETS DummyDpdkPlugin DESTINATION lib)
 
 
-# Add library for dummy plugin
+# Add library for dummy camera plugin
 add_library(DummyDpdkCameraPlugin SHARED
         camera/DummyDpdkCameraPlugin.cpp
 )

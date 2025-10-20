@@ -48,7 +48,7 @@ namespace FrameProcessor
     // Make a copy of the config to return when the config if requested
     config_.update(config);
 
-    FrameCallback frame_callback = boost::bind(&DummyDpdkPlugin::process_frame, this, _1);
+    FrameCallback frame_callback = boost::bind(&DummyDpdkPlugin::process_frame, this, boost::placeholders::_1);
 
     DpdkFrameProcessorPlugin::configure(config, reply, &decoder_, frame_callback);
 

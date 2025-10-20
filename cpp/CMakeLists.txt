@@ -55,8 +55,6 @@ find_package( Boost 1.41.0
 find_package(LOG4CXX 0.10.0 REQUIRED)
 find_package(DPDK 21.1.0 REQUIRED)
 find_package(Blosc)
-find_package(DCAMAPI REQUIRED)
-
 # find package HDF5
 message("\nSearching for HDF5")
 

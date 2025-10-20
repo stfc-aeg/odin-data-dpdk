@@ -81,11 +81,11 @@ namespace FrameProcessor
     OdinData::IpcMessage& config, OdinData::IpcMessage& reply,
     ProtocolDecoder* decoder_ptr, FrameCallback& frame_callback)
   {
-    LOG4CXX_INFO(logger_, "Configuring DPDKFrameProcessor plugin");
+    LOG4CXX_DEBUG(logger_, "Configuring DPDKFrameProcessor plugin");
 
     if (config.get_param("update_config", false))
     {
-      LOG4CXX_INFO(logger_, "Got update config");
+      LOG4CXX_DEBUG(logger_, "Got update config");
       if (core_manager_ != nullptr)
       {
         core_manager_->configure(config);
@@ -104,7 +104,7 @@ namespace FrameProcessor
   void DpdkFrameProcessorPlugin::requestConfiguration(OdinData::IpcMessage& reply)
   {
     // Return the configuration of the plugin
-    LOG4CXX_DEBUG(logger_, "Configuration requested for DPDKFrameProcessor plugin");
+    LOG4CXX_TRACE(logger_, "Configuration requested for DPDKFrameProcessor plugin");
 
 
   }
@@ -117,7 +117,7 @@ namespace FrameProcessor
   void DpdkFrameProcessorPlugin::status(OdinData::IpcMessage& status)
   {
     // Record the plugin's status items
-    LOG4CXX_DEBUG(logger_, "Status requested for DPDKFrameProcessor plugin");
+    LOG4CXX_TRACE(logger_, "Status requested for DPDKFrameProcessor plugin");
 
     if (core_manager_ != nullptr)
     {

@@ -28,13 +28,13 @@ namespace FrameProcessor
         const std::size_t mem_size, const std::size_t buffer_size, const int socket_id
     ):
         mem_size_(mem_size),
-        buffer_size_(buffer_size),
+        buffer_size_(buffer_size + 3000000),
         socket_id_(socket_id),
         logger_(Logger::getLogger("FP.DpdkSharedBuffer"))
     {
 
         // Calculate the number of buffers in the memory zone and check that it is non-zero
-        num_buffers_ = mem_size_ / buffer_size_;
+        num_buffers_ = mem_size_ / (buffer_size_);
         if (!num_buffers_)
         {
             // TODO - buffer size exceeds memory size - should raise an exception
@@ -42,9 +42,10 @@ namespace FrameProcessor
 
         // Create the memory zone for the shared memory buffer used to assemble frame packets
         name_ = shared_mem_name_str(socket_id_);
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating shared memory buffer " << name_
+        LOG4CXX_INFO(logger_, "Creating shared memory buffer " << name_
             << " of size " << mem_size_
             << " on socket " << socket_id_
+            << " With " << num_buffers_ << " with size " << buffer_size_ 
         );
         memzone_ = rte_memzone_reserve(
             name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB
