@@ -65,6 +65,9 @@ namespace FrameProcessor
         
         int64_t first_frame_number_;
 
+        bool debug_enabled_;
+        bool trace_enabled_;
+
         struct rte_ring* packet_fwd_ring_;
         struct rte_ring* packet_release_ring_;
         struct rte_ring* clear_frames_ring_;
