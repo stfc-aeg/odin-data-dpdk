@@ -36,6 +36,14 @@ using namespace log4cxx::helpers;
 ////////////////////////////////////////////////////////////////////////////////
 namespace FrameProcessor
 {
+    // Enum for pixel data types
+    enum class PixelDataType {
+        UINT8,
+        UINT16,
+        UINT32,
+        UINT64
+    };
+
     /**
      * Class: TensorstoreCore
      * Purpose: This class is a DPDK "worker" responsible for taking
@@ -146,6 +154,9 @@ namespace FrameProcessor
         DpdkSharedBuffer* shared_buf_; // Pointer to the shared memory manager.
         TensorstoreCoreConfiguration config_; // Holds settings loaded from a file.
         LoggerPtr logger_; // The logging object.
+        
+        // --- Data Type Management ---
+        PixelDataType pixel_type_; // Current pixel data type based on bit depth
         
         // --- Status Reporting Variables ---
         uint64_t last_frame_; // The number of the last frame processed.

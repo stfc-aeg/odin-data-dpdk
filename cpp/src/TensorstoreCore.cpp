@@ -47,6 +47,14 @@ namespace {
     using ::tensorstore::DimensionSet;
 }
 
+// Enum for pixel data types
+enum class PixelDataType {
+    UINT8,
+    UINT16,
+    UINT32,
+    UINT64
+};
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // SECTION 3: STORAGE CONFIGURATION FUNCTION
@@ -212,6 +220,7 @@ namespace FrameProcessor
         upstream_ring_(NULL),
         tensorstore_initialized_(false),
         data_type_("uint16"),
+        pixel_type_(PixelDataType::UINT16),
         total_frames_(0),
         frame_size_(0),
         frames_written_(0),
@@ -352,14 +361,28 @@ namespace FrameProcessor
                     int height = static_cast<int>(decoder_->get_frame_y_resolution());
                     int bit_depth = static_cast<int>(decoder_->get_frame_bit_depth());
 
-                    if (bit_depth <= 8) data_type_ = "uint8";
-                    else if (bit_depth <= 16) data_type_ = "uint16";
-                    // room to add cases for 32, 64 if needed
-                    else {
-                        LOG4CXX_ERROR(logger_, "Unsupported bit depth: " << bit_depth);
-                        // Forward the frame without writing 
-                        forwardFrame(current_frame_buffer, frame_number);
-                        continue; 
+                    // Determine pixel data type based on bit depth using a switch case statement
+                    switch(bit_depth) {
+                        case 0 ... 8:
+                            data_type_ = "uint8";
+                            pixel_type_ = PixelDataType::UINT8;
+                            break;
+                        case 9 ... 16:
+                            data_type_ = "uint16";
+                            pixel_type_ = PixelDataType::UINT16;
+                            break;
+                        case 17 ... 32:
+                            data_type_ = "uint32";
+                            pixel_type_ = PixelDataType::UINT32;
+                            break;
+                        case 33 ... 64:
+                            data_type_ = "uint64";
+                            pixel_type_ = PixelDataType::UINT64;
+                            break;
+                        default:
+                            LOG4CXX_ERROR(logger_, "Unsupported bit depth: " << bit_depth);
+                            forwardFrame(current_frame_buffer, frame_number);
+                            continue;
                     }
 
                     ::nlohmann::json frames_json = nullptr;
@@ -387,16 +410,33 @@ namespace FrameProcessor
 
                     tensorstore::Future<void> write_future;
 
-                    // Call the templated version of the async write
-                    if (data_type_ == "uint8") {
-                        write_future = asyncWriteFrame<uint8_t>(
-                            *store_, raw_data, height, width, frame_number
-                        );
-                    } else if (data_type_ == "uint16") {
-                        write_future = asyncWriteFrame<uint16_t>(
-                            *store_, raw_data, height, width, frame_number
-                        );
-                    } // room to add cases for 32, 64 if needed
+                    // Call the templated version of the async write using a switch statement based on data type
+                    switch(pixel_type_) {
+                        case PixelDataType::UINT8:
+                            write_future = asyncWriteFrame<uint8_t>(
+                                *store_, raw_data, height, width, frame_number
+                            );
+                            break;
+                        case PixelDataType::UINT16:
+                            write_future = asyncWriteFrame<uint16_t>(
+                                *store_, raw_data, height, width, frame_number
+                            );
+                            break;
+                        case PixelDataType::UINT32:
+                            write_future = asyncWriteFrame<uint32_t>(
+                                *store_, raw_data, height, width, frame_number
+                            );
+                            break;
+                        case PixelDataType::UINT64:
+                            write_future = asyncWriteFrame<uint64_t>(
+                                *store_, raw_data, height, width, frame_number
+                            );
+                            break;
+                        default:
+                            LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
+                            forwardFrame(current_frame_buffer, frame_number);
+                            continue;
+                    }
 
                     // --- Add to Pending Queue ---
                     // This helps to track the frame number along with its
