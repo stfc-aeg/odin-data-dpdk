@@ -46,7 +46,15 @@ IF("${isSystemDir}" STREQUAL "-1")
    SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 ENDIF("${isSystemDir}" STREQUAL "-1")
 
+#Tensorstore library
+include(FetchContent)
 
+FetchContent_Declare(
+  tensorstore
+  URL https://github.com/google/tensorstore/archive/refs/tags/v0.1.63.tar.gz
+)
+
+FetchContent_MakeAvailable(tensorstore)
 
 # Find and add external packages required for library
 find_package( Boost 1.41.0

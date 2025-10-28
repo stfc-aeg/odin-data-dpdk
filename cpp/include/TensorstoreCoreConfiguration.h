@@ -1,0 +1,68 @@
+#ifndef INCLUDE_TENSORSTORECORECONFIGURATION_H_
+#define INCLUDE_TENSORSTORECORECONFIGURATION_H_
+
+#include "ParamContainer.h"
+#include "DpdkCoreConfiguration.h"
+#include <sstream>
+
+namespace FrameProcessor
+{
+    class TensorstoreCoreConfiguration : public OdinData::ParamContainer
+    {
+        public:
+            TensorstoreCoreConfiguration() :
+                ParamContainer()
+            {
+                bind_params();
+            }
+            
+            void resolve(DpdkCoreConfiguration &core_config_)
+            {
+                const ParamContainer::Value* value_ptr =
+                    core_config_.get_worker_core_config("tensorstore");
+
+                if (value_ptr != nullptr)
+                {
+                    update(*value_ptr);
+                    
+                }
+            }
+            
+            
+        private:
+            virtual void bind_params(void)
+            {
+                bind_param<std::string>(core_name, "core_name");
+                bind_param<std::string>(connect, "connect");
+                bind_param<std::string>(upstream_core, "upstream_core");
+                bind_param<unsigned int>(num_cores, "num_cores");
+                bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
+                bind_param<std::string>(storage_path_, "storage_path");
+                bind_param<unsigned int>(max_frames_, "max_frames");
+                bind_param<unsigned int>(frame_size_, "frame_size");
+                bind_param<unsigned int>(chunk_size_, "chunk_size");
+                bind_param<uint64_t>(cache_bytes_limit_, "cache_bytes_limit");
+                bind_param<unsigned int>(data_copy_concurrency_, "data_copy_concurrency");
+                bind_param<bool>(delete_existing_, "delete_existing");
+            }
+            
+            std::string core_name;
+            std::string connect;
+            std::string upstream_core;
+            unsigned int num_cores;
+            unsigned int num_downstream_cores;
+            
+            // TensorStore specific config
+            std::string storage_path_;
+            unsigned int max_frames_;
+            unsigned int frame_size_;
+            unsigned int chunk_size_;
+            uint64_t cache_bytes_limit_;
+            unsigned int data_copy_concurrency_;
+            bool delete_existing_;
+            
+            friend class TensorstoreCore;
+    };
+}
+
+#endif // INCLUDE_TENSORSTORECORECONFIGURATION_H_

@@ -37,13 +37,17 @@ add_library(${ODINDATA_DPDK_LIBRARY} SHARED
         # Network-related
         network/PacketProcessorCore.cpp
         network/PacketRxCore.cpp
+
+        #Tensorstore
+        TensorstoreCore.cpp
 )
 
 target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_CFLAGS})
 target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_LIBRARY_DIRS})
 target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
     rte_eal rte_kvargs rte_telemetry
-    ${DPDK_LDFLAGS} ${DCAMAPI_LIBRARY} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
+    ${DPDK_LDFLAGS} ${DCAMAPI_LIBRARY} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES} 
+    tensorstore::tensorstore tensorstore::all_drivers
 )
 
 get_target_property(PLUGIN_INSTALL_RPATH ${ODINDATA_DPDK_LIBRARY} INSTALL_RPATH)
