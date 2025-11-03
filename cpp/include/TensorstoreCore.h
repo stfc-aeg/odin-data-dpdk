@@ -109,7 +109,7 @@ namespace FrameProcessor
         {
             uint64_t frame_number;                 // Frame number
             struct SuperFrameHeader* frame_buffer; // Pointer to the frame buffer
-            tensorstore::Future<void> write_future; // The non-blocking write future
+            tensorstore::WriteFutures write_future; // The non-blocking write future
             uint64_t start_cycles;                 // TSC cycles when write was initiated
         };
 
@@ -125,7 +125,7 @@ namespace FrameProcessor
          * @return A tensorstore::Future<void> representing the pending write.
          */
         template <typename T>
-        tensorstore::Future<void> asyncWriteFrame(
+        tensorstore::WriteFutures asyncWriteFrame(
             tensorstore::TensorStore<>& store,
             void* raw_data,
             tensorstore::Index height,

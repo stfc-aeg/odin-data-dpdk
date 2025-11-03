@@ -65,7 +65,7 @@ enum class PixelDataType {
  * Purpose: Creates a "JSON" object that defines the complete storage layout
  * for TensorStore (driver, path, data type, shape, chunking).
  */
-::nlohmann::json GetJsonSpec(const std::string& data_type, const :: nlohmann::json& frames, int height, int width) {
+::nlohmann::json GetJsonSpec(const std::string& data_type, int frames, int height, int width) {
     return {
         {"driver", "zarr3"},
         {"kvstore", {
@@ -126,20 +126,21 @@ static tensorstore::Result<tensorstore::TensorStore<>> create_zarr(const ::nlohm
  * 5. Calls `tensorstore::Write` which returns a `Future<void>`.
  * 6. Returns this `Future` immediately.
  */
+namespace FrameProcessor {
+
 template <typename T>
-tensorstore::Future<void> asyncWriteFrame(
+tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     tensorstore::TensorStore<>& store,
     void* raw_data,
     tensorstore::Index height,
     tensorstore::Index width,
-    uint64_t frame_number,
-    log4cxx::LoggerPtr logger) 
+    uint64_t frame_number) 
 {
     // 1. Cast raw memory to the correct data type.
     T* data_as_T = reinterpret_cast<T*>(raw_data);
 
-    // 2. Describs the 2D image's memory layout (shape and strides).
-    std::array<tensorstore::Index, 2> shape = {height, width};
+    // 2. Describes the 2D image's memory layout (shape and strides).
+    std::array<tensorstore::Index, 2> shape = {width, height};
     std::array<tensorstore::Index, 2> byte_strides = {
         width * static_cast<tensorstore::Index>(sizeof(T)),
         static_cast<tensorstore::Index>(sizeof(T))
@@ -173,27 +174,21 @@ tensorstore::Future<void> asyncWriteFrame(
             exclusive_max_span
         ).result();
 
-        if (!resize_status.ok()) {
-            LOG4CXX_ERROR(logger, "Error resizing store to " << new_size 
-                      << " frames: " << resize_status.status());
-            // Return a ready future with error status
-            return tensorstore::Future<void>(resize_status.status());
-        }
     }
 
     // 6. Select the target 2D slice, e.g., store[frame_number, :, :].
     std::array<tensorstore::Index, 1> indices = {target_frame_index};
-    auto target = store | tensorstore::AllDims().IndexSlice(indices);
+    auto target = store | tensorstore::Dims(0).IndexSlice(indices);
 
     // 7. Write the 2D image data `array2` into the `target` slice.
     // This call is NON-BLOCKING and returns a Future.
+    LOG4CXX_INFO(logger_, "Calling write for frame " << frame_number);
     auto write_future = tensorstore::Write(array2, target);
 
     // 8. Return the future immediately.
     return write_future;
 }
-
-// Start of the main "FrameProcessor" namespace
+}
 namespace FrameProcessor
 {
     /**
@@ -301,8 +296,10 @@ namespace FrameProcessor
         lcore_id_ = lcore_id;
         run_lcore_ = true;
         LOG4CXX_INFO(logger_, "TensorstoreCore: " << lcore_id_ << " starting up");
+        LOG4CXX_INFO(logger_, "Core ID: " << lcore_id_);
 
         struct SuperFrameHeader *current_frame_buffer;
+        LOG4CXX_INFO(logger_, "Current Frame Buffer: " << current_frame_buffer);
 
         // Performance monitoring variables
         uint64_t frames_per_second = 1;
@@ -313,8 +310,14 @@ namespace FrameProcessor
         uint64_t start_frame_cycles = 0;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
+        LOG4CXX_INFO(logger_, "Core ID: " << lcore_id_);
 
-        
+        LOG4CXX_INFO(logger_, "Frames Per Second: " << frames_per_second);
+        LOG4CXX_INFO(logger_, "Total Frame Cycles: " << total_frame_cycles);
+        LOG4CXX_INFO(logger_, "Cycles Working: " << cycles_working);
+        LOG4CXX_INFO(logger_, "Maximum Frame Cycles: " << maximum_frame_cycles);
+        LOG4CXX_INFO(logger_, "Idle Loops: " << idle_loops);
+
         // --- Main Worker Loop ---
         while (likely(run_lcore_)) 
         {
@@ -353,29 +356,34 @@ namespace FrameProcessor
             {
                 start_frame_cycles = rte_get_tsc_cycles();
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
+                LOG4CXX_INFO(logger_, "Dequeuing frame: " << frame_number);
                 last_frame_ = frame_number;
 
                 // --- First-Frame-Only Initialization ---
                 if (!tensorstore_initialized_) {
-                    int width  = static_cast<int>(decoder_->get_frame_x_resolution());
-                    int height = static_cast<int>(decoder_->get_frame_y_resolution());
+                    int width  = static_cast<int>(decoder_->get_frame_y_resolution());
+                    int height = static_cast<int>(decoder_->get_frame_x_resolution());
                     int bit_depth = static_cast<int>(decoder_->get_frame_bit_depth());
+
+                    LOG4CXX_INFO(logger_, "Width: " << width);
+                    LOG4CXX_INFO(logger_, "Height: " << height);
+                    LOG4CXX_INFO(logger_, "Bit Depth: " << bit_depth);
 
                     // Determine pixel data type based on bit depth using a switch case statement
                     switch(bit_depth) {
-                        case 0 ... 8:
+                        case 1:
                             data_type_ = "uint8";
                             pixel_type_ = PixelDataType::UINT8;
                             break;
-                        case 9 ... 16:
+                        case 2:
                             data_type_ = "uint16";
                             pixel_type_ = PixelDataType::UINT16;
                             break;
-                        case 17 ... 32:
+                        case 4:
                             data_type_ = "uint32";
                             pixel_type_ = PixelDataType::UINT32;
                             break;
-                        case 33 ... 64:
+                        case 8:
                             data_type_ = "uint64";
                             pixel_type_ = PixelDataType::UINT64;
                             break;
@@ -385,10 +393,9 @@ namespace FrameProcessor
                             continue;
                     }
 
-                    ::nlohmann::json frames_json = nullptr;
-                    if (config_.max_frames_ > 0) frames_json = config_.max_frames_;
+                    
 
-                    ::nlohmann::json json_spec = GetJsonSpec(data_type_, frames_json, height, width);
+                    ::nlohmann::json json_spec = GetJsonSpec(data_type_, config_.max_frames_, height, width);
                     
                     auto store_result = create_zarr(json_spec);
                     
@@ -403,14 +410,14 @@ namespace FrameProcessor
                 }
                 
                 // --- Asynchronous TensorStore Write Logic ---
-                if (tensorstore_initialized_) {
+                 if (tensorstore_initialized_) {
                     char* raw_data = decoder_->get_image_data_start(current_frame_buffer);
                     const tensorstore::Index height = decoder_->get_frame_y_resolution();
                     const tensorstore::Index width = decoder_->get_frame_x_resolution();
 
-                    tensorstore::Future<void> write_future;
-
-                    // Call the templated version of the async write using a switch statement based on data type
+                    tensorstore::WriteFutures write_future;
+                
+                //     // Call the templated version of the async write using a switch statement based on data type
                     switch(pixel_type_) {
                         case PixelDataType::UINT8:
                             write_future = asyncWriteFrame<uint8_t>(
@@ -452,7 +459,7 @@ namespace FrameProcessor
                     // Store failed to open, count as an error and forward.
                     ++write_errors_;
                     forwardFrame(current_frame_buffer, frame_number);
-                }
+                 }
 
                 // --- Update Frame Dequeue Stats ---
                 uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
@@ -484,9 +491,15 @@ namespace FrameProcessor
      */
     void TensorstoreCore::pollAndProcessCompletions()
     {
+        if(!pending_writes_queue_.empty()) {
+            auto hbgeduhybfdsuyhf = pending_writes_queue_.front().write_future.status();
+            LOG4CXX_INFO(logger_, "Pending write future status: " << hbgeduhybfdsuyhf);
+
+        }
+        // auto hbgeduhybfdsuyhf = pending_writes_queue_.front().write_future.status();
         // This checks the oldest pending write. 
         while (!pending_writes_queue_.empty() && 
-               pending_writes_queue_.front().write_future.ready())
+               pending_writes_queue_.front().write_future.result())
         {
             // Get the completed write info from the front of the queue
             PendingWrite& completed = pending_writes_queue_.front();
@@ -499,6 +512,7 @@ namespace FrameProcessor
                     << " to Zarr: " << result.status());
             } else {
                 ++frames_written_;
+                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number << " to Zarr.");
             }
 
             // Forward the frame buffer downstream
@@ -543,36 +557,36 @@ namespace FrameProcessor
      */
     void TensorstoreCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        std::string status_path = path + "/TensorstoreCore_" + std::to_string(proc_idx_) + "/";
-        std::string ring_status = status_path + "upstream_rings/";
-        std::string timing_status = status_path + "timing/";
-        std::string ts_status = status_path + "tensorstore/";
+        // std::string status_path = path + "/TensorstoreCore_" + std::to_string(proc_idx_) + "/";
+        // std::string ring_status = status_path + "upstream_rings/";
+        // std::string timing_status = status_path + "timing/";
+        // std::string ts_status = status_path + "tensorstore/";
 
-        // --- Frame Status ---
-        status.set_param(status_path + "frames_dequeued", processed_frames_);
-        status.set_param(status_path + "frames_forwarded", frames_forwarded_);
-        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
-        status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "core_usage", (int)core_usage_);
-        status.set_param(status_path + "last_frame_number_dequeued", last_frame_);
+        // // --- Frame Status ---
+        // status.set_param(status_path + "frames_dequeued", processed_frames_);
+        // status.set_param(status_path + "frames_forwarded", frames_forwarded_);
+        // status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
+        // status.set_param(status_path + "idle_loops", idle_loops_);
+        // status.set_param(status_path + "core_usage", (int)core_usage_);
+        // status.set_param(status_path + "last_frame_number_dequeued", last_frame_);
 
-        // --- Timing Status (measures dequeue/initiation, not full write) ---
-        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
-        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+        // // --- Timing Status (measures dequeue/initiation, not full write) ---
+        // status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        // status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
 
-        // --- Ring Status ---
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
+        // // --- Ring Status ---
+        // status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        // status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+        // status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
+        // status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
 
-        // --- TensorStore Status (now includes async stats) ---
-        status.set_param(ts_status + "initialized", tensorstore_initialized_);
-        status.set_param(ts_status + "storage_path", storage_path_); // Note to self: this variable is currently not set
-        status.set_param(ts_status + "frames_written", frames_written_);
-        status.set_param(ts_status + "write_errors", write_errors_);
-        status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_); // Note to self: This variable is currently not calculated
-        status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
+        // // --- TensorStore Status (now includes async stats) ---
+        // status.set_param(ts_status + "initialized", tensorstore_initialized_);
+        // status.set_param(ts_status + "storage_path", storage_path_); // Note to self: this variable is currently not set
+        // status.set_param(ts_status + "frames_written", frames_written_);
+        // status.set_param(ts_status + "write_errors", write_errors_);
+        // status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_); // Note to self: This variable is currently not calculated
+        // status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
     }
 
     /**
@@ -623,5 +637,32 @@ namespace FrameProcessor
      * Purpose: Registers this class with the DPDK plugin system.
      */
     DPDKREGISTER(DpdkWorkerCore, TensorstoreCore, "TensorstoreCore");
-
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame<uint8_t>(
+        tensorstore::TensorStore<>& store,
+        void* raw_data,
+        tensorstore::Index height,
+        tensorstore::Index width,
+        uint64_t frame_number
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame<uint16_t>(
+        tensorstore::TensorStore<>& store,
+        void* raw_data,                 
+        tensorstore::Index height,
+        tensorstore::Index width,
+        uint64_t frame_number
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame<uint32_t>(
+        tensorstore::TensorStore<>& store,
+        void* raw_data,                 
+        tensorstore::Index height,
+        tensorstore::Index width,
+        uint64_t frame_number
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame<uint64_t>(
+        tensorstore::TensorStore<>& store,
+        void* raw_data,                 
+        tensorstore::Index height,
+        tensorstore::Index width,
+        uint64_t frame_number
+    );
 } // End of the FrameProcessor namespace
