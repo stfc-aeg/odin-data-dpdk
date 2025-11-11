@@ -45,8 +45,7 @@ namespace FrameProcessor
     };
 
     /**
-     * Class: TensorstoreCore
-     * Purpose: This class is a DPDK "worker" responsible for taking
+     * This class is a DPDK "worker" responsible for taking
      * image frames, initializing a TensorStore (a large-scale data
      * storage), and *asynchronously* writing those frames into the store.
      *
@@ -100,10 +99,7 @@ namespace FrameProcessor
     private:
         
         /**
-         * @struct PendingWrite
-         * @brief Tracks all information needed for an in-progress async write.
-         * This meets the criteria to track: frame_number, frame_buffer,
-         * write_future, and start_cycles.
+         * Tracks all information needed for an in-progress async write.
          */
         struct PendingWrite
         {
@@ -116,13 +112,7 @@ namespace FrameProcessor
         // --- Private Helper Functions ---
 
         /**
-         * @brief Initiates an asynchronous write of a frame to TensorStore.
-         * @param store The TensorStore instance.
-         * @param raw_data Pointer to the raw image data.
-         * @param height Image height.
-         * @param width Image width.
-         * @param frame_number The frame number to write.
-         * @return A tensorstore::Future<void> representing the pending write.
+         *Initiates an asynchronous write of a frame to TensorStore.
          */
         template <typename T>
         tensorstore::WriteFutures asyncWriteFrame(
@@ -134,19 +124,21 @@ namespace FrameProcessor
         );
 
         /**
-         * @brief Polls the queue of pending writes.
-         * Checks the *front* of the queue (FIFO) to see if the oldest
+         * Checks the front of the queue to see if the oldest
          * write has completed. If so, processes it, forwards the frame,
          * and removes it from the queue.
          */
         void pollAndProcessCompletions();
 
         /**
-         * @brief Forwards a completed frame buffer downstream.
-         * @param frame_buffer The buffer to forward.
-         * @param frame_number The frame number (used for downstream routing).
+         * Forwards a completed frame buffer downstream.
          */
         void forwardFrame(struct SuperFrameHeader* frame_buffer, uint64_t frame_number);
+
+        /**
+         * Handles closing the old store and creating a new one.
+         */
+        void handleReconfiguration(); 
 
         // --- Core Identity and Helpers ---
         int proc_idx_; // This core's unique ID.
@@ -160,7 +152,7 @@ namespace FrameProcessor
         
         // --- Status Reporting Variables ---
         uint64_t last_frame_; // The number of the last frame processed.
-        uint64_t processed_frames_; // Total frames *dequeued* from upstream.
+        uint64_t processed_frames_; // Total frames dequeued from upstream.
         uint64_t processed_frames_hz_; // Calculated frames per second.
         uint64_t idle_loops_; // How many times the loop ran but had no work.
         uint64_t mean_us_on_frame_; // Average time (in microseconds) spent per frame.
@@ -169,7 +161,7 @@ namespace FrameProcessor
         
         // --- DPDK Rings ---
         struct rte_ring* clear_frames_ring_; // Ring to return used buffers to.
-        struct rte_ring* upstream_ring_; // The ring we *receive* frames from.
+        struct rte_ring* upstream_ring_; // The ring we receive frames from.
         std::vector<struct rte_ring*> downstream_rings_; // List of rings we *send* frames to.
         
         // --- TensorStore Members ---
@@ -186,10 +178,8 @@ namespace FrameProcessor
         // --- Asynchronous Write Tracking ---
         
         /**
-         * @brief Queue of pending writes.
-         * This queue stores info for all writes that have been *initiated*
-         * but have not yet *completed*. We add to the back and process
-         * from the front to ensure FIFO order.
+         * This queue stores info for all writes that have been initiated
+         * but have not yet completed.
          */
         std::deque<PendingWrite> pending_writes_queue_;
         
@@ -201,6 +191,10 @@ namespace FrameProcessor
         // Stats for async operations
         uint64_t pending_writes_count_; // Current number of writes in the queue.
         uint64_t frames_forwarded_; // Total frames successfully forwarded downstream.
+
+        // --- Configuration/Reconfiguration State 
+        
+        
     };
 } // End of FrameProcessor namespace
 

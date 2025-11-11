@@ -47,14 +47,6 @@ namespace {
     using ::tensorstore::DimensionSet;
 }
 
-// Enum for pixel data types
-enum class PixelDataType {
-    UINT8,
-    UINT16,
-    UINT32,
-    UINT64
-};
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // SECTION 3: STORAGE CONFIGURATION FUNCTION
@@ -65,9 +57,9 @@ enum class PixelDataType {
  * Purpose: Creates a "JSON" object that defines the complete storage layout
  * for TensorStore (driver, path, data type, shape, chunking).
  */
-::nlohmann::json GetJsonSpec(const std::string& data_type, int frames, int height, int width) {
+::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, int frames, int height, int width) {
     return {
-        {"driver", "zarr3"},
+        {"driver", driver},
         {"kvstore", {
             {"driver", "file"},
             {"path", "/tmp"} // Note to self: Make this configurable
@@ -93,16 +85,42 @@ enum class PixelDataType {
     };
 }
 
+
+// ::nlohmann::json GetJsonSpec()
+// {
+//   return {
+//     {"driver", "zarr3"},
+//     {"kvstore", {
+//       {"driver", "s3"}, 
+//       {"bucket",  "tensorstore-objects"},
+//       {"endpoint", "https://s3.echo.stfc.ac.uk"},
+//       {"path", "odin-data-db"}
+//     }
+//     },
+//     {"metadata",
+//       {
+//         {"data_type", "uint16"},
+//         {"shape", {2304,4096}},
+//         {"chunk_grid", {
+//           {"name", "regular"},
+//           {"configuration", {
+//             {"chunk_shape", {2304,4096}}
+//           }}
+//         }}
+//       }}
+//     };
+//   }
+
 ////////////////////////////////////////////////////////////////////////////////
 // SECTION 4: STORAGE CREATION AND ASYNC WRITE FUNCTIONS
 ////////////////////////////////////////////////////////////////////////////////
 
 /**
- * Function: create_zarr
+ * Function: create_dataset
  * Purpose: Takes the JSON settings and creates/opens the TensorStore.
- * This is a blocking call which meansit is intended to be run only once at initialization.
+ * This is a blocking call meaning it is intended to only be run once at initialization.
  */
-static tensorstore::Result<tensorstore::TensorStore<>> create_zarr(const ::nlohmann::json& json_spec) {
+static tensorstore::Result<tensorstore::TensorStore<>> create_dataset(const ::nlohmann::json& json_spec) {
     auto context = Context::Default();
     auto store_result = tensorstore::Open(
         json_spec,
@@ -199,7 +217,8 @@ namespace FrameProcessor
     TensorstoreCore::TensorstoreCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
     ) :
-        DpdkWorkerCore(socket_id),
+    //move to config file
+        DpdkWorkerCore(socket_id), 
         logger_(Logger::getLogger("FP.TensorstoreCore")),
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
@@ -226,6 +245,9 @@ namespace FrameProcessor
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.width_  = static_cast<int>(decoder_->get_frame_x_resolution());
+        config_.height_ = static_cast<int>(decoder_->get_frame_y_resolution());
+        config_.bit_depth_ = static_cast<int>(decoder_->get_frame_bit_depth());
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
             << " core_name=" << config_.core_name
@@ -285,11 +307,11 @@ namespace FrameProcessor
 
     /**
      * Function: TensorstoreCore::run
-     * Purpose: The main loop for the worker core.
+     * Purpose: The main loop for the worker core
      *
      * This is a 2-part loop:
-     * 1. We poll for completed writes and forward them (FIFO).
-     * 2. Then we dequeue new frames from upstream and initiate asynchronous writes.
+     * 1. We poll for completed writes and forward them
+     * 2. Then we dequeue new frames from upstream and initiate asynchronous writes
      */
     bool TensorstoreCore::run(unsigned int lcore_id)
     {
@@ -318,12 +340,14 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, "Maximum Frame Cycles: " << maximum_frame_cycles);
         LOG4CXX_INFO(logger_, "Idle Loops: " << idle_loops);
 
+        handleReconfiguration();
+
         // --- Main Worker Loop ---
         while (likely(run_lcore_)) 
         {
             // --- Performance Stats Update (runs approx once per second) ---
             uint64_t now = rte_get_tsc_cycles();
-            if (unlikely((now - last) >= (cycles_per_sec))) //unlikely means this condition is rarely true
+            if (unlikely((now - last) >= (cycles_per_sec))) //Unlikely means this condition is rarely true
             {
                 processed_frames_hz_ = frames_per_second - 1;
                 mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
@@ -331,7 +355,7 @@ namespace FrameProcessor
                 maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
                 idle_loops_ = idle_loops;
 
-                // Reset per-second counters.
+                // Reset counters
                 frames_per_second = 1;
                 idle_loops = 0;
                 total_frame_cycles = 1;
@@ -339,85 +363,37 @@ namespace FrameProcessor
                 last = now;
             }
             
-            // --- PART 1: Poll for and Process Completed Writes (FIFO) ---
+
+            // --- PART 1: Poll for and Process Completed Writes ---
             // This function checks the front of the pending_writes_queue_
             // and processes any completed writes.
             pollAndProcessCompletions();
 
             // --- PART 2: Dequeue New Frame and Initiate Write ---
-            if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
+            if (tensorstore_initialized_)
             {
-                // If the ring is empty, count it as an "idle" loop and try again.
-                // We don't continue here, because we still need to
-                // check for completed writes even if no new frames arrive.
-                idle_loops++;
-            }
-            else // Frame has been dequeued successfully
-            {
-                start_frame_cycles = rte_get_tsc_cycles();
-                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
-                LOG4CXX_INFO(logger_, "Dequeuing frame: " << frame_number);
-                last_frame_ = frame_number;
-
-                // --- First-Frame-Only Initialization ---
-                if (!tensorstore_initialized_) {
-                    int width  = static_cast<int>(decoder_->get_frame_y_resolution());
-                    int height = static_cast<int>(decoder_->get_frame_x_resolution());
-                    int bit_depth = static_cast<int>(decoder_->get_frame_bit_depth());
-
-                    LOG4CXX_INFO(logger_, "Width: " << width);
-                    LOG4CXX_INFO(logger_, "Height: " << height);
-                    LOG4CXX_INFO(logger_, "Bit Depth: " << bit_depth);
-
-                    // Determine pixel data type based on bit depth using a switch case statement
-                    switch(bit_depth) {
-                        case 1:
-                            data_type_ = "uint8";
-                            pixel_type_ = PixelDataType::UINT8;
-                            break;
-                        case 2:
-                            data_type_ = "uint16";
-                            pixel_type_ = PixelDataType::UINT16;
-                            break;
-                        case 4:
-                            data_type_ = "uint32";
-                            pixel_type_ = PixelDataType::UINT32;
-                            break;
-                        case 8:
-                            data_type_ = "uint64";
-                            pixel_type_ = PixelDataType::UINT64;
-                            break;
-                        default:
-                            LOG4CXX_ERROR(logger_, "Unsupported bit depth: " << bit_depth);
-                            forwardFrame(current_frame_buffer, frame_number);
-                            continue;
-                    }
-
-                    
-
-                    ::nlohmann::json json_spec = GetJsonSpec(data_type_, config_.max_frames_, height, width);
-                    
-                    auto store_result = create_zarr(json_spec);
-                    
-                    if (!store_result.ok()) {
-                        LOG4CXX_ERROR(logger_, "Error creating Zarr file: " << store_result.status());
-                        //  Don't set initialized flag since store creation has failed
-                    } else {
-                        // Successfully created the store
-                        store_ = std::move(store_result.value());
-                        tensorstore_initialized_ = true;
-                    }
+                if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
+                {
+                    // If the ring is empty, count it as an "idle" loop and try again
+                    idle_loops++;
                 }
-                
-                // --- Asynchronous TensorStore Write Logic ---
-                 if (tensorstore_initialized_) {
+                else // Frame has been dequeued successfully
+                {
+                    start_frame_cycles = rte_get_tsc_cycles();
+                    uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
+                    LOG4CXX_INFO(logger_, "Dequeuing frame: " << frame_number);
+                    last_frame_ = frame_number;
+
+                    
+                    // --- Asynchronous TensorStore Write Logic ---
+                    // We are guaranteed tensorstore_initialized_ is true here
                     char* raw_data = decoder_->get_image_data_start(current_frame_buffer);
                     const tensorstore::Index height = decoder_->get_frame_y_resolution();
                     const tensorstore::Index width = decoder_->get_frame_x_resolution();
 
                     tensorstore::WriteFutures write_future;
                 
-                //     // Call the templated version of the async write using a switch statement based on data type
+                    // Call the templated version of the async write using a switch statement based on data type
                     switch(pixel_type_) {
                         case PixelDataType::UINT8:
                             write_future = asyncWriteFrame<uint8_t>(
@@ -446,8 +422,7 @@ namespace FrameProcessor
                     }
 
                     // --- Add to Pending Queue ---
-                    // This helps to track the frame number along with its
-                    // frame_buffer, write_future, and start_cycles.
+                    // Track the frame number along with its frame_buffer, write_future, and start_cycles
                     pending_writes_queue_.push_back(PendingWrite{
                         .frame_number = frame_number,
                         .frame_buffer = current_frame_buffer,
@@ -455,27 +430,29 @@ namespace FrameProcessor
                         .start_cycles = start_frame_cycles
                     });
 
-                } else {
-                    // Store failed to open, count as an error and forward.
-                    ++write_errors_;
-                    forwardFrame(current_frame_buffer, frame_number);
-                 }
+                    // --- Update Frame Dequeue Stats ---
+                    uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                    total_frame_cycles += cycles_spent;
+                    cycles_working += cycles_spent;
+                    if (maximum_frame_cycles < cycles_spent)
+                    {
+                        maximum_frame_cycles = cycles_spent;
+                    }
+                    frames_per_second++;
+                    processed_frames_++; // Counter to show frames number of processed frames
 
-                // --- Update Frame Dequeue Stats ---
-                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
-                total_frame_cycles += cycles_spent;
-                cycles_working += cycles_spent;
-                if (maximum_frame_cycles < cycles_spent)
-                {
-                    maximum_frame_cycles = cycles_spent;
+                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ 
+                        << " Initiated write for frame: " << frame_number
+                        << " (Queue size: " << pending_writes_queue_.size() << ")"
+                    );
                 }
-                frames_per_second++;
-                processed_frames_++; // Counter to show frames number of processed frames
-
-                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ 
-                    << " Initiated write for frame: " << frame_number
-                    << " (Queue size: " << pending_writes_queue_.size() << ")"
-                );
+            } 
+            else if (!tensorstore_initialized_)
+            {
+                // If tensorestore is not initialized e.g. on startup, before first config
+                // or if reconfiguring is occuring then  nothing happens and it is counted
+                // as an idle loop.
+                idle_loops++;
             }
         } // --- End Main Worker Loop ---
 
@@ -484,19 +461,19 @@ namespace FrameProcessor
     }
 
     /**
-     * Polls the queue of pending writes.
+     * Function: TensorstoreCore::pollAndProcessCompletions
+     * Purpose: Polls the queue of pending writes.
      * Checks the front of the queue (FIFO) to see if the oldest
      * write has completed. If so, processes it, forwards the frame,
-     * and removes it from the queue.
+     * and removes it from the queue
      */
     void TensorstoreCore::pollAndProcessCompletions()
     {
         if(!pending_writes_queue_.empty()) {
-            auto hbgeduhybfdsuyhf = pending_writes_queue_.front().write_future.status();
-            LOG4CXX_INFO(logger_, "Pending write future status: " << hbgeduhybfdsuyhf);
-
+            auto write_future_status = pending_writes_queue_.front().write_future.status();
+            LOG4CXX_INFO(logger_, "Pending write future status: " << write_future_status);
         }
-        // auto hbgeduhybfdsuyhf = pending_writes_queue_.front().write_future.status();
+
         // This checks the oldest pending write. 
         while (!pending_writes_queue_.empty() && 
                pending_writes_queue_.front().write_future.result())
@@ -509,10 +486,10 @@ namespace FrameProcessor
             if (!result.ok()) {
                 ++write_errors_;
                 LOG4CXX_ERROR(logger_, "Error writing frame " << completed.frame_number 
-                    << " to Zarr: " << result.status());
+                    << " to " << config_.driver_ << ": " << result.status());
             } else {
                 ++frames_written_;
-                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number << " to Zarr.");
+                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number << " to " << config_.driver_);
             }
 
             // Forward the frame buffer downstream
@@ -528,7 +505,89 @@ namespace FrameProcessor
     }
 
     /**
-     * Forwards a frame buffer to the correct downstream ring.
+     * Function: TensorstoreCore::handleReconfiguration
+     * Purpose: Handles the closing of the old store and creation of a new one
+     */
+    void TensorstoreCore::handleReconfiguration()
+    {
+        // --- Step 1: Flush all pending writes (if store exists) ---
+        if (tensorstore_initialized_) 
+        {
+            LOG4CXX_INFO(logger_, "Reconfiguration requested. Waiting for " 
+                << pending_writes_queue_.size() << " pending writes...");
+            
+            // This loop will block this thread (but not other cores)
+            // until all outstanding writes are finished.
+            while (!pending_writes_queue_.empty()) {
+                pollAndProcessCompletions();
+            }
+
+            LOG4CXX_INFO(logger_, "Write queue has cleared. Closing previous dataset.");
+
+            // Resets the store to close it.
+            store_.reset();
+            tensorstore_initialized_ = false;
+            frames_written_ = 0;
+            write_errors_ = 0;
+        }
+
+        // --- Step 2: Create the new dataset ---
+
+        // Use the configuration values set by configure()
+        int width  = config_.width_;
+        int height = config_.height_;
+        int bit_depth = config_.bit_depth_;
+
+        LOG4CXX_INFO(logger_, "Creating new dataset with:"
+            << " width=" << width
+            << " height=" << height
+            << " bit_depth=" << bit_depth
+        );
+
+        // Determine pixel data type
+        switch(bit_depth) {
+            case 1:
+                data_type_ = "uint8";
+                pixel_type_ = PixelDataType::UINT8;
+                break;
+            case 2:
+                data_type_ = "uint16";
+                pixel_type_ = PixelDataType::UINT16;
+                break;
+            case 4:
+                data_type_ = "uint32";
+                pixel_type_ = PixelDataType::UINT32;
+                break;
+            case 8:
+                data_type_ = "uint64";
+                pixel_type_ = PixelDataType::UINT64;
+                break;
+            default:
+                LOG4CXX_ERROR(logger_, "Unsupported bit depth: " << bit_depth);
+                return;
+        }
+
+        // Get the JSON spec
+        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_,data_type_, config_.max_frames_, width, height);
+        
+        // Create the store
+        auto store_result = create_dataset(json_spec);
+        
+        if (!store_result.ok()) {
+            // The initialized flag is not set if there is an error
+            LOG4CXX_ERROR(logger_, "Error creating " << config_.driver_ << " file: " << store_result.status());
+        } else {
+            // The store has been successfully created and the initialized flag is set to true
+            store_ = std::move(store_result.value());
+            tensorstore_initialized_ = true;
+            LOG4CXX_INFO(logger_, "New dataset created successfully. Resuming operations.");
+        }
+
+    }
+
+    /**
+     * Function: TensorstoreCore::forwardFrame
+     * Purpose: Forwards a frame buffer to the correct downstream ring
      */
     void TensorstoreCore::forwardFrame(struct SuperFrameHeader* frame_buffer, uint64_t frame_number)
     {
@@ -541,6 +600,7 @@ namespace FrameProcessor
 
     /**
      * Function: TensorstoreCore::stop
+     * Purpose: Stops the Tensorstore core's main loop
      */
     void TensorstoreCore::stop(void)
     {
@@ -591,7 +651,7 @@ namespace FrameProcessor
 
     /**
      * Function: TensorstoreCore::connect
-     * Purpose: Connects to input (upstream) rings.
+     * Purpose: Connects to input (upstream) rings
      */
     bool TensorstoreCore::connect(void)
     {
@@ -630,11 +690,45 @@ namespace FrameProcessor
     void TensorstoreCore::configure(OdinData::IpcMessage& config)
     {
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
+        try {
+        // Extract and update individual parameters from the IPC message
+        // Note: These are returned from the odin-gui. In its current implementation it is done through 
+        // a modifed acquisition by adding these parameters to self.main_plugin_name 
+        // (line 875 in odin-data-dpdk/tools/python/odin-gui.py)
+
+        if (config.has_param("file_path"))
+        {
+            config_.file_path_ = config.get_param<std::string>("file_path");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting file_path_ to: " <<  config_.file_path_);
+        }
+
+        if (config.has_param("driver")) {
+            config_.driver_ = config.get_param<std::string>("driver");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting driver_ to: " <<  config_.driver_);
+        }
+
+        if (config.has_param("update_config")) {
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " update_config is " << config.get_param<bool>("update_config") << ".");
+       
+        if (config.get_param<bool>("update_config") == true) {
+            handleReconfiguration();
+        } else {
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " No config changes detected.");
+        } 
+        }
+
+        }catch (const std::exception& e) {
+                    LOG4CXX_ERROR(logger_, "Failed to get configuration: " << e.what());
+        }
+
+
     }
+
 
     /**
      * Function: DPDKREGISTER
-     * Purpose: Registers this class with the DPDK plugin system.
+     * Purpose: Registers this class with the DPDK plugin system
      */
     DPDKREGISTER(DpdkWorkerCore, TensorstoreCore, "TensorstoreCore");
     template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame<uint8_t>(

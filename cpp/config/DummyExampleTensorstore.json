@@ -98,7 +98,8 @@
                     "dataset_name": "dummy",
                     "num_cores": 1,
                     "connect": "camera_capture",
-                    "max_frames": 1000
+                    "max_frames": 1000,
+                    "driver": "zarr3"
                 },
                 "frame_wrapper": {
                     "core_name": "FrameWrapperCore",
