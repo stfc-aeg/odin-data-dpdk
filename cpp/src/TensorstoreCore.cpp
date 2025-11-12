@@ -308,10 +308,6 @@ namespace FrameProcessor
     /**
      * Function: TensorstoreCore::run
      * Purpose: The main loop for the worker core
-     *
-     * This is a 2-part loop:
-     * 1. We poll for completed writes and forward them
-     * 2. Then we dequeue new frames from upstream and initiate asynchronous writes
      */
     bool TensorstoreCore::run(unsigned int lcore_id)
     {
@@ -364,12 +360,11 @@ namespace FrameProcessor
             }
             
 
-            // --- PART 1: Poll for and Process Completed Writes ---
             // This function checks the front of the pending_writes_queue_
             // and processes any completed writes.
             pollAndProcessCompletions();
 
-            // --- PART 2: Dequeue New Frame and Initiate Write ---
+            // Dequeue New Frame and Initiate Write 
             if (tensorstore_initialized_ && 
                 pending_writes_queue_.size() < config_.max_concurrent_writes_)
             {
@@ -463,8 +458,7 @@ namespace FrameProcessor
 
     /**
      * Function: TensorstoreCore::pollAndProcessCompletions
-     * Purpose: Polls the queue of pending writes.
-     * Checks the front of the queue (FIFO) to see if the oldest
+     * Purpose: Checks the front of the queue to see if the oldest
      * write has completed. If so, processes it, forwards the frame,
      * and removes it from the queue
      */
@@ -511,7 +505,7 @@ namespace FrameProcessor
      */
     void TensorstoreCore::handleReconfiguration()
     {
-        // --- Step 1: Flush all pending writes (if store exists) ---
+        // Flush all pending writes (if a store exists)
         if (tensorstore_initialized_) 
         {
             LOG4CXX_INFO(logger_, "Reconfiguration requested. Waiting for " 
@@ -532,7 +526,7 @@ namespace FrameProcessor
             write_errors_ = 0;
         }
 
-        // --- Step 2: Create the new dataset ---
+        // Create the new dataset
 
         // Use the configuration values set by configure()
         int width  = config_.width_;
