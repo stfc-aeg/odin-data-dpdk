@@ -370,7 +370,8 @@ namespace FrameProcessor
             pollAndProcessCompletions();
 
             // --- PART 2: Dequeue New Frame and Initiate Write ---
-            if (tensorstore_initialized_)
+            if (tensorstore_initialized_ && 
+                pending_writes_queue_.size() < config_.max_concurrent_writes_)
             {
                 if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
                 {
@@ -446,7 +447,7 @@ namespace FrameProcessor
                         << " (Queue size: " << pending_writes_queue_.size() << ")"
                     );
                 }
-            } 
+            }
             else if (!tensorstore_initialized_)
             {
                 // If tensorestore is not initialized e.g. on startup, before first config
@@ -706,6 +707,11 @@ namespace FrameProcessor
         if (config.has_param("driver")) {
             config_.driver_ = config.get_param<std::string>("driver");
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting driver_ to: " <<  config_.driver_);
+        }
+
+        if (config.has_param("max_concurrent_writes")) {
+            config_.max_concurrent_writes_ = config.get_param<int>("max_concurrent_writes");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting max_concurrent_writes to: " <<  config_.max_concurrent_writes_);
         }
 
         if (config.has_param("update_config")) {
