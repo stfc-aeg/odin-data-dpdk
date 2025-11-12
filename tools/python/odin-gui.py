@@ -85,6 +85,28 @@ class AcquisitionDialog(QDialog):
         layout.addRow(self.start_button)
 
 
+class TensorstoreDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add New Dataset")
+        layout = QFormLayout(self)
+
+        self.path_input = QLineEdit(self)
+        self.path_input.setText("/tmp/")
+        self.filename_input = QLineEdit(self)
+        self.filename_input.setText("odin-data-capture")
+        self.frames_input = QLineEdit(self)
+        self.frames_input.setText("1000")
+
+        layout.addRow("File Path:", self.path_input)
+        layout.addRow("File Name:", self.filename_input)
+        layout.addRow("Number of Frames:", self.frames_input)
+
+        self.start_button = QPushButton("Start", self)
+        self.start_button.clicked.connect(self.accept)
+        layout.addRow(self.start_button)
+
+
 class ZmqOdinDataGUI(QWidget):
     def __init__(self):
         super().__init__()
@@ -183,12 +205,15 @@ class ZmqOdinDataGUI(QWidget):
         self.main_plugin_label = QLabel("Main Plugin: Not detected")
         acquisition_button = QPushButton("Create Acquisition")
         acquisition_button.clicked.connect(self.open_acquisition_dialog)
+        tensorstore_button = QPushButton("Add New Dataset")
+        tensorstore_button.clicked.connect(self.open_tensorstore_dialog)
         hdf_layout.addWidget(self.hdf_writing_label)
         hdf_layout.addWidget(self.hdf_frames_written_label)
         hdf_layout.addWidget(self.hdf_file_path_label)
         hdf_layout.addWidget(self.hdf_file_name_label)
         hdf_layout.addWidget(self.main_plugin_label)
         hdf_layout.addWidget(acquisition_button)
+        hdf_layout.addWidget(tensorstore_button)
         hdf_widget.setLayout(hdf_layout)
         plugin_layout.addWidget(hdf_widget)
 
@@ -857,6 +882,19 @@ class ZmqOdinDataGUI(QWidget):
             frames = dialog.frames_input.text()
             self.start_acquisition(path, acquisition_id, frames)
 
+    def open_tensorstore_dialog(self):
+        # Check if we have a plugin name before proceeding
+        if not self.main_plugin_name:
+            self.log_message("Error: Main plugin name not detected. Please refresh configuration first.")
+            return
+            
+        dialog = TensorstoreDialog(self)
+        if dialog.exec_():
+            path = dialog.path_input.text()
+            acquisition_id = dialog.filename_input.text()
+            frames = dialog.frames_input.text()
+            self.start_tensorstore_acquisition(path, acquisition_id, frames)
+
     def start_acquisition(self, path, acquisition_id, frames):
         if self.acquisition(path, acquisition_id, frames):
             self.start_sequence()
@@ -876,7 +914,8 @@ class ZmqOdinDataGUI(QWidget):
                     "update_config": True,
                     "rx_enable": False,
                     "proc_enable": True,
-                    "rx_frames": frames_count
+                    "rx_frames": frames_count,
+    
                 },
                 "hdf": {
                     "write": False
@@ -913,6 +952,62 @@ class ZmqOdinDataGUI(QWidget):
 
         return True
 
+    def start_tensorstore_acquisition(self, path, acquisition_id, frames):
+        if self.tensorstore_acquisition(path, acquisition_id, frames):
+            self.start_sequence()
+
+    def tensorstore_acquisition(self, path, acquisition_id, frames):
+        # Check if we have a plugin name
+        if not self.main_plugin_name:
+            self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
+            return False
+            
+        try:
+            frames_count = int(frames)
+
+            # Use the dynamically extracted plugin name with Tensorstore-specific config
+            common_config = {
+                self.main_plugin_name: {
+                    "update_config": True,
+                    "file_path": path,
+                    "driver": "zarr3",
+                    "max_concurrent_writes": 64,
+                },
+                "hdf": {
+                    "write": False
+                }
+            }
+
+            self.log_message(f"Sending first Tensorstore configuration using plugin: {self.main_plugin_name}")
+            if not self.send_config_message({"params": common_config}):
+                self.log_message("Failed to send the first Tensorstore configuration message. Aborting acquisition setup.")
+                return False
+
+            second_config = {
+                self.main_plugin_name: common_config[self.main_plugin_name],
+                "hdf": {
+                    "file": {
+                        "path": path
+                    },
+                    "frames": frames_count,
+                    "acquisition_id": acquisition_id,
+                    "write": True
+                }
+            }
+
+            self.log_message("Sending second Tensorstore configuration.")
+            if not self.send_config_message({"params": second_config}):
+                self.log_message("Failed to send the second Tensorstore configuration message. Aborting acquisition setup.")
+                return False
+
+            self.log_message("Tensorstore acquisition setup completed successfully.")
+
+        except ValueError as e:
+            self.log_message(f"Invalid frames count provided: {e}")
+            return False
+
+        return True
+
     def start_sequence(self):
         # Check if we have a plugin name
         if not self.main_plugin_name:
@@ -926,7 +1021,8 @@ class ZmqOdinDataGUI(QWidget):
                 self.main_plugin_name: {
                     "update_config": True,
                     "rx_enable": False,
-                    "proc_enable": True
+                    "proc_enable": True,
+
                 },
                 "hdf": {
                     "Writing": False
