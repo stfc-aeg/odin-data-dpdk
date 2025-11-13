@@ -62,7 +62,7 @@ namespace {
         {"driver", driver},
         {"kvstore", {
             {"driver", "file"},
-            {"path", "/tmp"} // Note to self: Make this configurable
+            {"path", "/tmp"}
         }},
         {"metadata", {
             {"data_type", data_type},
@@ -79,7 +79,7 @@ namespace {
                 {"limit", "shared"}
             }},
             {"cache_pool", {
-                {"total_bytes_limit", 17179869184} // Note to self: Make this configurable
+                {"total_bytes_limit", 17179869184}
             }}
         }}
     };
@@ -157,7 +157,7 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     // 1. Cast raw memory to the correct data type.
     T* data_as_T = reinterpret_cast<T*>(raw_data);
 
-    // 2. Describes the 2D image's memory layout (shape and strides).
+    // 2. Describes the 2D image's memory layout (shape and strides)
     std::array<tensorstore::Index, 2> shape = {width, height};
     std::array<tensorstore::Index, 2> byte_strides = {
         width * static_cast<tensorstore::Index>(sizeof(T)),
@@ -165,10 +165,10 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     };
     tensorstore::StridedLayout<2> layout(shape, byte_strides);
 
-    // 3. Create a "view" of the data (zero-copy).
+    // 3. Create a "view" of the data (zero-copy)
     tensorstore::ArrayView<T, 2> two_dim_view(data_as_T, layout);
 
-    // 4. Convert the view to a "shared" array for safe writing.
+    // 4. Convert the view to a "shared" array for safe writing
     auto array2 = tensorstore::StaticRankCast<2>(tensorstore::UnownedToShared(two_dim_view));
 
     // 5. Check if the store needs to be resized.
@@ -185,7 +185,7 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
         tensorstore::span<const tensorstore::Index> inclusive_min_span(inclusive_min.data(), inclusive_min.size());
         tensorstore::span<const tensorstore::Index> exclusive_max_span(exclusive_max.data(), exclusive_max.size());
         
-        // Execute the resize operation (BLOCKING).
+        // Execute the resize operation (BLOCKING)
         auto resize_status = tensorstore::Resize(
             store,
             inclusive_min_span,
@@ -194,12 +194,11 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
 
     }
 
-    // 6. Select the target 2D slice, e.g., store[frame_number, :, :].
+    // 6. Select the target 2D slice, e.g., store[frame_number, :, :]
     std::array<tensorstore::Index, 1> indices = {target_frame_index};
     auto target = store | tensorstore::Dims(0).IndexSlice(indices);
 
-    // 7. Write the 2D image data `array2` into the `target` slice.
-    // This call is NON-BLOCKING and returns a Future.
+    // 7. Write the 2D image data `array2` into the `target` slice
     LOG4CXX_INFO(logger_, "Calling write for frame " << frame_number);
     auto write_future = tensorstore::Write(array2, target);
 
@@ -241,7 +240,8 @@ namespace FrameProcessor
         write_errors_(0),
         avg_write_time_us_(0),
         pending_writes_count_(0),
-        frames_forwarded_(0)
+        frames_forwarded_(0),
+        completed_writes_(0)      
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -413,7 +413,6 @@ namespace FrameProcessor
                             break;
                         default:
                             LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
-                            forwardFrame(current_frame_buffer, frame_number);
                             continue;
                     }
 
@@ -469,14 +468,16 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, "Pending write future status: " << write_future_status);
         }
 
-        // This checks the oldest pending write. 
         while (!pending_writes_queue_.empty() && 
                pending_writes_queue_.front().write_future.result())
         {
-            // Get the completed write info from the front of the queue
             PendingWrite& completed = pending_writes_queue_.front();
             
-            // Check the status of the completed future
+            // Calculate write time in microseconds
+            uint64_t end_cycles = rte_get_tsc_cycles();
+            uint64_t cycles_elapsed = end_cycles - completed.start_cycles;
+            uint64_t write_time_us = (cycles_elapsed * 1000000) / rte_get_tsc_hz();
+            
             const auto& result = completed.write_future.result();
             if (!result.ok()) {
                 ++write_errors_;
@@ -484,7 +485,14 @@ namespace FrameProcessor
                     << " to " << config_.driver_ << ": " << result.status());
             } else {
                 ++frames_written_;
-                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number << " to " << config_.driver_);
+                ++completed_writes_;
+                
+                // Calculate rolling average in microseconds
+                uint64_t total_write_time_us = avg_write_time_us_ * (completed_writes_ - 1);
+                avg_write_time_us_ = (total_write_time_us + write_time_us) / completed_writes_;
+                
+                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number 
+                    << " to " << config_.driver_ << " in " << write_time_us << " us");
             }
 
             // Forward the frame buffer downstream
@@ -495,7 +503,6 @@ namespace FrameProcessor
             pending_writes_queue_.pop_front();
         }
 
-        // Update status counter
         pending_writes_count_ = pending_writes_queue_.size();
     }
 
@@ -612,36 +619,37 @@ namespace FrameProcessor
      */
     void TensorstoreCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        // std::string status_path = path + "/TensorstoreCore_" + std::to_string(proc_idx_) + "/";
-        // std::string ring_status = status_path + "upstream_rings/";
-        // std::string timing_status = status_path + "timing/";
-        // std::string ts_status = status_path + "tensorstore/";
+        std::string status_path = path + "/TensorstoreCore_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "upstream_rings/";
+        std::string timing_status = status_path + "timing/";
+        std::string ts_status = status_path + "tensorstore/";
 
-        // // --- Frame Status ---
-        // status.set_param(status_path + "frames_dequeued", processed_frames_);
-        // status.set_param(status_path + "frames_forwarded", frames_forwarded_);
-        // status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
-        // status.set_param(status_path + "idle_loops", idle_loops_);
-        // status.set_param(status_path + "core_usage", (int)core_usage_);
-        // status.set_param(status_path + "last_frame_number_dequeued", last_frame_);
+        // --- Frame Status ---
+        status.set_param(status_path + "frames_dequeued", processed_frames_);
+        status.set_param(status_path + "frames_forwarded", frames_forwarded_);
+        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
+        status.set_param(status_path + "idle_loops", idle_loops_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
+        status.set_param(status_path + "last_frame_number_dequeued", last_frame_);
 
-        // // --- Timing Status (measures dequeue/initiation, not full write) ---
-        // status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
-        // status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+        // --- Timing Status ---
+        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
 
-        // // --- Ring Status ---
-        // status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
-        // status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
-        // status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
-        // status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
+        // --- Ring Status ---
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
 
-        // // --- TensorStore Status (now includes async stats) ---
-        // status.set_param(ts_status + "initialized", tensorstore_initialized_);
-        // status.set_param(ts_status + "storage_path", storage_path_); // Note to self: this variable is currently not set
-        // status.set_param(ts_status + "frames_written", frames_written_);
-        // status.set_param(ts_status + "write_errors", write_errors_);
-        // status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_); // Note to self: This variable is currently not calculated
-        // status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
+        // --- TensorStore Status ---
+        status.set_param(ts_status + "initialized", tensorstore_initialized_);
+        status.set_param(ts_status + "storage_path", config_.file_path_);
+        status.set_param(ts_status + "frames_written", frames_written_.load());
+        status.set_param(ts_status + "write_errors", write_errors_.load());
+        status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_);
+        status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
+        status.set_param(ts_status + "total_completed_writes", completed_writes_);
     }
 
     /**
@@ -688,9 +696,7 @@ namespace FrameProcessor
 
         try {
         // Extract and update individual parameters from the IPC message
-        // Note: These are returned from the odin-gui. In its current implementation it is done through 
-        // a modifed acquisition by adding these parameters to self.main_plugin_name 
-        // (line 875 in odin-data-dpdk/tools/python/odin-gui.py)
+        // Note: These are returned from the odin-gui
 
         if (config.has_param("file_path"))
         {

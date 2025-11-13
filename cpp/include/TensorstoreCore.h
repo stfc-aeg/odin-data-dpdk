@@ -191,9 +191,7 @@ namespace FrameProcessor
         // Stats for async operations
         uint64_t pending_writes_count_; // Current number of writes in the queue.
         uint64_t frames_forwarded_; // Total frames successfully forwarded downstream.
-
-        // --- Configuration/Reconfiguration State 
-        
+        uint64_t completed_writes_;
         
     };
 } // End of FrameProcessor namespace
