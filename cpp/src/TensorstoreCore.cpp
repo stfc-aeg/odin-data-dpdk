@@ -66,10 +66,12 @@ namespace {
         }},
         {"metadata", {
             {"data_type", data_type},
+            // 3D shape: [frames, height, width] - matches row-major 2D slices
             {"shape", {frames, height, width}},
             {"chunk_grid", {
                 {"name", "regular"},
                 {"configuration", {
+                    // Chunk by single frame: {1, height, width}
                     {"chunk_shape", {1, height, width}}
                 }}
             }}
