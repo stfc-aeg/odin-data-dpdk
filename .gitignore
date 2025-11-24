@@ -18,4 +18,4 @@ cmake-build*/
 .vscode/
 
 docs/build/
-cpp/build*/
+cpp/build*/_codeql_detected_source_root
