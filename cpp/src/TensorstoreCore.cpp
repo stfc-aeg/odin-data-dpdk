@@ -57,12 +57,12 @@ namespace {
  * Purpose: Creates a "JSON" object that defines the complete storage layout
  * for TensorStore (driver, path, data type, shape, chunking).
  */
-::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, int frames, int height, int width) {
+::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, const std::string& path, std::size_t frames, std::size_t height, std::size_t width, uint64_t cache_bytes_limit) {
     return {
         {"driver", driver},
         {"kvstore", {
             {"driver", "file"},
-            {"path", "/tmp"}
+            {"path", path}
         }},
         {"metadata", {
             {"data_type", data_type},
@@ -79,7 +79,7 @@ namespace {
                 {"limit", "shared"}
             }},
             {"cache_pool", {
-                {"total_bytes_limit", 17179869184}
+                {"total_bytes_limit", cache_bytes_limit}
             }}
         }}
     };
@@ -158,10 +158,11 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     T* data_as_T = reinterpret_cast<T*>(raw_data);
 
     // 2. Describes the 2D image's memory layout (shape and strides)
-    std::array<tensorstore::Index, 2> shape = {width, height};
+    // Shape is [height, width] for row-major storage
+    std::array<tensorstore::Index, 2> shape = {height, width};
     std::array<tensorstore::Index, 2> byte_strides = {
-        width * static_cast<tensorstore::Index>(sizeof(T)),
-        static_cast<tensorstore::Index>(sizeof(T))
+        width * static_cast<tensorstore::Index>(sizeof(T)),  // stride to next row
+        static_cast<tensorstore::Index>(sizeof(T))            // stride to next column
     };
     tensorstore::StridedLayout<2> layout(shape, byte_strides);
 
@@ -189,9 +190,14 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
         auto resize_status = tensorstore::Resize(
             store,
             inclusive_min_span,
-            exclusive_max_span
+            exclusive_max_span,
+            tensorstore::ResizeMode::expand_only
         ).result();
-
+        
+        if (!resize_status.ok()) {
+            LOG4CXX_ERROR(logger_, "Failed to resize dataset for frame " << frame_number 
+                << ": " << resize_status.status());
+        }
     }
 
     // 6. Select the target 2D slice, e.g., store[frame_number, :, :]
@@ -199,7 +205,7 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     auto target = store | tensorstore::Dims(0).IndexSlice(indices);
 
     // 7. Write the 2D image data `array2` into the `target` slice
-    LOG4CXX_INFO(logger_, "Calling write for frame " << frame_number);
+    LOG4CXX_DEBUG_LEVEL(2, logger_, "Calling write for frame " << frame_number);
     auto write_future = tensorstore::Write(array2, target);
 
     // 8. Return the future immediately.
@@ -245,23 +251,23 @@ namespace FrameProcessor
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
-        config_.width_  = static_cast<int>(decoder_->get_frame_x_resolution());
-        config_.height_ = static_cast<int>(decoder_->get_frame_y_resolution());
-        config_.bit_depth_ = static_cast<int>(decoder_->get_frame_bit_depth());
+        config_.width_  = decoder_->get_frame_x_resolution();
+        config_.height_ = decoder_->get_frame_y_resolution();
+        config_.bit_depth_ = decoder_->get_frame_bit_depth();
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
-            << " core_name=" << config_.core_name
-            << " connect=" << config_.connect
-            << " upstream_core=" << config_.upstream_core
-            << " num_cores=" << config_.num_cores
-            << " num_downstream_cores=" << config_.num_downstream_cores
-            << " storage_path=" << config_.storage_path_
-            << " max_frames=" << config_.max_frames_
-            << " frame_size=" << config_.frame_size_
-            << " chunk_size=" << config_.chunk_size_
-            << " cache_bytes_limit=" << config_.cache_bytes_limit_
-            << " data_copy_concurrency=" << config_.data_copy_concurrency_
-            << " delete_existing=" << config_.delete_existing_
+            << " core_name = " << config_.core_name
+            << " connect = " << config_.connect
+            << " upstream_core = " << config_.upstream_core
+            << " num_cores = " << config_.num_cores
+            << " num_downstream_cores = " << config_.num_downstream_cores
+            << " storage_path = " << config_.storage_path_
+            << " max_frames = " << config_.max_frames_
+            << " frame_size = " << config_.frame_size_
+            << " chunk_size = " << config_.chunk_size_
+            << " cache_bytes_limit = " << config_.cache_bytes_limit_
+            << " data_copy_concurrency = " << config_.data_copy_concurrency_
+            << " delete_existing = " << config_.delete_existing_
         );
 
         // --- DPDK Output Ring Initialization ---
@@ -314,10 +320,8 @@ namespace FrameProcessor
         lcore_id_ = lcore_id;
         run_lcore_ = true;
         LOG4CXX_INFO(logger_, "TensorstoreCore: " << lcore_id_ << " starting up");
-        LOG4CXX_INFO(logger_, "Core ID: " << lcore_id_);
 
         struct SuperFrameHeader *current_frame_buffer;
-        LOG4CXX_INFO(logger_, "Current Frame Buffer: " << current_frame_buffer);
 
         // Performance monitoring variables
         uint64_t frames_per_second = 1;
@@ -328,13 +332,6 @@ namespace FrameProcessor
         uint64_t start_frame_cycles = 0;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
-        LOG4CXX_INFO(logger_, "Core ID: " << lcore_id_);
-
-        LOG4CXX_INFO(logger_, "Frames Per Second: " << frames_per_second);
-        LOG4CXX_INFO(logger_, "Total Frame Cycles: " << total_frame_cycles);
-        LOG4CXX_INFO(logger_, "Cycles Working: " << cycles_working);
-        LOG4CXX_INFO(logger_, "Maximum Frame Cycles: " << maximum_frame_cycles);
-        LOG4CXX_INFO(logger_, "Idle Loops: " << idle_loops);
 
         handleReconfiguration();
 
@@ -365,7 +362,7 @@ namespace FrameProcessor
             pollAndProcessCompletions();
 
             // Dequeue New Frame and Initiate Write 
-            if (tensorstore_initialized_ && 
+            if (tensorstore_initialized_ && store_.has_value() &&
                 pending_writes_queue_.size() < config_.max_concurrent_writes_)
             {
                 if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
@@ -377,7 +374,7 @@ namespace FrameProcessor
                 {
                     start_frame_cycles = rte_get_tsc_cycles();
                     uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
-                    LOG4CXX_INFO(logger_, "Dequeuing frame: " << frame_number);
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
                     last_frame_ = frame_number;
 
                     
@@ -436,7 +433,7 @@ namespace FrameProcessor
                     frames_per_second++;
                     processed_frames_++; // Counter to show frames number of processed frames
 
-                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ 
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
                         << " Initiated write for frame: " << frame_number
                         << " (Queue size: " << pending_writes_queue_.size() << ")"
                     );
@@ -465,11 +462,11 @@ namespace FrameProcessor
     {
         if(!pending_writes_queue_.empty()) {
             auto write_future_status = pending_writes_queue_.front().write_future.status();
-            LOG4CXX_INFO(logger_, "Pending write future status: " << write_future_status);
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Pending write future status: " << write_future_status);
         }
 
         while (!pending_writes_queue_.empty() && 
-               pending_writes_queue_.front().write_future.result())
+               pending_writes_queue_.front().write_future.ready())
         {
             PendingWrite& completed = pending_writes_queue_.front();
             
@@ -478,6 +475,7 @@ namespace FrameProcessor
             uint64_t cycles_elapsed = end_cycles - completed.start_cycles;
             uint64_t write_time_us = (cycles_elapsed * 1000000) / rte_get_tsc_hz();
             
+            // Get the result now that we know it's ready
             const auto& result = completed.write_future.result();
             if (!result.ok()) {
                 ++write_errors_;
@@ -491,7 +489,7 @@ namespace FrameProcessor
                 uint64_t total_write_time_us = avg_write_time_us_ * (completed_writes_ - 1);
                 avg_write_time_us_ = (total_write_time_us + write_time_us) / completed_writes_;
                 
-                LOG4CXX_INFO(logger_, "Successfully wrote frame " << completed.frame_number 
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Successfully wrote frame " << completed.frame_number 
                     << " to " << config_.driver_ << " in " << write_time_us << " us");
             }
 
@@ -536,9 +534,9 @@ namespace FrameProcessor
         // Create the new dataset
 
         // Use the configuration values set by configure()
-        int width  = config_.width_;
-        int height = config_.height_;
-        int bit_depth = config_.bit_depth_;
+        std::size_t width  = config_.width_;
+        std::size_t height = config_.height_;
+        std::size_t bit_depth = config_.bit_depth_;
 
         LOG4CXX_INFO(logger_, "Creating new dataset with:"
             << " width=" << width
@@ -570,7 +568,9 @@ namespace FrameProcessor
         }
 
         // Get the JSON spec
-        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_,data_type_, config_.max_frames_, width, height);
+        // Always create dataset with at least 1 frame to avoid immediate resize
+        std::size_t initial_frames = (config_.max_frames_ == 0) ? 1 : config_.max_frames_;
+        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_, data_type_, config_.file_path_, initial_frames, width, height, config_.cache_bytes_limit_);
         
         // Create the store
         auto store_result = create_dataset(json_spec);
@@ -645,8 +645,8 @@ namespace FrameProcessor
         // --- TensorStore Status ---
         status.set_param(ts_status + "initialized", tensorstore_initialized_);
         status.set_param(ts_status + "storage_path", config_.file_path_);
-        status.set_param(ts_status + "frames_written", frames_written_.load());
-        status.set_param(ts_status + "write_errors", write_errors_.load());
+        status.set_param(ts_status + "frames_written", frames_written_);
+        status.set_param(ts_status + "write_errors", write_errors_);
         status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_);
         status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
         status.set_param(ts_status + "total_completed_writes", completed_writes_);

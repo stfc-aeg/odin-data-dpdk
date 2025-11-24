@@ -44,9 +44,9 @@ namespace FrameProcessor
                 bind_param<uint64_t>(cache_bytes_limit_, "cache_bytes_limit");
                 bind_param<unsigned int>(data_copy_concurrency_, "data_copy_concurrency");
                 bind_param<bool>(delete_existing_, "delete_existing");
-                bind_param<int>(height_, "height");
-                bind_param<int>(width_, "width");
-                bind_param<int>(bit_depth_, "bit_depth");
+                bind_param<std::size_t>(height_, "height");
+                bind_param<std::size_t>(width_, "width");
+                bind_param<std::size_t>(bit_depth_, "bit_depth");
                 bind_param<std::string>(file_path_, "file_path");
                 bind_param<std::string>(driver_, "driver");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
@@ -68,9 +68,9 @@ namespace FrameProcessor
             uint64_t cache_bytes_limit_;
             unsigned int data_copy_concurrency_;
             bool delete_existing_;
-            int height_;
-            int width_;
-            int bit_depth_;
+            std::size_t height_;
+            std::size_t width_;
+            std::size_t bit_depth_;
             std::string file_path_;
             std::string driver_;
             int max_concurrent_writes_;

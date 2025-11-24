@@ -184,8 +184,8 @@ namespace FrameProcessor
         std::deque<PendingWrite> pending_writes_queue_;
         
         // --- Statistics for TensorStore Operations ---
-        std::atomic<uint64_t> frames_written_; // Total frames successfully written.
-        std::atomic<uint64_t> write_errors_;   // Total frames that failed to write.
+        uint64_t frames_written_; // Total frames successfully written.
+        uint64_t write_errors_;   // Total frames that failed to write.
         uint64_t avg_write_time_us_; // (Not currently calculated).
         
         // Stats for async operations
