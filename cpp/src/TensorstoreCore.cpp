@@ -66,12 +66,10 @@ namespace {
         }},
         {"metadata", {
             {"data_type", data_type},
-            // 3D shape: [frames, height, width] - matches row-major 2D slices
             {"shape", {frames, height, width}},
             {"chunk_grid", {
                 {"name", "regular"},
                 {"configuration", {
-                    // Chunk by single frame: {1, height, width}
                     {"chunk_shape", {1, height, width}}
                 }}
             }}
@@ -253,8 +251,8 @@ namespace FrameProcessor
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
-        config_.width_  = decoder_->get_frame_x_resolution();
         config_.height_ = decoder_->get_frame_y_resolution();
+        config_.width_  = decoder_->get_frame_x_resolution();
         config_.bit_depth_ = decoder_->get_frame_bit_depth();
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
@@ -463,12 +461,15 @@ namespace FrameProcessor
     void TensorstoreCore::pollAndProcessCompletions()
     {
         if(!pending_writes_queue_.empty()) {
-            auto write_future_status = pending_writes_queue_.front().write_future.status();
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Pending write future status: " << write_future_status);
+            // WriteFutures contains commit_future and copy_future
+            auto& write_futures = pending_writes_queue_.front().write_future;
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Pending write commit future status: " 
+                << write_futures.commit_future.status());
         }
 
+        // Check if the commit_future is ready (not the WriteFutures object itself)
         while (!pending_writes_queue_.empty() && 
-               pending_writes_queue_.front().write_future.ready())
+               pending_writes_queue_.front().write_future.commit_future.ready())
         {
             PendingWrite& completed = pending_writes_queue_.front();
             
@@ -477,8 +478,8 @@ namespace FrameProcessor
             uint64_t cycles_elapsed = end_cycles - completed.start_cycles;
             uint64_t write_time_us = (cycles_elapsed * 1000000) / rte_get_tsc_hz();
             
-            // Get the result now that we know it's ready
-            const auto& result = completed.write_future.result();
+            // Get the result from commit_future
+            const auto& result = completed.write_future.commit_future.result();
             if (!result.ok()) {
                 ++write_errors_;
                 LOG4CXX_ERROR(logger_, "Error writing frame " << completed.frame_number 
@@ -536,8 +537,8 @@ namespace FrameProcessor
         // Create the new dataset
 
         // Use the configuration values set by configure()
-        std::size_t width  = config_.width_;
         std::size_t height = config_.height_;
+        std::size_t width  = config_.width_;
         std::size_t bit_depth = config_.bit_depth_;
 
         LOG4CXX_INFO(logger_, "Creating new dataset with:"
@@ -572,7 +573,7 @@ namespace FrameProcessor
         // Get the JSON spec
         // Always create dataset with at least 1 frame to avoid immediate resize
         std::size_t initial_frames = (config_.max_frames_ == 0) ? 1 : config_.max_frames_;
-        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_, data_type_, config_.file_path_, initial_frames, width, height, config_.cache_bytes_limit_);
+        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_, data_type_, config_.file_path_, initial_frames, height, width, config_.cache_bytes_limit_);
         
         // Create the store
         auto store_result = create_dataset(json_spec);

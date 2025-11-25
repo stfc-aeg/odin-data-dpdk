@@ -92,7 +92,7 @@ class TensorstoreDialog(QDialog):
         layout = QFormLayout(self)
 
         self.path_input = QLineEdit(self)
-        self.path_input.setText("/tmp/")
+        self.path_input.setText("/data2/tensorstore/")
         self.filename_input = QLineEdit(self)
         self.filename_input.setText("odin-data-capture")
         self.frames_input = QLineEdit(self)
@@ -544,6 +544,7 @@ class ZmqOdinDataGUI(QWidget):
             "camera.exposure_time": ("Exposure Time (s)", float, True),
             "camera.image_timeout": ("Image Timeout (s)", float, True),
             "camera.num_frames": ("Number of Frames", int, True),
+            "camera.frames_per_second": ("Frames per second", int, True),
             "camera.camera_number": ("Camera Number", int, False),
             "camera.simulated_camera": ("Simulated Camera", bool, False),
             "camera.timestamp_mode": ("Timestamp Mode", int, True),
@@ -773,7 +774,7 @@ class ZmqOdinDataGUI(QWidget):
 
     def start_liveview(self):
         if self.liveview_process is None:
-            endpoint = f"tcp://192.168.0.30:{self.liveview_port}"
+            endpoint = f"tcp://192.168.0.32:{self.liveview_port}"
             self.liveview_process = liveviewer.LiveDataViewer(endpoint)
             self.liveview_process.start()
             self.log_message(f"Started LiveView on port {self.liveview_port}")
