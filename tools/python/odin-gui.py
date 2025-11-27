@@ -181,13 +181,21 @@ class ZmqOdinDataGUI(QWidget):
         refresh_layout.addWidget(self.refresh_interval)
         main_layout.addLayout(refresh_layout)
 
-        # Log display
+        # Main vertical splitter for resizable sections
+        main_vertical_splitter = QSplitter(Qt.Vertical)
+
+        # Log dispaly
+        log_widget = QWidget()
+        log_layout = QVBoxLayout(log_widget)
+        log_layout.addWidget(QLabel("Log"))
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        main_layout.addWidget(self.log_display)
+        log_layout.addWidget(self.log_display)
+        main_vertical_splitter.addWidget(log_widget)
 
-        # Plugin status area
-        plugin_layout = QHBoxLayout()
+        # Plugin status area (horizontal layout) - Fixed size
+        plugin_widget = QWidget()
+        plugin_layout = QHBoxLayout(plugin_widget)
 
         # Liveview plugin
         liveview_widget = QGroupBox("Liveview Plugin")
@@ -220,11 +228,6 @@ class ZmqOdinDataGUI(QWidget):
         hdf_widget.setLayout(hdf_layout)
         plugin_layout.addWidget(hdf_widget)
 
-        main_layout.addLayout(plugin_layout)
-
-        # Splitter for Config and Status
-        splitter = QSplitter(Qt.Horizontal)
-
         # Camera Control section
         camera_widget = QGroupBox("Camera Control")
         camera_layout = QVBoxLayout()
@@ -241,7 +244,7 @@ class ZmqOdinDataGUI(QWidget):
         
         self.camera_capture_button = QPushButton("Start Capture")
         self.camera_capture_button.clicked.connect(self.toggle_camera_capture)
-        self.camera_capture_button.setEnabled(False)  # Disabled until connected
+        self.camera_capture_button.setEnabled(False)
         
         camera_buttons_layout.addWidget(self.camera_connect_button)
         camera_buttons_layout.addWidget(self.camera_capture_button)
@@ -267,11 +270,9 @@ class ZmqOdinDataGUI(QWidget):
                 widget = QLineEdit()
                 widget.setReadOnly(not editable)
                 
-            # Store widget and add to layout
             self.camera_property_widgets[prop_path] = widget
             self.properties_layout.addRow(display_name + ":", widget)
             
-            # Connect editable widgets to update handler
             if editable:
                 if prop_type == bool:
                     widget.currentIndexChanged.connect(
@@ -284,7 +285,6 @@ class ZmqOdinDataGUI(QWidget):
                         )
                     )
         
-        # Add refresh button for properties
         refresh_props_button = QPushButton("Refresh Properties")
         refresh_props_button.clicked.connect(self.request_camera_config)
         self.properties_layout.addRow("", refresh_props_button)
@@ -293,9 +293,16 @@ class ZmqOdinDataGUI(QWidget):
         camera_layout.addWidget(properties_group)
         
         camera_widget.setLayout(camera_layout)
-        
-        # Add to plugin layout
         plugin_layout.addWidget(camera_widget)
+
+        # Sets fixed height for plugin widget
+        plugin_widget.setMinimumHeight(550)
+        plugin_widget.setMaximumHeight(550)
+        
+        main_vertical_splitter.addWidget(plugin_widget)
+
+        # Horizontal splitter for Config and Status
+        config_status_splitter = QSplitter(Qt.Horizontal)
 
         # Config display
         self.config_tree = JsonTreeWidget(editable=True)
@@ -304,7 +311,7 @@ class ZmqOdinDataGUI(QWidget):
         config_layout = QVBoxLayout(config_widget)
         config_layout.addWidget(QLabel("Configuration"))
         config_layout.addWidget(self.config_tree)
-        splitter.addWidget(config_widget)
+        config_status_splitter.addWidget(config_widget)
 
         # Status display
         self.status_tree = JsonTreeWidget()
@@ -312,9 +319,21 @@ class ZmqOdinDataGUI(QWidget):
         status_layout = QVBoxLayout(status_widget)
         status_layout.addWidget(QLabel("Status"))
         status_layout.addWidget(self.status_tree)
-        splitter.addWidget(status_widget)
+        config_status_splitter.addWidget(status_widget)
 
-        main_layout.addWidget(splitter)
+        # Add config/status splitter to lower section of main vertical splitter
+        main_vertical_splitter.addWidget(config_status_splitter)
+
+        # Set stretch factors for the vertical splitter
+        main_vertical_splitter.setStretchFactor(0, 1)  # Log
+        main_vertical_splitter.setStretchFactor(1, 0)  # Plugin section (fixed size)
+        main_vertical_splitter.setStretchFactor(2, 3)  # Config/Status 
+
+        # Set initial sizes for the vertical splitter (log: 150px, plugins: 550px, config/status: 250px)
+        main_vertical_splitter.setSizes([150, 550, 250])
+
+        # Add the vertical splitter to the layout
+        main_layout.addWidget(main_vertical_splitter)
 
         self.setLayout(main_layout)
         self.setWindowTitle('ZMQ Odin Data GUI Client')
