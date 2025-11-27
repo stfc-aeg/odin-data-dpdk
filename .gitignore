@@ -2,7 +2,7 @@
 /*build*
 /*prefix/
 *.pyc
-/tools/python/venv/
+/tools/python/pyvenv
 /.settings
 /.metadata
 /.cproject

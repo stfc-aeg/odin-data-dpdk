@@ -50,8 +50,7 @@ namespace FrameProcessor
                 bind_param<std::string>(file_path_, "file_path");
                 bind_param<std::string>(driver_, "driver");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
-
-
+                bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
             }
             
             std::string core_name;
@@ -74,6 +73,7 @@ namespace FrameProcessor
             std::string file_path_;
             std::string driver_;
             int max_concurrent_writes_;
+            unsigned int frames_per_chunk_;
             friend class TensorstoreCore;
     };
 }

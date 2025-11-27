@@ -57,7 +57,7 @@ namespace {
  * Purpose: Creates a "JSON" object that defines the complete storage layout
  * for TensorStore (driver, path, data type, shape, chunking).
  */
-::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, const std::string& path, std::size_t frames, std::size_t height, std::size_t width, uint64_t cache_bytes_limit) {
+::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, const std::string& path, std::size_t frames, std::size_t height, std::size_t width, uint64_t cache_bytes_limit, std::size_t frames_per_chunk) {
     return {
         {"driver", driver},
         {"kvstore", {
@@ -70,7 +70,7 @@ namespace {
             {"chunk_grid", {
                 {"name", "regular"},
                 {"configuration", {
-                    {"chunk_shape", {1, height, width}}
+                    {"chunk_shape", {frames_per_chunk, height, width}}
                 }}
             }}
         }},
@@ -200,7 +200,7 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
         }
     }
 
-    // 6. Select the target 2D slice, e.g., store[frame_number, :, :]
+    // 6. Select the target 2D slice
     std::array<tensorstore::Index, 1> indices = {target_frame_index};
     auto target = store | tensorstore::Dims(0).IndexSlice(indices);
 
@@ -209,6 +209,89 @@ tensorstore::WriteFutures TensorstoreCore::asyncWriteFrame(
     auto write_future = tensorstore::Write(array2, target);
 
     // 8. Return the future immediately.
+    return write_future;
+}
+
+/**
+ * Function: TensorstoreCore::asyncWriteFrameChunk (Template Function)
+ * Purpose: This is a non-blocking function that initiates a chunked write.
+ *
+ * It handles several tasks:
+ * 1. Allocates contiguous memory and copies multiple frames into a 3D array.
+ * 2. Checks if the TensorStore needs to be resized.
+ * 3. Selects the correct 3D "slice" in the 3D store.
+ * 4. Calls `tensorstore::Write` which returns a `Future<void>`.
+ * 5. Returns this `Future` immediately.
+ */
+template <typename T>
+tensorstore::WriteFutures TensorstoreCore::asyncWriteFrameChunk(
+    tensorstore::TensorStore<>& store,
+    const std::vector<void*>& raw_data_ptrs,
+    tensorstore::Index height,
+    tensorstore::Index width,
+    uint64_t start_frame_number,
+    size_t num_frames)
+{
+    // 1. Allocate contiguous memory and copy multiple frames into a 3D array
+    std::array<tensorstore::Index, 3> shape = {
+        static_cast<tensorstore::Index>(num_frames), 
+        height, 
+        width
+    };
+    
+    size_t total_elements = num_frames * height * width;
+    
+    auto shared_array = tensorstore::AllocateArray<T>(shape);
+    
+    size_t frame_elements = height * width;
+    for (size_t i = 0; i < num_frames; ++i) {
+        T* src = reinterpret_cast<T*>(raw_data_ptrs[i]);
+        T* dst = shared_array.data() + (i * frame_elements);
+        std::copy(src, src + frame_elements, dst);
+    }
+    
+    // 2. Check if the store needs to be resized
+    auto domain = store.domain();
+    auto bounds = domain.box();
+    tensorstore::Index current_num_frames = bounds.shape()[0];
+    tensorstore::Index target_frame_index = static_cast<tensorstore::Index>(start_frame_number + num_frames - 1);
+
+    if (target_frame_index >= current_num_frames) {
+        tensorstore::Index new_size = target_frame_index + 1;
+        std::array<tensorstore::Index, 3> inclusive_min = {0, 0, 0};
+        std::array<tensorstore::Index, 3> exclusive_max = {new_size, height, width};
+        
+        tensorstore::span<const tensorstore::Index> inclusive_min_span(inclusive_min.data(), inclusive_min.size());
+        tensorstore::span<const tensorstore::Index> exclusive_max_span(exclusive_max.data(), exclusive_max.size());
+        
+        // Execute the resize operation (BLOCKING)
+        auto resize_status = tensorstore::Resize(
+            store,
+            inclusive_min_span,
+            exclusive_max_span,
+            tensorstore::ResizeMode::expand_only
+        ).result();
+        
+        if (!resize_status.ok()) {
+            LOG4CXX_ERROR(logger_, "Failed to resize dataset for frame chunk starting at " 
+                << start_frame_number << ": " << resize_status.status());
+        }
+    }
+
+    // 3. Select the target 3D slice
+    std::array<tensorstore::Index, 1> start_indices = {static_cast<tensorstore::Index>(start_frame_number)};
+    std::array<tensorstore::Index, 1> end_indices = {static_cast<tensorstore::Index>(start_frame_number + num_frames)};
+    
+    auto target = store 
+        | tensorstore::Dims(0).HalfOpenInterval(start_indices[0], end_indices[0]);
+    
+    LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing chunk of " << num_frames 
+        << " frames starting at " << start_frame_number);
+    
+    // 4. Write the 3D array data into the `target` slice
+    auto write_future = tensorstore::Write(shared_array, target);
+    
+    // 5. Return the future immediately
     return write_future;
 }
 }
@@ -222,7 +305,6 @@ namespace FrameProcessor
     TensorstoreCore::TensorstoreCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
     ) :
-    //move to config file
         DpdkWorkerCore(socket_id), 
         logger_(Logger::getLogger("FP.TensorstoreCore")),
         proc_idx_(fb_idx),
@@ -247,7 +329,8 @@ namespace FrameProcessor
         avg_write_time_us_(0),
         pending_writes_count_(0),
         frames_forwarded_(0),
-        completed_writes_(0)      
+        completed_writes_(0),
+        frames_per_chunk_(1)
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -268,6 +351,7 @@ namespace FrameProcessor
             << " cache_bytes_limit = " << config_.cache_bytes_limit_
             << " data_copy_concurrency = " << config_.data_copy_concurrency_
             << " delete_existing = " << config_.delete_existing_
+            << " frames_per_chunk = " << config_.frames_per_chunk_
         );
 
         // --- DPDK Output Ring Initialization ---
@@ -361,7 +445,7 @@ namespace FrameProcessor
             // and processes any completed writes.
             pollAndProcessCompletions();
 
-            // Dequeue New Frame and Initiate Write 
+            // Dequeue frames and accumulate into chunk buffer
             if (tensorstore_initialized_ && store_.has_value() &&
                 pending_writes_queue_.size() < config_.max_concurrent_writes_)
             {
@@ -377,66 +461,83 @@ namespace FrameProcessor
                     LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
                     last_frame_ = frame_number;
 
-                    
-                    // --- Asynchronous TensorStore Write Logic ---
-                    // We are guaranteed tensorstore_initialized_ is true here
-                    char* raw_data = decoder_->get_image_data_start(current_frame_buffer);
-                    const tensorstore::Index height = decoder_->get_frame_y_resolution();
-                    const tensorstore::Index width = decoder_->get_frame_x_resolution();
+                    // Add frame to chunk buffer
+                    frame_chunk_buffer_.push_back(current_frame_buffer);
 
-                    tensorstore::WriteFutures write_future;
-                
-                    // Call the templated version of the async write using a switch statement based on data type
-                    switch(pixel_type_) {
-                        case PixelDataType::UINT8:
-                            write_future = asyncWriteFrame<uint8_t>(
-                                *store_, raw_data, height, width, frame_number
-                            );
-                            break;
-                        case PixelDataType::UINT16:
-                            write_future = asyncWriteFrame<uint16_t>(
-                                *store_, raw_data, height, width, frame_number
-                            );
-                            break;
-                        case PixelDataType::UINT32:
-                            write_future = asyncWriteFrame<uint32_t>(
-                                *store_, raw_data, height, width, frame_number
-                            );
-                            break;
-                        case PixelDataType::UINT64:
-                            write_future = asyncWriteFrame<uint64_t>(
-                                *store_, raw_data, height, width, frame_number
-                            );
-                            break;
-                        default:
-                            LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
-                            continue;
-                    }
-
-                    // --- Add to Pending Queue ---
-                    // Track the frame number along with its frame_buffer, write_future, and start_cycles
-                    pending_writes_queue_.push_back(PendingWrite{
-                        .frame_number = frame_number,
-                        .frame_buffer = current_frame_buffer,
-                        .write_future = std::move(write_future),
-                        .start_cycles = start_frame_cycles
-                    });
-
-                    // --- Update Frame Dequeue Stats ---
-                    uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
-                    total_frame_cycles += cycles_spent;
-                    cycles_working += cycles_spent;
-                    if (maximum_frame_cycles < cycles_spent)
+                    // Check if we have enough frames for a chunk
+                    if (frame_chunk_buffer_.size() >= frames_per_chunk_)
                     {
-                        maximum_frame_cycles = cycles_spent;
-                    }
-                    frames_per_second++;
-                    processed_frames_++; // Counter to show frames number of processed frames
+                        // Prepare data pointers for all frames in chunk
+                        std::vector<void*> raw_data_ptrs;
+                        uint64_t first_frame_number = decoder_->get_super_frame_number(frame_chunk_buffer_[0]);
+                        
+                        for (auto* frame_buf : frame_chunk_buffer_)
+                        {
+                            raw_data_ptrs.push_back(decoder_->get_image_data_start(frame_buf));
+                        }
 
-                    LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
-                        << " Initiated write for frame: " << frame_number
-                        << " (Queue size: " << pending_writes_queue_.size() << ")"
-                    );
+                        const tensorstore::Index height = decoder_->get_frame_y_resolution();
+                        const tensorstore::Index width = decoder_->get_frame_x_resolution();
+
+                        tensorstore::WriteFutures write_future;
+                        
+                        // Write the chunk
+                        switch(pixel_type_) {
+                            case PixelDataType::UINT8:
+                                write_future = asyncWriteFrameChunk<uint8_t>(
+                                    *store_, raw_data_ptrs, height, width, 
+                                    first_frame_number, frame_chunk_buffer_.size()
+                                );
+                                break;
+                            case PixelDataType::UINT16:
+                                write_future = asyncWriteFrameChunk<uint16_t>(
+                                    *store_, raw_data_ptrs, height, width,
+                                    first_frame_number, frame_chunk_buffer_.size()
+                                );
+                                break;
+                            case PixelDataType::UINT32:
+                                write_future = asyncWriteFrameChunk<uint32_t>(
+                                    *store_, raw_data_ptrs, height, width,
+                                    first_frame_number, frame_chunk_buffer_.size()
+                                );
+                                break;
+                            case PixelDataType::UINT64:
+                                write_future = asyncWriteFrameChunk<uint64_t>(
+                                    *store_, raw_data_ptrs, height, width,
+                                    first_frame_number, frame_chunk_buffer_.size()
+                                );
+                                break;
+                            default:
+                                LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
+                                continue;
+                        }
+
+                        // Add to pending queue (store all frame buffers)
+                        pending_writes_queue_.push_back(PendingWrite{
+                            .frame_number = first_frame_number,
+                            .frame_buffers = frame_chunk_buffer_,
+                            .write_future = std::move(write_future),
+                            .start_cycles = start_frame_cycles
+                        });
+
+                        // Clear the chunk buffer
+                        frame_chunk_buffer_.clear();
+
+                        uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                        total_frame_cycles += cycles_spent;
+                        cycles_working += cycles_spent;
+                        if (maximum_frame_cycles < cycles_spent)
+                        {
+                            maximum_frame_cycles = cycles_spent;
+                        }
+                        frames_per_second += frames_per_chunk_;
+                        processed_frames_ += frames_per_chunk_;
+
+                        LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
+                            << " Initiated write for frame chunk starting at: " << first_frame_number
+                            << " (Queue size: " << pending_writes_queue_.size() << ")"
+                        );
+                    }
                 }
             }
             else if (!tensorstore_initialized_)
@@ -482,23 +583,27 @@ namespace FrameProcessor
             const auto& result = completed.write_future.commit_future.result();
             if (!result.ok()) {
                 ++write_errors_;
-                LOG4CXX_ERROR(logger_, "Error writing frame " << completed.frame_number 
+                LOG4CXX_ERROR(logger_, "Error writing frame chunk starting at " << completed.frame_number 
                     << " to " << config_.driver_ << ": " << result.status());
             } else {
-                ++frames_written_;
+                frames_written_ += completed.frame_buffers.size();
                 ++completed_writes_;
                 
                 // Calculate rolling average in microseconds
                 uint64_t total_write_time_us = avg_write_time_us_ * (completed_writes_ - 1);
                 avg_write_time_us_ = (total_write_time_us + write_time_us) / completed_writes_;
                 
-                LOG4CXX_DEBUG_LEVEL(2, logger_, "Successfully wrote frame " << completed.frame_number 
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Successfully wrote " << completed.frame_buffers.size()
+                    << " frames starting at " << completed.frame_number 
                     << " to " << config_.driver_ << " in " << write_time_us << " us");
             }
 
-            // Forward the frame buffer downstream
-            forwardFrame(completed.frame_buffer, completed.frame_number);
-            frames_forwarded_++;
+            // Forward all frame buffers downstream
+            for (auto* frame_buf : completed.frame_buffers) {
+                uint64_t frame_num = decoder_->get_super_frame_number(frame_buf);
+                forwardFrame(frame_buf, frame_num);
+                frames_forwarded_++;
+            }
 
             // Remove the completed write from the front of the queue
             pending_writes_queue_.pop_front();
@@ -519,15 +624,12 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, "Reconfiguration requested. Waiting for " 
                 << pending_writes_queue_.size() << " pending writes...");
             
-            // This loop will block this thread (but not other cores)
-            // until all outstanding writes are finished.
             while (!pending_writes_queue_.empty()) {
                 pollAndProcessCompletions();
             }
 
             LOG4CXX_INFO(logger_, "Write queue has cleared. Closing previous dataset.");
 
-            // Resets the store to close it.
             store_.reset();
             tensorstore_initialized_ = false;
             frames_written_ = 0;
@@ -535,16 +637,19 @@ namespace FrameProcessor
         }
 
         // Create the new dataset
-
-        // Use the configuration values set by configure()
         std::size_t height = config_.height_;
         std::size_t width  = config_.width_;
         std::size_t bit_depth = config_.bit_depth_;
 
+        // Set frames_per_chunk from config
+        frames_per_chunk_ = (config_.frames_per_chunk_ > 0) ? config_.frames_per_chunk_ : 1;
+        
         LOG4CXX_INFO(logger_, "Creating new dataset with:"
+            << " path=" << config_.file_path_
             << " width=" << width
             << " height=" << height
             << " bit_depth=" << bit_depth
+            << " frames_per_chunk=" << frames_per_chunk_
         );
 
         // Determine pixel data type
@@ -567,27 +672,50 @@ namespace FrameProcessor
                 break;
             default:
                 LOG4CXX_ERROR(logger_, "Unsupported bit depth: " << bit_depth);
+                last_error_message_ = "Unsupported bit depth: " + std::to_string(bit_depth);
                 return;
         }
 
         // Get the JSON spec
-        // Always create dataset with at least 1 frame to avoid immediate resize
         std::size_t initial_frames = (config_.max_frames_ == 0) ? 1 : config_.max_frames_;
-        ::nlohmann::json json_spec = GetJsonSpec(config_.driver_, data_type_, config_.file_path_, initial_frames, height, width, config_.cache_bytes_limit_);
+        ::nlohmann::json json_spec = GetJsonSpec(
+            config_.driver_, data_type_, config_.file_path_, 
+            initial_frames, height, width, config_.cache_bytes_limit_,
+            frames_per_chunk_
+        );
         
         // Create the store
         auto store_result = create_dataset(json_spec);
         
         if (!store_result.ok()) {
-            // The initialized flag is not set if there is an error
-            LOG4CXX_ERROR(logger_, "Error creating " << config_.driver_ << " file: " << store_result.status());
+            std::string error_msg = store_result.status().ToString();
+            
+            if (error_msg.find("chunk_shape") != std::string::npos) {
+                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                    "' with different chunk configuration. Please use a different file path.";
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            } 
+            else if (error_msg.find("data_type") != std::string::npos) {
+                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                    "' with different data type. Please use a different file path.";
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            }
+            else if (error_msg.find("shape") != std::string::npos) {
+                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                    "' with different dimensions. Please use a different file path.";
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            }
+            else {
+                last_error_message_ = "Failed to create dataset at '" + config_.file_path_ + 
+                    "': " + error_msg;
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            }
         } else {
-            // The store has been successfully created and the initialized flag is set to true
             store_ = std::move(store_result.value());
             tensorstore_initialized_ = true;
-            LOG4CXX_INFO(logger_, "New dataset created successfully. Resuming operations.");
+            last_error_message_ = ""; 
+            LOG4CXX_INFO(logger_, "Dataset created/opened successfully.");
         }
-
     }
 
     /**
@@ -653,6 +781,8 @@ namespace FrameProcessor
         status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_);
         status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
         status.set_param(ts_status + "total_completed_writes", completed_writes_);
+        status.set_param(ts_status + "frames_per_chunk", frames_per_chunk_);
+        status.set_param(ts_status + "last_error", last_error_message_);
     }
 
     /**
@@ -717,6 +847,11 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting max_concurrent_writes to: " <<  config_.max_concurrent_writes_);
         }
 
+        if (config.has_param("frames_per_chunk")) {
+            config_.frames_per_chunk_ = config.get_param<unsigned int>("frames_per_chunk");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting frames_per_chunk to: " << config_.frames_per_chunk_);
+        }
+
         if (config.has_param("update_config")) {
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " update_config is " << config.get_param<bool>("update_config") << ".");
        
@@ -767,5 +902,25 @@ namespace FrameProcessor
         tensorstore::Index height,
         tensorstore::Index width,
         uint64_t frame_number
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrameChunk<uint8_t>(
+        tensorstore::TensorStore<>& store, const std::vector<void*>& raw_data_ptrs,
+        tensorstore::Index height, tensorstore::Index width,
+        uint64_t start_frame_number, size_t num_frames
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrameChunk<uint16_t>(
+        tensorstore::TensorStore<>& store, const std::vector<void*>& raw_data_ptrs,
+        tensorstore::Index height, tensorstore::Index width,
+        uint64_t start_frame_number, size_t num_frames
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrameChunk<uint32_t>(
+        tensorstore::TensorStore<>& store, const std::vector<void*>& raw_data_ptrs,
+        tensorstore::Index height, tensorstore::Index width,
+        uint64_t start_frame_number, size_t num_frames
+    );
+    template tensorstore::WriteFutures TensorstoreCore::asyncWriteFrameChunk<uint64_t>(
+        tensorstore::TensorStore<>& store, const std::vector<void*>& raw_data_ptrs,
+        tensorstore::Index height, tensorstore::Index width,
+        uint64_t start_frame_number, size_t num_frames
     );
 } // End of the FrameProcessor namespace

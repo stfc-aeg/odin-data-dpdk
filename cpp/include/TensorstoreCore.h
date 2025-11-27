@@ -103,10 +103,10 @@ namespace FrameProcessor
          */
         struct PendingWrite
         {
-            uint64_t frame_number;                 // Frame number
-            struct SuperFrameHeader* frame_buffer; // Pointer to the frame buffer
-            tensorstore::WriteFutures write_future; // The non-blocking write future
-            uint64_t start_cycles;                 // TSC cycles when write was initiated
+            uint64_t frame_number;                 // First frame number in chunk
+            std::vector<struct SuperFrameHeader*> frame_buffers; // Pointers to all frame buffers in chunk
+            tensorstore::WriteFutures write_future;
+            uint64_t start_cycles;
         };
 
         // --- Private Helper Functions ---
@@ -121,6 +121,19 @@ namespace FrameProcessor
             tensorstore::Index height,
             tensorstore::Index width,
             uint64_t frame_number
+        );
+
+        /**
+         * Initiates an asynchronous write of multiple frames to TensorStore.
+         */
+        template <typename T>
+        tensorstore::WriteFutures asyncWriteFrameChunk(
+            tensorstore::TensorStore<>& store,
+            const std::vector<void*>& raw_data_ptrs,
+            tensorstore::Index height,
+            tensorstore::Index width,
+            uint64_t start_frame_number,
+            size_t num_frames
         );
 
         /**
@@ -193,6 +206,9 @@ namespace FrameProcessor
         uint64_t frames_forwarded_; // Total frames successfully forwarded downstream.
         uint64_t completed_writes_;
         
+        std::vector<struct SuperFrameHeader*> frame_chunk_buffer_; // Buffer for accumulating frames
+        size_t frames_per_chunk_; // Number of frames to write at once
+        std::string last_error_message_; // Store last configuration error for status reporting
     };
 } // End of FrameProcessor namespace
 

@@ -97,10 +97,13 @@ class TensorstoreDialog(QDialog):
         self.filename_input.setText("odin-data-capture")
         self.frames_input = QLineEdit(self)
         self.frames_input.setText("1000")
+        self.frames_per_chunk_input = QLineEdit(self)
+        self.frames_per_chunk_input.setText("1")
 
         layout.addRow("File Path:", self.path_input)
         layout.addRow("File Name:", self.filename_input)
         layout.addRow("Number of Frames:", self.frames_input)
+        layout.addRow("Frames per Chunk:", self.frames_per_chunk_input)
 
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.accept)
@@ -140,7 +143,7 @@ class ZmqOdinDataGUI(QWidget):
         conn_layout = QHBoxLayout()
         self.conn_input = QLineEdit()
         self.conn_input.setPlaceholderText("Enter endpoint")
-        self.conn_input.setText("tcp://192.168.0.30:5000")
+        self.conn_input.setText("tcp://192.168.0.32:6000")
         conn_button = QPushButton("Connect")
         conn_button.clicked.connect(self.add_connection)
         conn_layout.addWidget(self.conn_input)
@@ -894,6 +897,8 @@ class ZmqOdinDataGUI(QWidget):
             path = dialog.path_input.text()
             acquisition_id = dialog.filename_input.text()
             frames = dialog.frames_input.text()
+            # Store frames_per_chunk for use in tensorstore_acquisition
+            self.frames_per_chunk_input = dialog.frames_per_chunk_input
             self.start_tensorstore_acquisition(path, acquisition_id, frames)
 
     def start_acquisition(self, path, acquisition_id, frames):
@@ -958,21 +963,21 @@ class ZmqOdinDataGUI(QWidget):
             self.start_sequence()
 
     def tensorstore_acquisition(self, path, acquisition_id, frames):
-        # Check if we have a plugin name
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
             return False
             
         try:
             frames_count = int(frames)
+            frames_per_chunk = int(self.frames_per_chunk_input.text()) if hasattr(self, 'frames_per_chunk_input') else 1
 
-            # Use the dynamically extracted plugin name with Tensorstore-specific config
             common_config = {
                 self.main_plugin_name: {
                     "update_config": True,
                     "file_path": path,
                     "driver": "zarr3",
                     "max_concurrent_writes": 64,
+                    "frames_per_chunk": frames_per_chunk,
                 },
                 "hdf": {
                     "write": False
@@ -1004,7 +1009,7 @@ class ZmqOdinDataGUI(QWidget):
             self.log_message("Tensorstore acquisition setup completed successfully.")
 
         except ValueError as e:
-            self.log_message(f"Invalid frames count provided: {e}")
+            self.log_message(f"Invalid input provided: {e}")
             return False
 
         return True
