@@ -330,7 +330,8 @@ namespace FrameProcessor
         pending_writes_count_(0),
         frames_forwarded_(0),
         completed_writes_(0),
-        frames_per_chunk_(1)
+        frames_per_chunk_(1),
+        enable_writing_(true)
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -352,6 +353,7 @@ namespace FrameProcessor
             << " data_copy_concurrency = " << config_.data_copy_concurrency_
             << " delete_existing = " << config_.delete_existing_
             << " frames_per_chunk = " << config_.frames_per_chunk_
+            << " enable_writing = " << config_.enable_writing_
         );
 
         // --- DPDK Output Ring Initialization ---
@@ -445,84 +447,76 @@ namespace FrameProcessor
             // and processes any completed writes.
             pollAndProcessCompletions();
 
-            // Dequeue frames and accumulate into chunk buffer
-            if (tensorstore_initialized_ && store_.has_value() &&
-                pending_writes_queue_.size() < config_.max_concurrent_writes_)
+            // Dequeue frames and handle based on writing mode
+            if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
             {
-                if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer) < 0)
+                // If the ring is empty, count it as an "idle" loop and try again
+                idle_loops++;
+            }
+            else // Frame has been dequeued successfully
+            {
+                start_frame_cycles = rte_get_tsc_cycles();
+                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
+                last_frame_ = frame_number;
+
+                // Check if we've reached the maximum frames limit
+                if (enable_writing_ && config_.max_frames_ > 0 && frame_number >= config_.max_frames_)
                 {
-                    // If the ring is empty, count it as an "idle" loop and try again
-                    idle_loops++;
-                }
-                else // Frame has been dequeued successfully
-                {
-                    start_frame_cycles = rte_get_tsc_cycles();
-                    uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
-                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
-                    last_frame_ = frame_number;
-
-                    // Add frame to chunk buffer
-                    frame_chunk_buffer_.push_back(current_frame_buffer);
-
-                    // Check if we have enough frames for a chunk
-                    if (frame_chunk_buffer_.size() >= frames_per_chunk_)
-                    {
-                        // Prepare data pointers for all frames in chunk
-                        std::vector<void*> raw_data_ptrs;
-                        uint64_t first_frame_number = decoder_->get_super_frame_number(frame_chunk_buffer_[0]);
+                    LOG4CXX_WARN(logger_, config_.core_name << " : " << proc_idx_ 
+                        << " Reached maximum frames limit (" << config_.max_frames_ 
+                        << "). Disabling writing. Frame " << frame_number 
+                        << " and subsequent frames will be forwarded only.");
+                    
+                    enable_writing_ = false;
+                    
+                    // Flush pending writes
+                    if (tensorstore_initialized_) {
+                        LOG4CXX_INFO(logger_, "Flushing " << pending_writes_queue_.size() 
+                            << " pending writes...");
                         
-                        for (auto* frame_buf : frame_chunk_buffer_)
-                        {
-                            raw_data_ptrs.push_back(decoder_->get_image_data_start(frame_buf));
+                        while (!pending_writes_queue_.empty()) {
+                            pollAndProcessCompletions();
                         }
-
-                        const tensorstore::Index height = decoder_->get_frame_y_resolution();
-                        const tensorstore::Index width = decoder_->get_frame_x_resolution();
-
-                        tensorstore::WriteFutures write_future;
                         
-                        // Write the chunk
-                        switch(pixel_type_) {
-                            case PixelDataType::UINT8:
-                                write_future = asyncWriteFrameChunk<uint8_t>(
-                                    *store_, raw_data_ptrs, height, width, 
-                                    first_frame_number, frame_chunk_buffer_.size()
-                                );
-                                break;
-                            case PixelDataType::UINT16:
-                                write_future = asyncWriteFrameChunk<uint16_t>(
-                                    *store_, raw_data_ptrs, height, width,
-                                    first_frame_number, frame_chunk_buffer_.size()
-                                );
-                                break;
-                            case PixelDataType::UINT32:
-                                write_future = asyncWriteFrameChunk<uint32_t>(
-                                    *store_, raw_data_ptrs, height, width,
-                                    first_frame_number, frame_chunk_buffer_.size()
-                                );
-                                break;
-                            case PixelDataType::UINT64:
-                                write_future = asyncWriteFrameChunk<uint64_t>(
-                                    *store_, raw_data_ptrs, height, width,
-                                    first_frame_number, frame_chunk_buffer_.size()
-                                );
-                                break;
-                            default:
-                                LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
-                                continue;
+                        // Forward any frames still in the chunk buffer
+                        for (auto* frame_buf : frame_chunk_buffer_) {
+                            uint64_t frame_num = decoder_->get_super_frame_number(frame_buf);
+                            forwardFrame(frame_buf, frame_num);
+                            frames_forwarded_++;
                         }
-
-                        // Add to pending queue (store all frame buffers)
-                        pending_writes_queue_.push_back(PendingWrite{
-                            .frame_number = first_frame_number,
-                            .frame_buffers = frame_chunk_buffer_,
-                            .write_future = std::move(write_future),
-                            .start_cycles = start_frame_cycles
-                        });
-
-                        // Clear the chunk buffer
                         frame_chunk_buffer_.clear();
+                    }
+                }
 
+                if (!enable_writing_)
+                {
+                    // Writing disabled - just forward frame immediately
+                    forwardFrame(current_frame_buffer, frame_number);
+                    frames_forwarded_++;
+                    
+                    uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                    total_frame_cycles += cycles_spent;
+                    cycles_working += cycles_spent;
+                    if (maximum_frame_cycles < cycles_spent)
+                    {
+                        maximum_frame_cycles = cycles_spent;
+                    }
+                    frames_per_second++;
+                    processed_frames_++;
+                }
+                else if (tensorstore_initialized_ && store_.has_value() &&
+                    pending_writes_queue_.size() < config_.max_concurrent_writes_)
+                {
+                    // Check if this frame or chunk would exceed max_frames
+                    if (config_.max_frames_ > 0 && frame_number >= config_.max_frames_)
+                    {
+                        LOG4CXX_WARN(logger_, "Frame " << frame_number 
+                            << " exceeds max_frames (" << config_.max_frames_ 
+                            << "). Forwarding without writing.");
+                        forwardFrame(current_frame_buffer, frame_number);
+                        frames_forwarded_++;
+                        
                         uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
                         total_frame_cycles += cycles_spent;
                         cycles_working += cycles_spent;
@@ -530,22 +524,90 @@ namespace FrameProcessor
                         {
                             maximum_frame_cycles = cycles_spent;
                         }
-                        frames_per_second += frames_per_chunk_;
-                        processed_frames_ += frames_per_chunk_;
+                        frames_per_second++;
+                        processed_frames_++;
+                    }
+                    else
+                    {
+                        // Add frame to chunk buffer
+                        frame_chunk_buffer_.push_back(current_frame_buffer);
 
-                        LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
-                            << " Initiated write for frame chunk starting at: " << first_frame_number
-                            << " (Queue size: " << pending_writes_queue_.size() << ")"
-                        );
+                        // Check if we have enough frames for a chunk
+                        if (frame_chunk_buffer_.size() >= frames_per_chunk_)
+                        {
+                            // Prepare data pointers for all frames in chunk
+                            std::vector<void*> raw_data_ptrs;
+                            uint64_t first_frame_number = decoder_->get_super_frame_number(frame_chunk_buffer_[0]);
+                            
+                            for (auto* frame_buf : frame_chunk_buffer_)
+                            {
+                                raw_data_ptrs.push_back(decoder_->get_image_data_start(frame_buf));
+                            }
+
+                            const tensorstore::Index height = decoder_->get_frame_y_resolution();
+                            const tensorstore::Index width = decoder_->get_frame_x_resolution();
+
+                            tensorstore::WriteFutures write_future;
+                            
+                            // Write the chunk
+                            switch(pixel_type_) {
+                                case PixelDataType::UINT8:
+                                    write_future = asyncWriteFrameChunk<uint8_t>(
+                                        *store_, raw_data_ptrs, height, width, 
+                                        first_frame_number, frame_chunk_buffer_.size()
+                                    );
+                                    break;
+                                case PixelDataType::UINT16:
+                                    write_future = asyncWriteFrameChunk<uint16_t>(
+                                        *store_, raw_data_ptrs, height, width,
+                                        first_frame_number, frame_chunk_buffer_.size()
+                                    );
+                                    break;
+                                case PixelDataType::UINT32:
+                                    write_future = asyncWriteFrameChunk<uint32_t>(
+                                        *store_, raw_data_ptrs, height, width,
+                                        first_frame_number, frame_chunk_buffer_.size()
+                                    );
+                                    break;
+                                case PixelDataType::UINT64:
+                                    write_future = asyncWriteFrameChunk<uint64_t>(
+                                        *store_, raw_data_ptrs, height, width,
+                                        first_frame_number, frame_chunk_buffer_.size()
+                                    );
+                                    break;
+                                default:
+                                    LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
+                                    continue;
+                            }
+
+                            // Add to pending queue (store all frame buffers)
+                            pending_writes_queue_.push_back(PendingWrite{
+                                .frame_number = first_frame_number,
+                                .frame_buffers = frame_chunk_buffer_,
+                                .write_future = std::move(write_future),
+                                .start_cycles = start_frame_cycles
+                            });
+
+                            // Clear the chunk buffer
+                            frame_chunk_buffer_.clear();
+
+                            uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                            total_frame_cycles += cycles_spent;
+                            cycles_working += cycles_spent;
+                            if (maximum_frame_cycles < cycles_spent)
+                            {
+                                maximum_frame_cycles = cycles_spent;
+                            }
+                            frames_per_second += frames_per_chunk_;
+                            processed_frames_ += frames_per_chunk_;
+
+                            LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
+                                << " Initiated write for frame chunk starting at: " << first_frame_number
+                                << " (Queue size: " << pending_writes_queue_.size() << ")"
+                            );
+                        }
                     }
                 }
-            }
-            else if (!tensorstore_initialized_)
-            {
-                // If tensorestore is not initialized e.g. on startup, before first config
-                // or if reconfiguring is occuring then  nothing happens and it is counted
-                // as an idle loop.
-                idle_loops++;
             }
         } // --- End Main Worker Loop ---
 
@@ -782,6 +844,7 @@ namespace FrameProcessor
         status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
         status.set_param(ts_status + "total_completed_writes", completed_writes_);
         status.set_param(ts_status + "frames_per_chunk", frames_per_chunk_);
+        status.set_param(ts_status + "enable_writing", enable_writing_);
         status.set_param(ts_status + "last_error", last_error_message_);
     }
 
@@ -850,6 +913,32 @@ namespace FrameProcessor
         if (config.has_param("frames_per_chunk")) {
             config_.frames_per_chunk_ = config.get_param<unsigned int>("frames_per_chunk");
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting frames_per_chunk to: " << config_.frames_per_chunk_);
+        }
+
+        if (config.has_param("enable_writing")) {
+            bool new_enable_writing = config.get_param<bool>("enable_writing");
+            if (new_enable_writing != enable_writing_) {
+                enable_writing_ = new_enable_writing;
+                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ 
+                    << " Setting enable_writing to: " << enable_writing_);
+                
+                // If disabling writing, flush any pending writes
+                if (!enable_writing_ && tensorstore_initialized_) {
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing disabled. Flushing " << pending_writes_queue_.size() << " pending writes");
+                    
+                    while (!pending_writes_queue_.empty()) {
+                        pollAndProcessCompletions();
+                    }
+                    
+                    // Forward any frames still in the chunk buffer
+                    for (auto* frame_buf : frame_chunk_buffer_) {
+                        uint64_t frame_num = decoder_->get_super_frame_number(frame_buf);
+                        forwardFrame(frame_buf, frame_num);
+                        frames_forwarded_++;
+                    }
+                    frame_chunk_buffer_.clear();
+                }
+            }
         }
 
         if (config.has_param("update_config")) {

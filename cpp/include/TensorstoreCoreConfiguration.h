@@ -51,6 +51,7 @@ namespace FrameProcessor
                 bind_param<std::string>(driver_, "driver");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
                 bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
+                bind_param<bool>(enable_writing_, "enable_writing");
             }
             
             std::string core_name;
@@ -74,6 +75,7 @@ namespace FrameProcessor
             std::string driver_;
             int max_concurrent_writes_;
             unsigned int frames_per_chunk_;
+            bool enable_writing_;
             friend class TensorstoreCore;
     };
 }

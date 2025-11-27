@@ -209,6 +209,7 @@ namespace FrameProcessor
         std::vector<struct SuperFrameHeader*> frame_chunk_buffer_; // Buffer for accumulating frames
         size_t frames_per_chunk_; // Number of frames to write at once
         std::string last_error_message_; // Store last configuration error for status reporting
+        bool enable_writing_; // Flag to enable/disable writing to TensorStore
     };
 } // End of FrameProcessor namespace
 
