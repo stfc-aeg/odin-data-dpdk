@@ -4,7 +4,7 @@ import zmq
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
                              QLineEdit, QLabel, QComboBox, QSpinBox, QSplitter, QDialog, QFormLayout,
-                             QTreeWidget, QTreeWidgetItem, QTabWidget, QHeaderView, QGroupBox)
+                             QTreeWidget, QTreeWidgetItem, QTabWidget, QHeaderView, QGroupBox, QSizePolicy)
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 
 import liveviewer
@@ -183,17 +183,21 @@ class ZmqOdinDataGUI(QWidget):
 
         # Main vertical splitter for resizable sections
         main_vertical_splitter = QSplitter(Qt.Vertical)
+        main_vertical_splitter.setChildrenCollapsible(False)  # Prevent sections from collapsing
+        main_vertical_splitter.setHandleWidth(4)  # Make splitter handle more visible
 
-        # Log dispaly
+        # Log display
         log_widget = QWidget()
         log_layout = QVBoxLayout(log_widget)
+        log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.addWidget(QLabel("Log"))
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
+        self.log_display.setMinimumHeight(50)  # Set minimum height
         log_layout.addWidget(self.log_display)
         main_vertical_splitter.addWidget(log_widget)
 
-        # Plugin status area (horizontal layout) - Fixed size
+        # Plugin status area (no scroll wrapper)
         plugin_widget = QWidget()
         plugin_layout = QHBoxLayout(plugin_widget)
 
@@ -251,9 +255,14 @@ class ZmqOdinDataGUI(QWidget):
         
         camera_layout.addLayout(camera_buttons_layout)
         
-        # Camera properties section
+        # Camera properties section with scroll area
+        from PyQt5.QtWidgets import QScrollArea
+        
         properties_group = QGroupBox("Camera Properties")
-        self.properties_layout = QFormLayout()
+        properties_group_layout = QVBoxLayout(properties_group)
+        
+        properties_container = QWidget()
+        self.properties_layout = QFormLayout(properties_container)
         
         # Create placeholder widgets for camera properties
         for prop_path, config in self.camera_property_config.items():
@@ -285,59 +294,81 @@ class ZmqOdinDataGUI(QWidget):
                         )
                     )
         
+        # Create scroll area for properties only (without refresh button)
+        properties_scroll = QScrollArea()
+        properties_scroll.setWidget(properties_container)
+        properties_scroll.setWidgetResizable(True)
+        properties_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        properties_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        # Let it expand when there is room, but allow scrolling when constrained
+        properties_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Add scroll area to properties group
+        properties_group_layout.addWidget(properties_scroll)
+        
+        # Add refresh button outside the scroll area
         refresh_props_button = QPushButton("Refresh Properties")
         refresh_props_button.clicked.connect(self.request_camera_config)
-        self.properties_layout.addRow("", refresh_props_button)
+        properties_group_layout.addWidget(refresh_props_button)
         
-        properties_group.setLayout(self.properties_layout)
         camera_layout.addWidget(properties_group)
         
         camera_widget.setLayout(camera_layout)
         plugin_layout.addWidget(camera_widget)
 
-        # Sets fixed height for plugin widget
-        plugin_widget.setMinimumHeight(550)
-        plugin_widget.setMaximumHeight(550)
-        
+        # Set maximum height for plugin widget so it doesn't grow unnecessarily large
+        plugin_widget.setMaximumHeight(550)  # Adjust this value as needed
+
+        # Add plugin widget directly to splitter (no scroll wrapper)
         main_vertical_splitter.addWidget(plugin_widget)
 
         # Horizontal splitter for Config and Status
         config_status_splitter = QSplitter(Qt.Horizontal)
+        config_status_splitter.setChildrenCollapsible(False)  # Prevent sections from collapsing
+        config_status_splitter.setHandleWidth(8)  # Make splitter handle wider for better spacing
 
         # Config display
         self.config_tree = JsonTreeWidget(editable=True)
         self.config_tree.itemChanged.connect(self.on_config_changed)
+        self.config_tree.setMinimumWidth(100)  # Set minimum width
         config_widget = QWidget()
         config_layout = QVBoxLayout(config_widget)
+        config_layout.setContentsMargins(0, 0, 0, 0)
         config_layout.addWidget(QLabel("Configuration"))
         config_layout.addWidget(self.config_tree)
         config_status_splitter.addWidget(config_widget)
 
         # Status display
         self.status_tree = JsonTreeWidget()
+        self.status_tree.setMinimumWidth(100)  # Set minimum width
         status_widget = QWidget()
         status_layout = QVBoxLayout(status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.addWidget(QLabel("Status"))
         status_layout.addWidget(self.status_tree)
         config_status_splitter.addWidget(status_widget)
+
+        # Set minimum height for config/status section
+        config_status_splitter.setMinimumHeight(100)
 
         # Add config/status splitter to lower section of main vertical splitter
         main_vertical_splitter.addWidget(config_status_splitter)
 
         # Set stretch factors for the vertical splitter
-        main_vertical_splitter.setStretchFactor(0, 1)  # Log
-        main_vertical_splitter.setStretchFactor(1, 0)  # Plugin section (fixed size)
-        main_vertical_splitter.setStretchFactor(2, 3)  # Config/Status 
+        main_vertical_splitter.setStretchFactor(0, 1)  # Log (flexible)
+        main_vertical_splitter.setStretchFactor(1, 0)  # Plugin section (fixed-ish)
+        main_vertical_splitter.setStretchFactor(2, 3)  # Config/Status (most flexible)
 
-        # Set initial sizes for the vertical splitter (log: 150px, plugins: 550px, config/status: 250px)
-        main_vertical_splitter.setSizes([150, 550, 250])
+        # Set initial sizes for the vertical splitter
+        main_vertical_splitter.setSizes([150, 300, 350])
 
         # Add the vertical splitter to the layout
         main_layout.addWidget(main_vertical_splitter)
 
         self.setLayout(main_layout)
         self.setWindowTitle('ZMQ Odin Data GUI Client')
-        self.setGeometry(300, 300, 1000, 800)
+        self.setGeometry(300, 300, 1200, 900)
 
         # Set up refresh timer
         self.refresh_timer = QTimer(self)
