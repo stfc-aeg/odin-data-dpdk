@@ -126,6 +126,16 @@ namespace FrameProcessor
                 return value_ptr;
             }
 
+            const ParamContainer::Value* get_tensorstore_config(const unsigned int core_idx)
+            {
+                std::stringstream ptr_ss;
+                ptr_ss <<  "/" << core_idx;
+
+                const ParamContainer::Value* value_ptr =
+                    rapidjson::Pointer(ptr_ss.str().c_str()).Get(tensorstore_params_);
+                return value_ptr;
+            }
+
         private:
 
             //! Bind parameters in the container
@@ -148,6 +158,7 @@ namespace FrameProcessor
                 bind_param<ParamContainer::Document>(frame_compressor_params_, "frame_compressor");
                 bind_param<ParamContainer::Document>(frame_wrapper_params_, "frame_wrapper");
                 bind_param<ParamContainer::Document>(worker_core_params_, "worker_cores");
+                bind_param<ParamContainer::Document>(tensorstore_params_, "tensorstore_core");
             }
 
             std::size_t shared_buffer_size_;      //!< DPDK memzone shared buffer size
@@ -164,6 +175,7 @@ namespace FrameProcessor
             ParamContainer::Document frame_compressor_params_;
             ParamContainer::Document frame_wrapper_params_;
             ParamContainer::Document worker_core_params_;
+            ParamContainer::Document tensorstore_params_;
 
 
         //! Allow the DpdkCoreManager class direct access to config parameters
@@ -173,6 +185,7 @@ namespace FrameProcessor
         friend class FrameBuilderConfiguration;
         friend class FrameCompressorConfiguration;
         friend class FrameWrapperConfiguration;
+        friend class TensorstoreConfiguration;
     };
 }
 

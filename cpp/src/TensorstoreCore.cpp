@@ -329,15 +329,21 @@ namespace FrameProcessor
         avg_write_time_us_(0),
         pending_writes_count_(0),
         frames_forwarded_(0),
-        completed_writes_(0),
-        frames_per_chunk_(1),
-        enable_writing_(true)
+        completed_writes_(0)
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
         config_.height_ = decoder_->get_frame_y_resolution();
         config_.width_  = decoder_->get_frame_x_resolution();
         config_.bit_depth_ = decoder_->get_frame_bit_depth();
+        
+        // Appends proc_idx_ to the dataset path so each core is writing into different locations
+        if (!config_.path_.empty()) {
+            if (config_.path_.back() == '/') {
+                config_.path_.pop_back();
+            }
+            config_.path_ += "/" + std::to_string(proc_idx_);
+        }
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
             << " core_name = " << config_.core_name
@@ -354,6 +360,7 @@ namespace FrameProcessor
             << " delete_existing = " << config_.delete_existing_
             << " frames_per_chunk = " << config_.frames_per_chunk_
             << " enable_writing = " << config_.enable_writing_
+            << " path = " << config_.path_
         );
 
         // --- DPDK Output Ring Initialization ---
@@ -461,14 +468,14 @@ namespace FrameProcessor
                 last_frame_ = frame_number;
 
                 // Check if we've reached the maximum frames limit
-                if (enable_writing_ && config_.max_frames_ > 0 && frame_number >= config_.max_frames_)
+                if (config_.enable_writing_ && config_.max_frames_ > 0 && frame_number >= config_.max_frames_)
                 {
                     LOG4CXX_WARN(logger_, config_.core_name << " : " << proc_idx_ 
                         << " Reached maximum frames limit (" << config_.max_frames_ 
                         << "). Disabling writing. Frame " << frame_number 
                         << " and subsequent frames will be forwarded only.");
                     
-                    enable_writing_ = false;
+                    config_.enable_writing_ = false;
                     
                     // Flush pending writes
                     if (tensorstore_initialized_) {
@@ -489,7 +496,7 @@ namespace FrameProcessor
                     }
                 }
 
-                if (!enable_writing_)
+                if (!config_.enable_writing_)
                 {
                     // Writing disabled - just forward frame immediately
                     forwardFrame(current_frame_buffer, frame_number);
@@ -654,9 +661,9 @@ namespace FrameProcessor
                 // Calculate rolling average in microseconds
                 uint64_t total_write_time_us = avg_write_time_us_ * (completed_writes_ - 1);
                 avg_write_time_us_ = (total_write_time_us + write_time_us) / completed_writes_;
-                
-                LOG4CXX_DEBUG_LEVEL(2, logger_, "Successfully wrote " << completed.frame_buffers.size()
-                    << " frames starting at " << completed.frame_number 
+
+                LOG4CXX_DEBUG_LEVEL (2, logger_, "Successfully wrote " << completed.frame_buffers.size()
+                    << " frames starting at " << completed.frame_number
                     << " to " << config_.driver_ << " in " << write_time_us << " us");
             }
 
@@ -707,7 +714,7 @@ namespace FrameProcessor
         frames_per_chunk_ = (config_.frames_per_chunk_ > 0) ? config_.frames_per_chunk_ : 1;
         
         LOG4CXX_INFO(logger_, "Creating new dataset with:"
-            << " path=" << config_.file_path_
+            << " path=" << config_.path_
             << " width=" << width
             << " height=" << height
             << " bit_depth=" << bit_depth
@@ -741,7 +748,7 @@ namespace FrameProcessor
         // Get the JSON spec
         std::size_t initial_frames = (config_.max_frames_ == 0) ? 1 : config_.max_frames_;
         ::nlohmann::json json_spec = GetJsonSpec(
-            config_.driver_, data_type_, config_.file_path_, 
+            config_.driver_, data_type_, config_.path_, 
             initial_frames, height, width, config_.cache_bytes_limit_,
             frames_per_chunk_
         );
@@ -753,22 +760,22 @@ namespace FrameProcessor
             std::string error_msg = store_result.status().ToString();
             
             if (error_msg.find("chunk_shape") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
                     "' with different chunk configuration. Please use a different file path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             } 
             else if (error_msg.find("data_type") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
                     "' with different data type. Please use a different file path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
             else if (error_msg.find("shape") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.file_path_ + 
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
                     "' with different dimensions. Please use a different file path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
             else {
-                last_error_message_ = "Failed to create dataset at '" + config_.file_path_ + 
+                last_error_message_ = "Failed to create dataset at '" + config_.path_ + 
                     "': " + error_msg;
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
@@ -837,14 +844,14 @@ namespace FrameProcessor
 
         // --- TensorStore Status ---
         status.set_param(ts_status + "initialized", tensorstore_initialized_);
-        status.set_param(ts_status + "storage_path", config_.file_path_);
+        status.set_param(ts_status + "storage_path", config_.path_);
         status.set_param(ts_status + "frames_written", frames_written_);
         status.set_param(ts_status + "write_errors", write_errors_);
         status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_);
         status.set_param(ts_status + "pending_writes_queue_size", pending_writes_count_);
         status.set_param(ts_status + "total_completed_writes", completed_writes_);
         status.set_param(ts_status + "frames_per_chunk", frames_per_chunk_);
-        status.set_param(ts_status + "enable_writing", enable_writing_);
+        status.set_param(ts_status + "enable_writing", config_.enable_writing_);
         status.set_param(ts_status + "last_error", last_error_message_);
     }
 
@@ -894,10 +901,10 @@ namespace FrameProcessor
         // Extract and update individual parameters from the IPC message
         // Note: These are returned from the odin-gui
 
-        if (config.has_param("file_path"))
+        if (config.has_param("path"))
         {
-            config_.file_path_ = config.get_param<std::string>("file_path");
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting file_path_ to: " <<  config_.file_path_);
+            config_.path_ = config.get_param<std::string>("path");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting path_ to: " <<  config_.path_);
         }
 
         if (config.has_param("driver")) {
@@ -916,15 +923,17 @@ namespace FrameProcessor
         }
 
         if (config.has_param("enable_writing")) {
-            bool new_enable_writing = config.get_param<bool>("enable_writing");
-            if (new_enable_writing != enable_writing_) {
-                enable_writing_ = new_enable_writing;
+            bool previous_state = config_.enable_writing_;
+            config_.enable_writing_ = config.get_param<bool>("enable_writing");
+            
+            if (config_.enable_writing_ != previous_state) {
                 LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ 
-                    << " Setting enable_writing to: " << enable_writing_);
+                    << " Setting enable_writing to: " << config_.enable_writing_);
                 
                 // If disabling writing, flush any pending writes
-                if (!enable_writing_ && tensorstore_initialized_) {
-                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing disabled. Flushing " << pending_writes_queue_.size() << " pending writes");
+                if (!config_.enable_writing_ && tensorstore_initialized_) {
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing disabled. Flushing " 
+                        << pending_writes_queue_.size() << " pending writes");
                     
                     while (!pending_writes_queue_.empty()) {
                         pollAndProcessCompletions();
@@ -939,6 +948,12 @@ namespace FrameProcessor
                     frame_chunk_buffer_.clear();
                 }
             }
+        }
+
+        if (config.has_param("path"))
+        {
+            config_.path_ = config.get_param<std::string>("path");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting path_ to: " <<  config_.path_);
         }
 
         if (config.has_param("update_config")) {

@@ -7,11 +7,20 @@
 
 namespace FrameProcessor
 {
+    namespace Defaults
+    {
+        const std::string default_dataset_path = "/tmp";
+        const unsigned int default_frames_per_chunk = 1;
+        const bool default_enable_writing = true;
+    }
     class TensorstoreCoreConfiguration : public OdinData::ParamContainer
     {
         public:
             TensorstoreCoreConfiguration() :
-                ParamContainer()
+                ParamContainer(),
+                path_(Defaults::default_dataset_path),
+                frames_per_chunk_(Defaults::default_frames_per_chunk),
+                enable_writing_(Defaults::default_enable_writing)
             {
                 bind_params();
             }
@@ -47,7 +56,7 @@ namespace FrameProcessor
                 bind_param<std::size_t>(height_, "height");
                 bind_param<std::size_t>(width_, "width");
                 bind_param<std::size_t>(bit_depth_, "bit_depth");
-                bind_param<std::string>(file_path_, "file_path");
+                bind_param<std::string>(path_, "path");
                 bind_param<std::string>(driver_, "driver");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
                 bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
@@ -71,7 +80,7 @@ namespace FrameProcessor
             std::size_t height_;
             std::size_t width_;
             std::size_t bit_depth_;
-            std::string file_path_;
+            std::string path_;
             std::string driver_;
             int max_concurrent_writes_;
             unsigned int frames_per_chunk_;

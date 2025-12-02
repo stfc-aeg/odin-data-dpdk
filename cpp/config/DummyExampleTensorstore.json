@@ -96,12 +96,13 @@
                 "tensorstore": {
                     "core_name": "TensorstoreCore",
                     "dataset_name": "dummy",
-                    "num_cores": 1,
+                    "num_cores": 2,
                     "connect": "camera_capture",
                     "max_frames": 1000,
                     "driver": "zarr3",
                     "max_concurrent_writes": 64,
-                    "frames_per_chunk": 1
+                    "frames_per_chunk": 1,
+                    "path": "/data2/tensorstore/"
                 },
                 "frame_wrapper": {
                     "core_name": "FrameWrapperCore",
