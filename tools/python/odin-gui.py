@@ -92,7 +92,7 @@ class TensorstoreDialog(QDialog):
         layout = QFormLayout(self)
 
         self.path_input = QLineEdit(self)
-        self.path_input.setText("/data2/tensorstore/")
+        self.path_input.setText("/data0/tensorstore/")
         self.filename_input = QLineEdit(self)
         self.filename_input.setText("odin-data-capture")
         self.frames_input = QLineEdit(self)
@@ -1028,10 +1028,8 @@ class ZmqOdinDataGUI(QWidget):
                     "driver": "zarr3",
                     "max_concurrent_writes": 64,
                     "frames_per_chunk": frames_per_chunk,
-                },
-                "hdf": {
-                    "write": False
                 }
+                
             }
 
             self.log_message(f"Sending first Tensorstore configuration using plugin: {self.main_plugin_name}")
@@ -1039,22 +1037,6 @@ class ZmqOdinDataGUI(QWidget):
                 self.log_message("Failed to send the first Tensorstore configuration message. Aborting acquisition setup.")
                 return False
 
-            second_config = {
-                self.main_plugin_name: common_config[self.main_plugin_name],
-                "hdf": {
-                    "file": {
-                        "path": path
-                    },
-                    "frames": frames_count,
-                    "acquisition_id": acquisition_id,
-                    "write": True
-                }
-            }
-
-            self.log_message("Sending second Tensorstore configuration.")
-            if not self.send_config_message({"params": second_config}):
-                self.log_message("Failed to send the second Tensorstore configuration message. Aborting acquisition setup.")
-                return False
 
             self.log_message("Tensorstore acquisition setup completed successfully.")
 

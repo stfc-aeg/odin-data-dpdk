@@ -10,6 +10,7 @@
 
 #include <atomic> // For thread-safe atomic variables (like counters).
 #include <deque>  // For managing the queue of pending asynchronous writes.
+#include <fstream> // For CSV file output
 
 #include <log4cxx/logger.h> // For the logging system.
 using namespace log4cxx;
@@ -151,7 +152,23 @@ namespace FrameProcessor
         /**
          * Handles closing the old store and creating a new one.
          */
-        void handleReconfiguration(); 
+        void handleReconfiguration();
+        
+        /**
+         * Opens a CSV log file
+         */
+        void openCSVLog(const std::string& filename);
+        
+        /**
+         * Logs a write operation to the CSV file
+         */
+        void logWriteToCSV(uint64_t frame_number, size_t num_frames, 
+                          uint64_t write_time_us, bool success);
+        
+        /**
+         * Closes the CSV log file
+         */
+        void closeCSVLog(); 
 
         // --- Core Identity and Helpers ---
         int proc_idx_; // This core's unique ID.
@@ -210,6 +227,14 @@ namespace FrameProcessor
         size_t frames_per_chunk_; // Number of frames to write at once
         std::string last_error_message_; // Store last configuration error for status reporting
         bool enable_writing_; // Flag to enable/disable writing to TensorStore
+        
+        // --- CSV Logging Members ---
+        std::ofstream csv_file_; // CSV output file stream
+        std::string csv_path_; // Path to CSV log file
+        bool csv_logging_enabled_; // Flag to enable/disable CSV logging
+        uint64_t run_start_time_; // Timestamp when run() started
+        uint64_t first_write_time_; // Timestamp of first write (for relative timing)
+        bool first_write_recorded_; // Flag to track if first write has been recorded
     };
 } // End of FrameProcessor namespace
 

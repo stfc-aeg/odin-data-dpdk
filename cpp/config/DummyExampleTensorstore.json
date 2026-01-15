@@ -86,7 +86,7 @@
                         "frame_height": 2304,
                         "frame_width": 4096,
                         "frame_bitdepth": 16,
-                        "image_file_path": "/livex_sw/install/simulated_frames.h5",
+                        "image_file_path": "/develop/install/simulated_frames.h5",
                         "dataset_name": "test-image",
                         "frames_per_second": 10,
                         "enable_text_overlay": true,
@@ -102,7 +102,9 @@
                     "driver": "zarr3",
                     "max_concurrent_writes": 64,
                     "frames_per_chunk": 1,
-                    "path": "/data2/tensorstore/"
+                    "path": "/data0/tensorstore/",
+                    "csv_logging": true,
+                    "csv_path": "/develop/repos/odin-data-dpdk/performance_testing/tensorstore_performance.csv"
                 },
                 "frame_wrapper": {
                     "core_name": "FrameWrapperCore",
@@ -131,7 +133,7 @@
                 }
             },
             "file": {
-                "path": "/data2/tensorstore/"
+                "path": "/data0/tensorstore/"
             },
             "frames": 250,
             "acquisition_id": "default",

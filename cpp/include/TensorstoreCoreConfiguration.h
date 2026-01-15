@@ -12,6 +12,8 @@ namespace FrameProcessor
         const std::string default_dataset_path = "/tmp";
         const unsigned int default_frames_per_chunk = 1;
         const bool default_enable_writing = true;
+        const bool default_csv_logging = false;
+        const std::string default_csv_path = "/tmp";
     }
     class TensorstoreCoreConfiguration : public OdinData::ParamContainer
     {
@@ -20,7 +22,9 @@ namespace FrameProcessor
                 ParamContainer(),
                 path_(Defaults::default_dataset_path),
                 frames_per_chunk_(Defaults::default_frames_per_chunk),
-                enable_writing_(Defaults::default_enable_writing)
+                enable_writing_(Defaults::default_enable_writing),
+                csv_logging_(Defaults::default_csv_logging),
+                csv_path_(Defaults::default_csv_path)
             {
                 bind_params();
             }
@@ -61,6 +65,8 @@ namespace FrameProcessor
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
                 bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
                 bind_param<bool>(enable_writing_, "enable_writing");
+                bind_param<bool>(csv_logging_, "csv_logging");
+                bind_param<std::string>(csv_path_, "csv_path");
             }
             
             std::string core_name;
@@ -85,6 +91,8 @@ namespace FrameProcessor
             int max_concurrent_writes_;
             unsigned int frames_per_chunk_;
             bool enable_writing_;
+            bool csv_logging_;
+            std::string csv_path_;
             friend class TensorstoreCore;
     };
 }

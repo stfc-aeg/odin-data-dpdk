@@ -329,7 +329,11 @@ namespace FrameProcessor
         avg_write_time_us_(0),
         pending_writes_count_(0),
         frames_forwarded_(0),
-        completed_writes_(0)
+        completed_writes_(0),
+        csv_logging_enabled_(false),
+        run_start_time_(0),
+        first_write_time_(0),
+        first_write_recorded_(false)
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -342,7 +346,26 @@ namespace FrameProcessor
             if (config_.path_.back() == '/') {
                 config_.path_.pop_back();
             }
-            config_.path_ += "/" + std::to_string(proc_idx_);
+            // config_.path_ += "/" + std::to_string(proc_idx_);
+        }
+        
+    
+        if (config_.csv_logging_ && !config_.csv_path_.empty()) {
+            std::string csv_filename = config_.csv_path_;
+            
+            // Get current timestamp
+            time_t now = time(nullptr);
+            struct tm* timeinfo = localtime(&now);
+            char timestamp[32];
+            strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
+       
+            size_t dot_pos = csv_filename.find_last_of('.');
+            if (dot_pos != std::string::npos) {
+                csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_core" + std::to_string(proc_idx_));
+            } else {
+                csv_filename += "_" + std::string(timestamp) + "_core" + std::to_string(proc_idx_) + ".csv";
+            }
+            csv_path_ = csv_filename;
         }
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
@@ -361,6 +384,8 @@ namespace FrameProcessor
             << " frames_per_chunk = " << config_.frames_per_chunk_
             << " enable_writing = " << config_.enable_writing_
             << " path = " << config_.path_
+            << " csv_logging = " << config_.csv_logging_
+            << " csv_path = " << csv_path_
         );
 
         // --- DPDK Output Ring Initialization ---
@@ -401,6 +426,7 @@ namespace FrameProcessor
     TensorstoreCore::~TensorstoreCore(void)
     {
         LOG4CXX_DEBUG_LEVEL(2, logger_, "TensorstoreCore destructor");
+        closeCSVLog();
         stop();
     }
 
@@ -412,7 +438,13 @@ namespace FrameProcessor
     {
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        run_start_time_ = rte_get_tsc_cycles();
         LOG4CXX_INFO(logger_, "TensorstoreCore: " << lcore_id_ << " starting up");
+        
+        // Opens the CSV log if enabled in the config
+        if (config_.csv_logging_ && !csv_path_.empty()) {
+            openCSVLog(csv_path_);
+        }
 
         struct SuperFrameHeader *current_frame_buffer;
 
@@ -654,6 +686,11 @@ namespace FrameProcessor
                 ++write_errors_;
                 LOG4CXX_ERROR(logger_, "Error writing frame chunk starting at " << completed.frame_number 
                     << " to " << config_.driver_ << ": " << result.status());
+                
+                if (csv_logging_enabled_) {
+                    logWriteToCSV(completed.frame_number, completed.frame_buffers.size(), 
+                                 write_time_us, false);
+                }
             } else {
                 frames_written_ += completed.frame_buffers.size();
                 ++completed_writes_;
@@ -665,6 +702,11 @@ namespace FrameProcessor
                 LOG4CXX_DEBUG_LEVEL (2, logger_, "Successfully wrote " << completed.frame_buffers.size()
                     << " frames starting at " << completed.frame_number
                     << " to " << config_.driver_ << " in " << write_time_us << " us");
+                
+                if (csv_logging_enabled_) {
+                    logWriteToCSV(completed.frame_number, completed.frame_buffers.size(), 
+                                 write_time_us, true);
+                }
             }
 
             // Forward all frame buffers downstream
@@ -1027,4 +1069,95 @@ namespace FrameProcessor
         tensorstore::Index height, tensorstore::Index width,
         uint64_t start_frame_number, size_t num_frames
     );
+    
+    /**
+     * Function: TensorstoreCore::openCSVLog
+     * Purpose: Opens a CSV log file
+     */
+    void TensorstoreCore::openCSVLog(const std::string& filename)
+    {
+        csv_path_ = filename;
+        csv_file_.open(csv_path_, std::ios::out | std::ios::trunc);
+        
+        if (csv_file_.is_open()) {
+            csv_logging_enabled_ = true;
+            
+            // Write CSV header
+            csv_file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
+                      << "throughput_MB_per_sec,frames_per_second,success,cumulative_frames,"
+                      << "avg_write_time_us,core_id,driver\n";
+            csv_file_.flush();
+            
+            LOG4CXX_INFO(logger_, "CSV logging enabled: " << csv_path_);
+        } else {
+            csv_logging_enabled_ = false;
+            LOG4CXX_ERROR(logger_, "Failed to open CSV log file: " << csv_path_);
+        }
+    }
+    
+    /**
+     * Function: TensorstoreCore::logWriteToCSV
+     * Purpose: Logs write performance data to the CSV file
+     */
+    void TensorstoreCore::logWriteToCSV(uint64_t frame_number, size_t num_frames, 
+                                        uint64_t write_time_us, bool success)
+    {
+        if (!csv_file_.is_open()) {
+            return;
+        }
+        
+        // Records first write time as 0s
+        uint64_t current_cycles = rte_get_tsc_cycles();
+        if (!first_write_recorded_) {
+            first_write_time_ = current_cycles;
+            first_write_recorded_ = true;
+        }
+        
+        // Calculate time in seconds since first write
+        double elapsed_seconds = static_cast<double>(current_cycles - first_write_time_) / 
+                                static_cast<double>(rte_get_tsc_hz());
+        
+        // Calculate throughput
+        size_t bytes_per_frame = config_.height_ * config_.width_ * config_.bit_depth_;
+        size_t total_bytes = bytes_per_frame * num_frames;
+        double write_time_sec = write_time_us / 1000000.0;
+        double throughput_MB_per_sec = 0.0;
+        if (write_time_sec > 0) {
+            throughput_MB_per_sec = (total_bytes / (1024.0 * 1024.0)) / write_time_sec;
+        }
+        
+        // Calculate frames per second
+        double frames_per_sec = 0.0;
+        if (write_time_sec > 0) {
+            frames_per_sec = num_frames / write_time_sec;
+        }
+        
+        // Write data row
+        csv_file_ << elapsed_seconds << ","
+                  << frame_number << ","
+                  << num_frames << ","
+                  << write_time_us << ","
+                  << throughput_MB_per_sec << ","
+                  << frames_per_sec << ","
+                  << (success ? "1" : "0") << ","
+                  << frames_written_ << ","
+                  << avg_write_time_us_ << ","
+                  << lcore_id_ << ","
+                  << config_.driver_ << "\n";
+        csv_file_.flush();
+    }
+    
+    /**
+     * Function: TensorstoreCore::closeCSVLog
+     * Purpose: Closes the CSV log file
+     */
+    void TensorstoreCore::closeCSVLog()
+    {
+        if (csv_file_.is_open()) {
+            csv_file_.close();
+            LOG4CXX_INFO(logger_, "CSV log file closed: " << csv_path_);
+            csv_logging_enabled_ = false;
+        }
+    }
+    
 } // End of the FrameProcessor namespace
