@@ -858,7 +858,7 @@ namespace FrameProcessor
             store_ = std::move(store_result.value());
             tensorstore_initialized_ = true;
             last_error_message_ = ""; 
-            LOG4CXX_INFO(logger_, "Dataset created/opened successfully.");
+            LOG4CXX_INFO(logger_, "Dataset created/opened successfully. Data will be written to: " << config_.path_);
         }
     }
 
@@ -985,6 +985,11 @@ namespace FrameProcessor
         if (config.has_param("storage_driver")) {
             config_.storage_driver_ = config.get_param<std::string>("storage_driver");
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting storage_driver_ to: " <<  config_.storage_driver_);
+        }
+
+        if (config.has_param("kvstore_driver")) {
+            config_.kvstore_driver_ = config.get_param<std::string>("kvstore_driver");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting kvstore_driver_ to: " <<  config_.kvstore_driver_);
         }
 
         if (config.has_param("max_concurrent_writes")) {

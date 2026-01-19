@@ -99,11 +99,21 @@ class TensorstoreDialog(QDialog):
         self.frames_input.setText("1000")
         self.frames_per_chunk_input = QLineEdit(self)
         self.frames_per_chunk_input.setText("1")
+        
+        self.storage_driver_combo = QComboBox(self)
+        self.storage_driver_combo.addItem("zarr3")
+        
+        self.kvstore_driver_combo = QComboBox(self)
+        self.kvstore_driver_combo.addItem("file")
+        self.kvstore_driver_combo.addItem("s3")
+        self.kvstore_driver_combo.setCurrentText("s3")
 
         layout.addRow("File Path:", self.path_input)
         layout.addRow("File Name:", self.filename_input)
         layout.addRow("Number of Frames:", self.frames_input)
         layout.addRow("Frames per Chunk:", self.frames_per_chunk_input)
+        layout.addRow("Storage Driver:", self.storage_driver_combo)
+        layout.addRow("KVStore Driver:", self.kvstore_driver_combo)
 
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.accept)
@@ -947,8 +957,11 @@ class ZmqOdinDataGUI(QWidget):
             path = dialog.path_input.text()
             acquisition_id = dialog.filename_input.text()
             frames = dialog.frames_input.text()
-            # Store frames_per_chunk for use in tensorstore_acquisition
+            storage_driver = dialog.storage_driver_combo.currentText()
+            kvstore_driver = dialog.kvstore_driver_combo.currentText()
             self.frames_per_chunk_input = dialog.frames_per_chunk_input
+            self.storage_driver = storage_driver
+            self.kvstore_driver = kvstore_driver
             self.start_tensorstore_acquisition(path, acquisition_id, frames)
 
     def start_acquisition(self, path, acquisition_id, frames):
@@ -1020,12 +1033,15 @@ class ZmqOdinDataGUI(QWidget):
         try:
             frames_count = int(frames)
             frames_per_chunk = int(self.frames_per_chunk_input.text()) if hasattr(self, 'frames_per_chunk_input') else 1
+            storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr3"
+            kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
 
             common_config = {
                 self.main_plugin_name: {
                     "update_config": True,
-                    "file_path": path,
-                    "driver": "zarr3",
+                    "path": path,
+                    "storage_driver": storage_driver,
+                    "kvstore_driver": kvstore_driver,
                     "max_concurrent_writes": 64,
                     "frames_per_chunk": frames_per_chunk,
                 }
