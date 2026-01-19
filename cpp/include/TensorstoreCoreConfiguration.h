@@ -14,6 +14,9 @@ namespace FrameProcessor
         const bool default_enable_writing = true;
         const bool default_csv_logging = false;
         const std::string default_csv_path = "/tmp";
+        const std::string default_kvstore_driver = "file";
+        const std::string default_s3_bucket = "";
+        const std::string default_s3_endpoint = "";
     }
     class TensorstoreCoreConfiguration : public OdinData::ParamContainer
     {
@@ -24,7 +27,10 @@ namespace FrameProcessor
                 frames_per_chunk_(Defaults::default_frames_per_chunk),
                 enable_writing_(Defaults::default_enable_writing),
                 csv_logging_(Defaults::default_csv_logging),
-                csv_path_(Defaults::default_csv_path)
+                csv_path_(Defaults::default_csv_path),
+                kvstore_driver_(Defaults::default_kvstore_driver),
+                s3_bucket_(Defaults::default_s3_bucket),
+                s3_endpoint_(Defaults::default_s3_endpoint)
             {
                 bind_params();
             }
@@ -61,7 +67,10 @@ namespace FrameProcessor
                 bind_param<std::size_t>(width_, "width");
                 bind_param<std::size_t>(bit_depth_, "bit_depth");
                 bind_param<std::string>(path_, "path");
-                bind_param<std::string>(driver_, "driver");
+                bind_param<std::string>(storage_driver_, "storage_driver");
+                bind_param<std::string>(kvstore_driver_, "kvstore_driver");
+                bind_param<std::string>(s3_bucket_, "s3_bucket");
+                bind_param<std::string>(s3_endpoint_, "s3_endpoint");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
                 bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
                 bind_param<bool>(enable_writing_, "enable_writing");
@@ -87,7 +96,10 @@ namespace FrameProcessor
             std::size_t width_;
             std::size_t bit_depth_;
             std::string path_;
-            std::string driver_;
+            std::string storage_driver_;
+            std::string kvstore_driver_;
+            std::string s3_bucket_;
+            std::string s3_endpoint_;
             int max_concurrent_writes_;
             unsigned int frames_per_chunk_;
             bool enable_writing_;

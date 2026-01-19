@@ -57,13 +57,28 @@ namespace {
  * Purpose: Creates a "JSON" object that defines the complete storage layout
  * for TensorStore (driver, path, data type, shape, chunking).
  */
-::nlohmann::json GetJsonSpec(const std::string& driver, const std::string& data_type, const std::string& path, std::size_t frames, std::size_t height, std::size_t width, uint64_t cache_bytes_limit, std::size_t frames_per_chunk) {
-    return {
-        {"driver", driver},
-        {"kvstore", {
+::nlohmann::json GetJsonSpec(const std::string& storage_driver, const std::string& kvstore_driver, const std::string& s3_bucket, const std::string& s3_endpoint, const std::string& data_type, const std::string& path, std::size_t frames, std::size_t height, std::size_t width, uint64_t cache_bytes_limit, std::size_t frames_per_chunk) {
+    
+    // Build kvstore specification based on driver type
+    ::nlohmann::json kvstore_spec;
+    
+    if (kvstore_driver == "s3") {
+        kvstore_spec = {
+            {"driver", "s3"},
+            {"bucket", s3_bucket},
+            {"endpoint", s3_endpoint},
+            {"path", path}
+        };
+    } else {
+        kvstore_spec = {
             {"driver", "file"},
             {"path", path}
-        }},
+        };
+    }
+    
+    ::nlohmann::json json_spec = {
+        {"driver", storage_driver},
+        {"kvstore", kvstore_spec},
         {"metadata", {
             {"data_type", data_type},
             {"shape", {frames, height, width}},
@@ -73,16 +88,21 @@ namespace {
                     {"chunk_shape", {frames_per_chunk, height, width}}
                 }}
             }}
-        }},
-        {"context", {
+        }}
+    };
+    
+    if (kvstore_driver == "file") {
+        json_spec["context"] = {
             {"data_copy_concurrency", {
                 {"limit", "shared"}
             }},
             {"cache_pool", {
                 {"total_bytes_limit", cache_bytes_limit}
             }}
-        }}
-    };
+        };
+    }
+    
+    return json_spec;
 }
 
 
@@ -691,7 +711,7 @@ namespace FrameProcessor
             if (!result.ok()) {
                 ++write_errors_;
                 LOG4CXX_ERROR(logger_, "Error writing frame chunk starting at " << completed.frame_number 
-                    << " to " << config_.driver_ << ": " << result.status());
+                    << " to " << config_.storage_driver_ << ": " << result.status());
                 
                 if (csv_logging_enabled_) {
                     logWriteToCSV(completed.frame_number, completed.frame_buffers.size(), 
@@ -707,7 +727,7 @@ namespace FrameProcessor
 
                 LOG4CXX_DEBUG_LEVEL (2, logger_, "Successfully wrote " << completed.frame_buffers.size()
                     << " frames starting at " << completed.frame_number
-                    << " to " << config_.driver_ << " in " << write_time_us << " us");
+                    << " to " << config_.storage_driver_ << " in " << write_time_us << " us");
                 
                 if (csv_logging_enabled_) {
                     logWriteToCSV(completed.frame_number, completed.frame_buffers.size(), 
@@ -796,7 +816,9 @@ namespace FrameProcessor
         // Get the JSON spec
         std::size_t initial_frames = (config_.max_frames_ == 0) ? 1 : config_.max_frames_;
         ::nlohmann::json json_spec = GetJsonSpec(
-            config_.driver_, data_type_, config_.path_, 
+            config_.storage_driver_, config_.kvstore_driver_, 
+            config_.s3_bucket_, config_.s3_endpoint_,
+            data_type_, config_.path_, 
             initial_frames, height, width, config_.cache_bytes_limit_,
             frames_per_chunk_
         );
@@ -806,25 +828,30 @@ namespace FrameProcessor
         
         if (!store_result.ok()) {
             std::string error_msg = store_result.status().ToString();
-            
-            if (error_msg.find("chunk_shape") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
-                    "' with different chunk configuration. Please use a different file path.";
+        
+            if (config_.kvstore_driver_ == "s3" && 
+                error_msg.find("invalid scheme") != std::string::npos) {
+                last_error_message_ = "S3 endpoint '" + config_.s3_endpoint_ + "' is missing http:// or https:// prefix. Please add the scheme to the endpoint URL.";
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            }
+            else if (config_.kvstore_driver_ == "s3" && (error_msg.find("permission_denied") != std::string::npos)) {
+                last_error_message_ = "Cant connect to S3 endpoint '" + config_.s3_endpoint_ + "'. Please check your credentials and permissions.";
+                LOG4CXX_ERROR(logger_, last_error_message_);
+            }
+            else if (error_msg.find("chunk_shape") != std::string::npos) {
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + "' with different chunk configuration. Please use a different path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             } 
             else if (error_msg.find("data_type") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
-                    "' with different data type. Please use a different file path.";
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + "' with different data type. Please use a different path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
             else if (error_msg.find("shape") != std::string::npos) {
-                last_error_message_ = "Dataset already exists at '" + config_.path_ + 
-                    "' with different dimensions. Please use a different file path.";
+                last_error_message_ = "Dataset already exists at '" + config_.path_ + "' with different dimensions. Please use a different path.";
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
             else {
-                last_error_message_ = "Failed to create dataset at '" + config_.path_ + 
-                    "': " + error_msg;
+                last_error_message_ = "Failed to create/open dataset at '" + config_.path_ + "': " + error_msg;
                 LOG4CXX_ERROR(logger_, last_error_message_);
             }
         } else {
@@ -955,9 +982,9 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting path_ to: " <<  config_.path_);
         }
 
-        if (config.has_param("driver")) {
-            config_.driver_ = config.get_param<std::string>("driver");
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting driver_ to: " <<  config_.driver_);
+        if (config.has_param("storage_driver")) {
+            config_.storage_driver_ = config.get_param<std::string>("storage_driver");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting storage_driver_ to: " <<  config_.storage_driver_);
         }
 
         if (config.has_param("max_concurrent_writes")) {
@@ -1125,7 +1152,7 @@ namespace FrameProcessor
                   << frames_written_ << ","
                   << avg_write_time_us_ << ","
                   << lcore_id_ << ","
-                  << config_.driver_ << "\n";
+                  << config_.storage_driver_ << "\n";
         csv_file_.flush();
     }
     
