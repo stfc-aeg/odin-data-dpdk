@@ -55,7 +55,7 @@ def plot_write_performance(csv_files, output_dir=None):
     print(f"Failed writes: {len(data[data['success'] == 0])}")
     
  
-    fig, axes = plt.subplots(3, 2, figsize=(16, 12))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     fig.suptitle('TensorStore Write Performance Analysis', fontsize=16, fontweight='bold')
     
     # Plot 1: Write time over time
@@ -70,49 +70,22 @@ def plot_write_performance(csv_files, output_dir=None):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Plot 2: Throughput over time
+    
+    # Plot 2: Cumulative frames written
     ax2 = axes[0, 1]
     for label in data_success['label'].unique():
         label_data = data_success[data_success['label'] == label]
-        ax2.plot(label_data['timestamp_seconds'], label_data['throughput_MB_per_sec'], 
+        ax2.plot(label_data['timestamp_seconds'], label_data['cumulative_frames'], 
                 label=label, marker='o', markersize=3, alpha=0.7)
     ax2.set_xlabel('Time (seconds)')
-    ax2.set_ylabel('Throughput (MB/s)')
-    ax2.set_title('Write Throughput Over Time')
+    ax2.set_ylabel('Cumulative Frames Written')
+    ax2.set_title('Total Frames Written Over Time')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
-    # Plot 3: Frames per second
+    # Plot 3: Statistics summary
     ax3 = axes[1, 0]
-    for label in data_success['label'].unique():
-        label_data = data_success[data_success['label'] == label]
-        ax3.plot(label_data['timestamp_seconds'], label_data['frames_per_second'], 
-                label=label, marker='o', markersize=3, alpha=0.7)
-    ax3.set_xlabel('Time (seconds)')
-    ax3.set_ylabel('Frames per Second')
-    ax3.set_title('Frame Rate During Writes')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
-    
-    # Plot 4: Empty (removed write time distribution)
-    ax4 = axes[1, 1]
-    ax4.axis('off')
-    
-    # Plot 5: Cumulative frames written
-    ax5 = axes[2, 0]
-    for label in data_success['label'].unique():
-        label_data = data_success[data_success['label'] == label]
-        ax5.plot(label_data['timestamp_seconds'], label_data['cumulative_frames'], 
-                label=label, marker='o', markersize=3, alpha=0.7)
-    ax5.set_xlabel('Time (seconds)')
-    ax5.set_ylabel('Cumulative Frames Written')
-    ax5.set_title('Total Frames Written Over Time')
-    ax5.legend()
-    ax5.grid(True, alpha=0.3)
-    
-    # Plot 6: Statistics summary
-    ax6 = axes[2, 1]
-    ax6.axis('off')
+    ax3.axis('off')
     
     # Calculate summary statistics
     stats_text = "Performance Statistics:\n\n"
@@ -123,13 +96,15 @@ def plot_write_performance(csv_files, output_dir=None):
         stats_text += f"  Avg Write Time: {label_data['write_time_us'].mean()/1000:.2f} ms\n"
         stats_text += f"  Min Write Time: {label_data['write_time_us'].min()/1000:.2f} ms\n"
         stats_text += f"  Max Write Time: {label_data['write_time_us'].max()/1000:.2f} ms\n"
-        stats_text += f"  Avg Throughput: {label_data['throughput_MB_per_sec'].mean():.2f} MB/s\n"
-        stats_text += f"  Max Throughput: {label_data['throughput_MB_per_sec'].max():.2f} MB/s\n"
         stats_text += f"  Total Frames: {label_data['num_frames'].sum()}\n\n"
     
-    ax6.text(0.1, 0.95, stats_text, transform=ax6.transAxes, 
+    ax3.text(0.1, 0.95, stats_text, transform=ax3.transAxes, 
             fontsize=10, verticalalignment='top', fontfamily='monospace',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    #Empty plot for layout
+    ax4 = axes[1, 1]
+    ax4.axis('off')
     
     plt.tight_layout()
     

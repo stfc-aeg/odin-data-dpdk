@@ -619,6 +619,12 @@ namespace FrameProcessor
                                     continue;
                             }
 
+                            
+                            if (!first_write_recorded_) {
+                                first_write_time_ = start_frame_cycles;
+                                first_write_recorded_ = true;
+                            }
+
                             // Add to pending queue (store all frame buffers)
                             pending_writes_queue_.push_back(PendingWrite{
                                 .frame_number = first_frame_number,
@@ -1084,8 +1090,7 @@ namespace FrameProcessor
             
             // Write CSV header
             csv_file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
-                      << "throughput_MB_per_sec,frames_per_second,success,cumulative_frames,"
-                      << "avg_write_time_us,core_id,driver\n";
+                      << "success,cumulative_frames,avg_write_time_us,core_id,driver\n";
             csv_file_.flush();
             
             LOG4CXX_INFO(logger_, "CSV logging enabled: " << csv_path_);
@@ -1106,39 +1111,16 @@ namespace FrameProcessor
             return;
         }
         
-        // Records first write time as 0s
+        // Calculates timestamp in seconds since first write
         uint64_t current_cycles = rte_get_tsc_cycles();
-        if (!first_write_recorded_) {
-            first_write_time_ = current_cycles;
-            first_write_recorded_ = true;
-        }
-        
-        // Calculate time in seconds since first write
         double elapsed_seconds = static_cast<double>(current_cycles - first_write_time_) / 
                                 static_cast<double>(rte_get_tsc_hz());
-        
-        // Calculate throughput
-        size_t bytes_per_frame = config_.height_ * config_.width_ * config_.bit_depth_;
-        size_t total_bytes = bytes_per_frame * num_frames;
-        double write_time_sec = write_time_us / 1000000.0;
-        double throughput_MB_per_sec = 0.0;
-        if (write_time_sec > 0) {
-            throughput_MB_per_sec = (total_bytes / (1024.0 * 1024.0)) / write_time_sec;
-        }
-        
-        // Calculate frames per second
-        double frames_per_sec = 0.0;
-        if (write_time_sec > 0) {
-            frames_per_sec = num_frames / write_time_sec;
-        }
         
         // Write data row
         csv_file_ << elapsed_seconds << ","
                   << frame_number << ","
                   << num_frames << ","
                   << write_time_us << ","
-                  << throughput_MB_per_sec << ","
-                  << frames_per_sec << ","
                   << (success ? "1" : "0") << ","
                   << frames_written_ << ","
                   << avg_write_time_us_ << ","
