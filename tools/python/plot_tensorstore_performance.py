@@ -142,8 +142,7 @@ def plot_write_performance(csv_files, separate_cores=False):
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
-    
-
+    plt.show()
 
 
 def main():
