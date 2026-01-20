@@ -105,32 +105,6 @@ namespace {
     return json_spec;
 }
 
-
-// ::nlohmann::json GetJsonSpec()
-// {
-//   return {
-//     {"driver", "zarr3"},
-//     {"kvstore", {
-//       {"driver", "s3"}, 
-//       {"bucket",  "tensorstore-objects"},
-//       {"endpoint", "https://s3.echo.stfc.ac.uk"},
-//       {"path", "odin-data-db"}
-//     }
-//     },
-//     {"metadata",
-//       {
-//         {"data_type", "uint16"},
-//         {"shape", {2304,4096}},
-//         {"chunk_grid", {
-//           {"name", "regular"},
-//           {"configuration", {
-//             {"chunk_shape", {2304,4096}}
-//           }}
-//         }}
-//       }}
-//     };
-//   }
-
 ////////////////////////////////////////////////////////////////////////////////
 // SECTION 4: STORAGE CREATION AND ASYNC WRITE FUNCTIONS
 ////////////////////////////////////////////////////////////////////////////////
@@ -381,9 +355,9 @@ namespace FrameProcessor
        
             size_t dot_pos = csv_filename.find_last_of('.');
             if (dot_pos != std::string::npos) {
-                csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_core" + std::to_string(proc_idx_));
+                csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_" + config_.kvstore_driver_);
             } else {
-                csv_filename += "_" + std::string(timestamp) + "_core" + std::to_string(proc_idx_) + ".csv";
+                csv_filename += "_" + std::string(timestamp) + "_" + config_.kvstore_driver_ + ".csv";
             }
             csv_path_ = csv_filename;
         }
@@ -772,6 +746,30 @@ namespace FrameProcessor
             frames_written_ = 0;
             write_errors_ = 0;
         }
+        
+        // Close existing CSV log and create a new one with updated timestamp
+        if (config_.csv_logging_ && !config_.csv_path_.empty()) {
+            closeCSVLog();
+            
+            std::string csv_filename = config_.csv_path_;
+            
+            // Get current timestamp
+            time_t now = time(nullptr);
+            struct tm* timeinfo = localtime(&now);
+            char timestamp[32];
+            strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
+       
+            size_t dot_pos = csv_filename.find_last_of('.');
+            if (dot_pos != std::string::npos) {
+                csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_" + config_.kvstore_driver_);
+            } else {
+                csv_filename += "_" + std::string(timestamp) + "_" + config_.kvstore_driver_ + ".csv";
+            }
+            csv_path_ = csv_filename;
+            
+            openCSVLog(csv_path_);
+            LOG4CXX_INFO(logger_, "New CSV log file created: " << csv_path_);
+        }
 
         // Create the new dataset
         std::size_t height = config_.height_;
@@ -1115,17 +1113,24 @@ namespace FrameProcessor
     void TensorstoreCore::openCSVLog(const std::string& filename)
     {
         csv_path_ = filename;
-        csv_file_.open(csv_path_, std::ios::out | std::ios::trunc);
+        
+        // Check file size to determine if a header is needed
+        std::ifstream check_file(csv_path_, std::ios::ate | std::ios::binary);
+        bool need_header = !check_file.is_open() || check_file.tellg() == 0;
+        check_file.close();
+        
+        // Opens file in append mode so multiple cores can write to the same file
+        csv_file_.open(csv_path_, std::ios::out | std::ios::app);
         
         if (csv_file_.is_open()) {
             csv_logging_enabled_ = true;
             
-            // Write CSV header
-            csv_file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
-                      << "success,cumulative_frames,avg_write_time_us,core_id,driver\n";
-            csv_file_.flush();
-            
-            LOG4CXX_INFO(logger_, "CSV logging enabled: " << csv_path_);
+            // Only writes file header if the file is empty
+            if (need_header) {
+                csv_file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
+                          << "success,cumulative_frames,avg_write_time_us,core_id,driver\n";
+                csv_file_.flush();
+            }
         } else {
             csv_logging_enabled_ = false;
             LOG4CXX_ERROR(logger_, "Failed to open CSV log file: " << csv_path_);
