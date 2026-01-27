@@ -7,6 +7,8 @@
 // DPDK Includes
 #include "DpdkUtils.h"
 #include "DpdkSharedBufferFrame.h"
+#include "camera/CameraController.h"
+#include "IpcMessage.h"
 
 // C++ Standard Library Includes
 #include <iostream>
@@ -327,7 +329,8 @@ namespace FrameProcessor
         csv_logging_enabled_(false),
         run_start_time_(0),
         first_write_time_(0),
-        first_write_recorded_(false)
+        first_write_recorded_(false),
+        frames_per_second_(0)
     {
         // Load configuration
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -488,6 +491,7 @@ namespace FrameProcessor
             }
             else // Frame has been dequeued successfully
             {
+                processed_frames_++;
                 start_frame_cycles = rte_get_tsc_cycles();
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer);
                 LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
@@ -558,7 +562,7 @@ namespace FrameProcessor
                             maximum_frame_cycles = cycles_spent;
                         }
                         frames_per_second++;
-                        processed_frames_++;
+                        // processed_frames_++;
                     }
                     else
                     {
@@ -638,7 +642,7 @@ namespace FrameProcessor
                                 maximum_frame_cycles = cycles_spent;
                             }
                             frames_per_second += frames_per_chunk_;
-                            processed_frames_ += frames_per_chunk_;
+                            // processed_frames_ += frames_per_chunk_;
 
                             LOG4CXX_DEBUG_LEVEL(2, logger_, config_.core_name << " : " << proc_idx_ 
                                 << " Initiated write for frame chunk starting at: " << first_frame_number
@@ -745,6 +749,21 @@ namespace FrameProcessor
             tensorstore_initialized_ = false;
             frames_written_ = 0;
             write_errors_ = 0;
+        }
+
+        // Re-enable writing for the new dataset
+        config_.enable_writing_ = true;
+        
+        // Update frames_per_second from camera configuration if available
+        CameraController* camera_controller = CameraController::Instance("CameraController_");
+        if (camera_controller) {
+            OdinData::IpcMessage temp_reply;
+            if (camera_controller->request_configuration("", temp_reply)) {
+                if (temp_reply.has_param("camera/frames_per_second")) {
+                    frames_per_second_ = temp_reply.get_param<unsigned int>("camera/frames_per_second");
+                    LOG4CXX_INFO(logger_, "Updated frames_per_second from camera config: " << frames_per_second_);
+                }
+            }
         }
         
         // Close existing CSV log and create a new one with updated timestamp
@@ -1000,6 +1019,11 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting frames_per_chunk to: " << config_.frames_per_chunk_);
         }
 
+        if (config.has_param("frames_per_second")) {
+            frames_per_second_ = config.get_param<unsigned int>("frames_per_second");
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting frames_per_second to: " << frames_per_second_);
+        }
+
         if (config.has_param("enable_writing")) {
             bool previous_state = config_.enable_writing_;
             config_.enable_writing_ = config.get_param<bool>("enable_writing");
@@ -1114,9 +1138,9 @@ namespace FrameProcessor
     {
         csv_path_ = filename;
         
-        // Check file size to determine if a header is needed
-        std::ifstream check_file(csv_path_, std::ios::ate | std::ios::binary);
-        bool need_header = !check_file.is_open() || check_file.tellg() == 0;
+        // Check if file exists before opening
+        std::ifstream check_file(csv_path_);
+        bool file_exists = check_file.good();
         check_file.close();
         
         // Opens file in append mode so multiple cores can write to the same file
@@ -1125,10 +1149,10 @@ namespace FrameProcessor
         if (csv_file_.is_open()) {
             csv_logging_enabled_ = true;
             
-            // Only writes file header if the file is empty
-            if (need_header) {
+            // Only write header if file didn't exist before
+            if (!file_exists) {
                 csv_file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
-                          << "success,cumulative_frames,avg_write_time_us,core_id,driver\n";
+                          << "success,cumulative_frames,avg_write_time_us,core_id,frames_per_second\n";
                 csv_file_.flush();
             }
         } else {
@@ -1162,7 +1186,7 @@ namespace FrameProcessor
                   << frames_written_ << ","
                   << avg_write_time_us_ << ","
                   << lcore_id_ << ","
-                  << config_.storage_driver_ << "\n";
+                  << frames_per_second_ << "\n";
         csv_file_.flush();
     }
     
