@@ -211,8 +211,8 @@ namespace FrameProcessor
          * This queue stores info for all writes that have been initiated
          * but have not yet completed.
          */
-        // std::vector<PendingWrite> pending_writes_queue_;
-        std::deque<PendingWrite> pending_writes_queue_;
+    
+        std::unordered_map<uint64_t, PendingWrite> pending_writes_queue_;
         
         // --- Statistics for TensorStore Operations ---
         uint64_t frames_written_; // Total frames successfully written.
@@ -237,6 +237,9 @@ namespace FrameProcessor
         uint64_t first_write_time_; // Timestamp of first write (for relative timing)
         bool first_write_recorded_; // Flag to track if first write has been recorded
         unsigned int frames_per_second_; // Frame rate from camera config (send from the odin-gui)
+
+        // --- Pending Writes Flush Flag ---
+        bool flush_pending_writes = false;
     };
 } // End of FrameProcessor namespace
 

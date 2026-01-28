@@ -99,10 +99,12 @@ class TensorstoreDialog(QDialog):
         self.frames_input.setText("1000")
         self.frames_per_chunk_input = QLineEdit(self)
         self.frames_per_chunk_input.setText("1")
-        
+        self.max_concurrent_frames_input = QLineEdit(self)
+        self.max_concurrent_frames_input.setText("256")
+
         self.storage_driver_combo = QComboBox(self)
         self.storage_driver_combo.addItem("zarr3")
-        
+
         self.kvstore_driver_combo = QComboBox(self)
         self.kvstore_driver_combo.addItem("file")
         self.kvstore_driver_combo.addItem("s3")
@@ -112,6 +114,7 @@ class TensorstoreDialog(QDialog):
         layout.addRow("File Name:", self.filename_input)
         layout.addRow("Number of Frames:", self.frames_input)
         layout.addRow("Frames per Chunk:", self.frames_per_chunk_input)
+        layout.addRow("Max Concurrent Frames:", self.max_concurrent_frames_input)
         layout.addRow("Storage Driver:", self.storage_driver_combo)
         layout.addRow("KVStore Driver:", self.kvstore_driver_combo)
 
@@ -951,7 +954,6 @@ class ZmqOdinDataGUI(QWidget):
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not detected. Please refresh configuration first.")
             return
-            
         dialog = TensorstoreDialog(self)
         if dialog.exec_():
             path = dialog.path_input.text()
@@ -959,7 +961,10 @@ class ZmqOdinDataGUI(QWidget):
             frames = dialog.frames_input.text()
             storage_driver = dialog.storage_driver_combo.currentText()
             kvstore_driver = dialog.kvstore_driver_combo.currentText()
+            frames_per_chunk = dialog.frames_per_chunk_input.text()
+            max_concurrent_frames = dialog.max_concurrent_frames_input.text()
             self.frames_per_chunk_input = dialog.frames_per_chunk_input
+            self.max_concurrent_frames = max_concurrent_frames
             self.storage_driver = storage_driver
             self.kvstore_driver = kvstore_driver
             self.start_tensorstore_acquisition(path, acquisition_id, frames)
@@ -1029,12 +1034,12 @@ class ZmqOdinDataGUI(QWidget):
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
             return False
-            
         try:
             frames_count = int(frames)
             frames_per_chunk = int(self.frames_per_chunk_input.text()) if hasattr(self, 'frames_per_chunk_input') else 1
             storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr3"
             kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
+            max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 256
 
             common_config = {
                 self.main_plugin_name: {
@@ -1042,17 +1047,15 @@ class ZmqOdinDataGUI(QWidget):
                     "path": path,
                     "storage_driver": storage_driver,
                     "kvstore_driver": kvstore_driver,
-                    "max_concurrent_writes": 64,
+                    "max_concurrent_writes": max_concurrent_frames,
                     "frames_per_chunk": frames_per_chunk,
                 }
-                
             }
 
             self.log_message(f"Sending first Tensorstore configuration using plugin: {self.main_plugin_name}")
             if not self.send_config_message({"params": common_config}):
                 self.log_message("Failed to send the first Tensorstore configuration message. Aborting acquisition setup.")
                 return False
-
 
             self.log_message("Tensorstore acquisition setup completed successfully.")
 
