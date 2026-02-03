@@ -217,18 +217,12 @@ namespace FrameProcessor
         // --- Statistics for TensorStore Operations ---
         uint64_t frames_written_; // Total frames successfully written.
         uint64_t write_errors_;   // Total frames that failed to write.
-        uint64_t avg_write_time_us_; // (Not currently calculated).
+        uint64_t avg_write_time_us_; // Average time taken per write (microseconds).
         
         // Stats for async operations
         uint64_t pending_writes_count_; // Current number of writes in the queue.
         uint64_t frames_forwarded_; // Total frames successfully forwarded downstream.
-        uint64_t completed_writes_;
-        
-        std::vector<struct SuperFrameHeader*> frame_chunk_buffer_; // Buffer for accumulating frames
-        size_t frames_per_chunk_; // Number of frames to write at once
-        std::string last_error_message_; // Store last configuration error for status reporting
-        bool enable_writing_; // Flag to enable/disable writing to TensorStore
-        
+        uint64_t completed_writes_;        
         // --- CSV Logging Members ---
         std::ofstream csv_file_; // CSV output file stream
         std::string csv_path_; // Path to CSV log file
@@ -237,9 +231,14 @@ namespace FrameProcessor
         uint64_t first_write_time_; // Timestamp of first write (for relative timing)
         bool first_write_recorded_; // Flag to track if first write has been recorded
         unsigned int frames_per_second_; // Frame rate from camera config (send from the odin-gui)
+        uint64_t current_dataset_capacity_; // Current size of dataset
+        uint64_t highest_frame_written_; // Highest frame number written (for final dataset resize)
 
-        // --- Pending Writes Flush Flag ---
-        bool flush_pending_writes = false;
+        std::vector<struct SuperFrameHeader*> frame_chunk_buffer_; // Buffer for accumulating frames
+        std::string last_error_message_; // Store last configuration error for status reporting
+        bool enable_writing_; // Flag to enable/disable writing to Tensorstore
+        bool flush_pending_writes = false; // Flag to indicate if pending writes should be flushed
+
     };
 } // End of FrameProcessor namespace
 

@@ -10,8 +10,7 @@ namespace FrameProcessor
     namespace Defaults
     {
         const std::string default_dataset_path = "/tmp";
-        const unsigned int default_frames_per_chunk = 1;
-        const bool default_enable_writing = true;
+        const bool default_enable_writing = false;
         const bool default_csv_logging = false;
         const std::string default_csv_path = "/tmp";
         const std::string default_kvstore_driver = "file";
@@ -24,7 +23,6 @@ namespace FrameProcessor
             TensorstoreCoreConfiguration() :
                 ParamContainer(),
                 path_(Defaults::default_dataset_path),
-                frames_per_chunk_(Defaults::default_frames_per_chunk),
                 enable_writing_(Defaults::default_enable_writing),
                 csv_logging_(Defaults::default_csv_logging),
                 csv_path_(Defaults::default_csv_path),
@@ -57,7 +55,7 @@ namespace FrameProcessor
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
                 bind_param<std::string>(storage_path_, "storage_path");
-                bind_param<unsigned int>(max_frames_, "max_frames");
+                bind_param<unsigned int>(number_of_frames_, "number_of_frames");
                 bind_param<unsigned int>(frame_size_, "frame_size");
                 bind_param<unsigned int>(chunk_size_, "chunk_size");
                 bind_param<uint64_t>(cache_bytes_limit_, "cache_bytes_limit");
@@ -72,7 +70,6 @@ namespace FrameProcessor
                 bind_param<std::string>(s3_bucket_, "s3_bucket");
                 bind_param<std::string>(s3_endpoint_, "s3_endpoint");
                 bind_param<int>(max_concurrent_writes_, "max_concurrent_writes");
-                bind_param<unsigned int>(frames_per_chunk_, "frames_per_chunk");
                 bind_param<bool>(enable_writing_, "enable_writing");
                 bind_param<bool>(csv_logging_, "csv_logging");
                 bind_param<std::string>(csv_path_, "csv_path");
@@ -86,7 +83,7 @@ namespace FrameProcessor
             
             // TensorStore specific config
             std::string storage_path_;
-            unsigned int max_frames_;
+            unsigned int number_of_frames_;
             unsigned int frame_size_;
             unsigned int chunk_size_;
             uint64_t cache_bytes_limit_;
@@ -101,7 +98,6 @@ namespace FrameProcessor
             std::string s3_bucket_;
             std::string s3_endpoint_;
             int max_concurrent_writes_;
-            unsigned int frames_per_chunk_;
             bool enable_writing_;
             bool csv_logging_;
             std::string csv_path_;

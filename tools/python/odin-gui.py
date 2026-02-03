@@ -97,10 +97,8 @@ class TensorstoreDialog(QDialog):
         self.filename_input.setText("odin-data-capture")
         self.frames_input = QLineEdit(self)
         self.frames_input.setText("1000")
-        self.frames_per_chunk_input = QLineEdit(self)
-        self.frames_per_chunk_input.setText("1")
         self.max_concurrent_frames_input = QLineEdit(self)
-        self.max_concurrent_frames_input.setText("256")
+        self.max_concurrent_frames_input.setText("64")
 
         self.storage_driver_combo = QComboBox(self)
         self.storage_driver_combo.addItem("zarr3")
@@ -108,15 +106,20 @@ class TensorstoreDialog(QDialog):
         self.kvstore_driver_combo = QComboBox(self)
         self.kvstore_driver_combo.addItem("file")
         self.kvstore_driver_combo.addItem("s3")
-        self.kvstore_driver_combo.setCurrentText("s3")
+        self.kvstore_driver_combo.setCurrentText("file")
+
+        from PyQt5.QtWidgets import QCheckBox
+        self.enable_writing_checkbox = QCheckBox("Enable Writing", self)
+        self.enable_writing_checkbox.setChecked(True)
 
         layout.addRow("File Path:", self.path_input)
         layout.addRow("File Name:", self.filename_input)
         layout.addRow("Number of Frames:", self.frames_input)
-        layout.addRow("Frames per Chunk:", self.frames_per_chunk_input)
         layout.addRow("Max Concurrent Frames:", self.max_concurrent_frames_input)
         layout.addRow("Storage Driver:", self.storage_driver_combo)
         layout.addRow("KVStore Driver:", self.kvstore_driver_combo)
+        layout.addRow("Enable Writing:", self.enable_writing_checkbox)
+        
 
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.accept)
@@ -958,17 +961,17 @@ class ZmqOdinDataGUI(QWidget):
         if dialog.exec_():
             path = dialog.path_input.text()
             acquisition_id = dialog.filename_input.text()
-            frames = dialog.frames_input.text()
+            number_of_frames = dialog.frames_input.text()
+            self.number_of_frames = number_of_frames
             storage_driver = dialog.storage_driver_combo.currentText()
             kvstore_driver = dialog.kvstore_driver_combo.currentText()
-            frames_per_chunk = dialog.frames_per_chunk_input.text()
+            enable_writing = dialog.enable_writing_checkbox.isChecked()
             max_concurrent_frames = dialog.max_concurrent_frames_input.text()
-            self.frames_per_chunk_input = dialog.frames_per_chunk_input
             self.max_concurrent_frames = max_concurrent_frames
             self.storage_driver = storage_driver
             self.kvstore_driver = kvstore_driver
-            self.start_tensorstore_acquisition(path, acquisition_id, frames)
-
+            self.enable_writing = enable_writing
+            self.start_tensorstore_acquisition(path, acquisition_id)
     def start_acquisition(self, path, acquisition_id, frames):
         if self.acquisition(path, acquisition_id, frames):
             self.start_sequence()
@@ -1026,20 +1029,20 @@ class ZmqOdinDataGUI(QWidget):
 
         return True
 
-    def start_tensorstore_acquisition(self, path, acquisition_id, frames):
-        if self.tensorstore_acquisition(path, acquisition_id, frames):
+    def start_tensorstore_acquisition(self, path, acquisition_id):
+        if self.tensorstore_acquisition(path, acquisition_id):
             self.start_sequence()
 
-    def tensorstore_acquisition(self, path, acquisition_id, frames):
+    def tensorstore_acquisition(self, path, acquisition_id):
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
             return False
         try:
-            frames_count = int(frames)
-            frames_per_chunk = int(self.frames_per_chunk_input.text()) if hasattr(self, 'frames_per_chunk_input') else 1
             storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr3"
             kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
-            max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 256
+            max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 64
+            number_of_frames = int(self.frames) if hasattr(self, 'frames') else 1000
+            enable_writing = self.enable_writing if hasattr(self, 'enable_writing') else True
 
             common_config = {
                 self.main_plugin_name: {
@@ -1048,7 +1051,8 @@ class ZmqOdinDataGUI(QWidget):
                     "storage_driver": storage_driver,
                     "kvstore_driver": kvstore_driver,
                     "max_concurrent_writes": max_concurrent_frames,
-                    "frames_per_chunk": frames_per_chunk,
+                    "number_of_frames": number_of_frames,
+                    "enable_writing": enable_writing,
                 }
             }
 
