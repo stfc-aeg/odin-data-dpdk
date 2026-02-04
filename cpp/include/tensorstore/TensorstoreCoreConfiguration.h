@@ -16,6 +16,8 @@ namespace FrameProcessor
         const std::string kDefaultKvstoreDriver = "file";
         const std::string kDefaultS3Bucket = "";
         const std::string kDefaultS3Endpoint = "";
+        const uint64_t kDefaultCacheBytesLimit = 10737418240ULL;
+        const unsigned int kDefaultNumberOfFrames = 1000;
     }
     class TensorstoreCoreConfiguration : public OdinData::ParamContainer
     {
@@ -28,7 +30,9 @@ namespace FrameProcessor
                 csv_path_(Defaults::kDefaultCsvPath),
                 kvstore_driver_(Defaults::kDefaultKvstoreDriver),
                 s3_bucket_(Defaults::kDefaultS3Bucket),
-                s3_endpoint_(Defaults::kDefaultS3Endpoint)
+                s3_endpoint_(Defaults::kDefaultS3Endpoint),
+                cache_bytes_limit_(Defaults::kDefaultCacheBytesLimit),
+                number_of_frames_(Defaults::kDefaultNumberOfFrames)
             {
                 bind_params();
             }

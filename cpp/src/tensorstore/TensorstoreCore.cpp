@@ -207,14 +207,6 @@ namespace FrameProcessor
                 );
                 
                 frames_forwarded_ += flush_result.frames_forwarded;
-                
-                TensorstoreFlushManager::ResetWriteStatistics(
-                    frames_written_,
-                    write_errors_,
-                    current_dataset_capacity_,
-                    highest_frame_written_
-                );
-
                 flush_pending_writes = false;
             }
             uint64_t now = rte_get_tsc_cycles();
@@ -547,7 +539,8 @@ namespace FrameProcessor
             highest_frame_written_ = 0;
             frames_written_ = 0;
             write_errors_ = 0;
-            last_error_message_ = ""; 
+            last_error_message_ = "";
+            first_write_recorded_ = false;
             LOG4CXX_INFO(logger_, "Dataset created/opened successfully with initial capacity of " 
                 << initial_frames << " frames. Data will be written to: " << config_.path_);
         }

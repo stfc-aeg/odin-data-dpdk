@@ -27,7 +27,9 @@ namespace FrameProcessor {
     } else {
         kvstore_spec = {
             {"driver", "file"},
-            {"path", path}
+            {"path", path},
+            {"file_io_concurrency", {{"limit", 128}}},
+            {"file_io_sync", false}
         };
     }
     
@@ -49,14 +51,13 @@ namespace FrameProcessor {
     
     if (kvstore_driver == "file") {
         json_spec["context"] = {
-            {"data_copy_concurrency", {{"limit", 2048}}},
-            {"file_io_concurrency", {{"limit", 2048}}},
-            {"cache_pool", {{"total_bytes_limit", cache_bytes_limit * 1024 * 1024}}}
+            {"data_copy_concurrency", {{"limit", 128}}},
+            {"cache_pool", {{"total_bytes_limit", cache_bytes_limit}}},
         };
     } else if (kvstore_driver == "s3") {
         json_spec["context"] = {
-            {"data_copy_concurrency", {{"limit", 2048}}},
-            {"cache_pool", {{"total_bytes_limit", cache_bytes_limit}}}
+            {"data_copy_concurrency", {{"limit", 128}}},
+            {"cache_pool", {{"total_bytes_limit",  cache_bytes_limit}}},
         };
     }
     
