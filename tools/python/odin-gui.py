@@ -1041,7 +1041,7 @@ class ZmqOdinDataGUI(QWidget):
             storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr3"
             kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
             max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 64
-            number_of_frames = int(self.frames) if hasattr(self, 'frames') else 1000
+            number_of_frames = int(self.number_of_frames) if hasattr(self, 'number_of_frames') else 1000
             enable_writing = self.enable_writing if hasattr(self, 'enable_writing') else True
 
             common_config = {
