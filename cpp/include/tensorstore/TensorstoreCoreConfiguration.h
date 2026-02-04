@@ -9,26 +9,26 @@ namespace FrameProcessor
 {
     namespace Defaults
     {
-        const std::string default_dataset_path = "/tmp";
-        const bool default_enable_writing = false;
-        const bool default_csv_logging = false;
-        const std::string default_csv_path = "/tmp";
-        const std::string default_kvstore_driver = "file";
-        const std::string default_s3_bucket = "";
-        const std::string default_s3_endpoint = "";
+        const std::string kDefaultDatasetPath = "/tmp";
+        const bool kDefaultEnableWriting = false;
+        const bool kDefaultCsvLogging = false;
+        const std::string kDefaultCsvPath = "/tmp";
+        const std::string kDefaultKvstoreDriver = "file";
+        const std::string kDefaultS3Bucket = "";
+        const std::string kDefaultS3Endpoint = "";
     }
     class TensorstoreCoreConfiguration : public OdinData::ParamContainer
     {
         public:
             TensorstoreCoreConfiguration() :
                 ParamContainer(),
-                path_(Defaults::default_dataset_path),
-                enable_writing_(Defaults::default_enable_writing),
-                csv_logging_(Defaults::default_csv_logging),
-                csv_path_(Defaults::default_csv_path),
-                kvstore_driver_(Defaults::default_kvstore_driver),
-                s3_bucket_(Defaults::default_s3_bucket),
-                s3_endpoint_(Defaults::default_s3_endpoint)
+                path_(Defaults::kDefaultDatasetPath),
+                enable_writing_(Defaults::kDefaultEnableWriting),
+                csv_logging_(Defaults::kDefaultCsvLogging),
+                csv_path_(Defaults::kDefaultCsvPath),
+                kvstore_driver_(Defaults::kDefaultKvstoreDriver),
+                s3_bucket_(Defaults::kDefaultS3Bucket),
+                s3_endpoint_(Defaults::kDefaultS3Endpoint)
             {
                 bind_params();
             }

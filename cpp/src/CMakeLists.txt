@@ -8,6 +8,7 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../include/camera
   ${CMAKE_CURRENT_SOURCE_DIR}/../include/network
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include/tensorstore
   ${DPDK_INCLUDE_DIRS}
   ${HDF5_INCLUDE_DIRS}
 )
@@ -38,8 +39,16 @@ add_library(${ODINDATA_DPDK_LIBRARY} SHARED
         network/PacketProcessorCore.cpp
         network/PacketRxCore.cpp
 
-        #Tensorstore
-        TensorstoreCore.cpp
+        # TensorStore
+        tensorstore/TensorstoreCore.cpp
+        tensorstore/TensorstoreJsonSpec.cpp
+        tensorstore/TensorstoreDataset.cpp
+        tensorstore/TensorstoreWriter.cpp
+        tensorstore/TensorstoreCSVLogger.cpp
+        tensorstore/TensorstoreResizer.cpp
+        tensorstore/TensorstorePerformanceMonitor.cpp
+        tensorstore/TensorstoreErrorHandler.cpp
+        tensorstore/TensorstoreFlushManager.cpp
 )
 
 target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_CFLAGS})
