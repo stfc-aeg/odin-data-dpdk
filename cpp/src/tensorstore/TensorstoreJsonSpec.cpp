@@ -36,8 +36,31 @@ namespace FrameProcessor {
     constexpr std::size_t kChunkSize = 1;
     ::nlohmann::json json_spec = {
         {"driver", storage_driver},
-        {"kvstore", kvstore_spec},
-        {"metadata", {
+        {"kvstore", kvstore_spec}
+    };
+    
+    if (storage_driver == "zarr2" || storage_driver == "zarr") {
+        std::string zarr_dtype;
+        if (data_type == "uint8") {
+            zarr_dtype = "|u1";
+        } else if (data_type == "uint16") {
+            zarr_dtype = "<u2";
+        } else if (data_type == "uint32") {
+            zarr_dtype = "<u4";
+        } else if (data_type == "uint64") {
+            zarr_dtype = "<u8";
+        } else {
+            // Fallback for unknown types
+            zarr_dtype = data_type;
+        }
+        
+        json_spec["metadata"] = {
+            {"dtype", zarr_dtype},
+            {"shape", {frames, height, width}},
+            {"chunks", {kChunkSize, height, width}}
+        };
+    } else if (storage_driver == "zarr3") {
+        json_spec["metadata"] = {
             {"data_type", data_type},
             {"shape", {frames, height, width}},
             {"chunk_grid", {
@@ -46,8 +69,19 @@ namespace FrameProcessor {
                     {"chunk_shape", {kChunkSize, height, width}}
                 }}
             }}
-        }}
-    };
+        };
+    } else {
+        json_spec["metadata"] = {
+            {"data_type", data_type},
+            {"shape", {frames, height, width}},
+            {"chunk_grid", {
+                {"name", "regular"},
+                {"configuration", {
+                    {"chunk_shape", {kChunkSize, height, width}}
+                }}
+            }}
+        };
+    }
     
     if (kvstore_driver == "file") {
         json_spec["context"] = {

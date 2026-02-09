@@ -101,6 +101,7 @@ class TensorstoreDialog(QDialog):
         self.max_concurrent_frames_input.setText("64")
 
         self.storage_driver_combo = QComboBox(self)
+        self.storage_driver_combo.addItem("zarr")
         self.storage_driver_combo.addItem("zarr3")
 
         self.kvstore_driver_combo = QComboBox(self)
@@ -1038,7 +1039,7 @@ class ZmqOdinDataGUI(QWidget):
             self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
             return False
         try:
-            storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr3"
+            storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr2"
             kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
             max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 64
             number_of_frames = int(self.number_of_frames) if hasattr(self, 'number_of_frames') else 1000

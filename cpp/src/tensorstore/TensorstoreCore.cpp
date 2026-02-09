@@ -87,25 +87,6 @@ namespace FrameProcessor
         //     }
         //     config_.path_ += "/proc_" + std::to_string(proc_idx_);
         // }
-        
-    
-        if (config_.csv_logging_ && !config_.csv_path_.empty()) {
-            std::string csv_filename = config_.csv_path_;
-            
-            // Get current timestamp
-            time_t now = time(nullptr);
-            struct tm* timeinfo = localtime(&now);
-            char timestamp[32];
-            strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", timeinfo);
-       
-            size_t dot_pos = csv_filename.find_last_of('.');
-            if (dot_pos != std::string::npos) {
-                csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_" + config_.kvstore_driver_);
-            } else {
-                csv_filename += "_" + std::string(timestamp) + "_" + config_.kvstore_driver_ + ".csv";
-            }
-            csv_path_ = csv_filename;
-        }
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
             << " core_name = " << config_.core_name
@@ -172,10 +153,6 @@ namespace FrameProcessor
         run_start_time_ = rte_get_tsc_cycles();
         LOG4CXX_INFO(logger_, "TensorstoreCore: " << lcore_id_ << " starting up");
         
-        // Opens the CSV log if enabled in the config
-        if (config_.csv_logging_ && !csv_path_.empty()) {
-            csv_logger_.Open(csv_path_, logger_);
-        }
 
         ::SuperFrameHeader *current_frame_buffer;
 

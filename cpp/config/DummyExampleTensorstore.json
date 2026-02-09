@@ -61,7 +61,7 @@
             "update_config": false,
             "dpdk_process_rank": 0,
             "num_secondary_processes": 0,
-            "shared_buffer_size": 10737418240,
+            "shared_buffer_size": 30374182400,
             "dpdk_eal": {
                 "corelist": "14,16,18,20,22,24,26,28,30",
                 "loglevel": "debug",
@@ -99,7 +99,7 @@
                     "num_cores": 1,
                     "connect": "camera_capture",
                     "number_of_frames": 1000,
-                    "storage_driver": "zarr3",
+                    "storage_driver": "zarr",
                     "kvstore_driver": "file",
                     "s3_bucket": "tensorstore",
                     "s3_endpoint": "http://10.0.100.6:9000",
