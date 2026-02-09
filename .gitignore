@@ -10,7 +10,7 @@
 /.pydevproject
 .project
 venv*
-/performance_tests/
+performance_tests/
 tools/python/.coverage
 *.egg-info/
 
