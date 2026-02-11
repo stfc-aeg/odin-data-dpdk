@@ -412,6 +412,16 @@ namespace FrameProcessor
             flush_pending_writes = true;
         }
 
+        pending_writes_queue_.clear();
+        frame_chunk_buffer_.clear();
+        
+        // Reset counters for a new acquisition
+        processed_frames_ = 0;
+        frames_forwarded_ = 0;
+        completed_writes_ = 0;
+        pending_writes_count_ = 0;
+        last_frame_ = 0;
+        
         // Re-enable writing for the new dataset
         config_.enable_writing_ = true;
         

@@ -57,7 +57,13 @@ namespace FrameProcessor {
         json_spec["metadata"] = {
             {"dtype", zarr_dtype},
             {"shape", {frames, height, width}},
-            {"chunks", {kChunkSize, height, width}}
+            {"chunks", {kChunkSize, height, width}},
+            {"compressor", {
+                {"id", "blosc"},
+                {"cname", "lz4"},  //zstd (another option for smaller files, but slower compression/decompression than lz4)
+                {"clevel", 1},         
+                {"shuffle", 0}         
+            }}
         };
     } else if (storage_driver == "zarr3") {
         json_spec["metadata"] = {
