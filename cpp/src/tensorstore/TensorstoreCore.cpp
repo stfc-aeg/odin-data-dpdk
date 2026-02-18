@@ -197,6 +197,7 @@ namespace FrameProcessor
             if (tensorstore_initialized_ && store_.has_value() &&
                 pending_writes_queue_.size() >= config_.max_concurrent_writes_)
             {
+                perf_monitor_.RecordIdleLoop();
                 continue;
             }
 
@@ -279,6 +280,7 @@ namespace FrameProcessor
                         const tensorstore::Index width = decoder_->get_frame_x_resolution();
 
                         tensorstore::WriteFutures write_future;
+                        bool valid_pixel_type = true;
 
                         switch(pixel_type_) {
                             case PixelDataType::UINT8:
@@ -306,8 +308,20 @@ namespace FrameProcessor
                                 );
                                 break;
                             default:
-                                LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write");
-                                continue;
+                                LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write for frame " 
+                                    << frame_number << ". Forwarding without writing.");
+                                valid_pixel_type = false;
+                                break;
+                        }
+                        
+                        // Forwards frame without writing if there is a pixel type error
+                        if (!valid_pixel_type) {
+                            forwardFrame(current_frame_buffer, frame_number);
+                            frames_forwarded_++;
+                            uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                            perf_monitor_.RecordFrameProcessing(cycles_spent);
+                            perf_monitor_.FramesThisSecond()++;
+                            continue;
                         }
 
                         if (!first_write_recorded_) {
@@ -408,19 +422,45 @@ namespace FrameProcessor
         {
             LOG4CXX_INFO(logger_, "Reconfiguration requested. Flushing " 
                 << pending_writes_queue_.size() << " pending writes...");
-            // Defers flush to themain loop to avoid blocking
-            flush_pending_writes = true;
+            
+            // Wait for all pending writes to complete and forward frames
+            while (!pending_writes_queue_.empty()) {
+                pollAndProcessCompletions();
+            }
+            LOG4CXX_INFO(logger_, "All pending writes completed");
+            
+            // Forward any buffered frames
+            for (auto* frame_buf : frame_chunk_buffer_) {
+                uint64_t frame_num = decoder_->get_super_frame_number(frame_buf);
+                forwardFrame(frame_buf, frame_num);
+                frames_forwarded_++;
+            }
+            frame_chunk_buffer_.clear();
+            
+            // Close the existing store
+            if (store_.has_value()) {
+                store_.reset();
+            }
+            tensorstore_initialized_ = false;
         }
+        
 
         pending_writes_queue_.clear();
         frame_chunk_buffer_.clear();
         
-        // Reset counters for a new acquisition
+        // Reset all counters for a new acquisition
         processed_frames_ = 0;
         frames_forwarded_ = 0;
+        frames_written_ = 0;
         completed_writes_ = 0;
         pending_writes_count_ = 0;
+        write_errors_ = 0;
+        avg_write_time_us_ = 0;
         last_frame_ = 0;
+        highest_frame_written_ = 0;
+        current_dataset_capacity_ = 0;
+        first_write_recorded_ = false;
+        last_error_message_ = "";
         
         // Re-enable writing for the new dataset
         config_.enable_writing_ = true;
