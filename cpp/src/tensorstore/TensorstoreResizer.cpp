@@ -14,37 +14,35 @@ uint64_t TensorstoreResizer::ExpandDataset(
 {
     tensorstore::Index new_capacity = current_capacity + expansion_increment;
     
-    std::array<tensorstore::Index, 3> inclusive_min = {0, 0, 0};
-    std::array<tensorstore::Index, 3> exclusive_max = {new_capacity, height, width};
-    
-    tensorstore::span<const tensorstore::Index> inclusive_min_span(
-        inclusive_min.data(), inclusive_min.size()
-    );
-    tensorstore::span<const tensorstore::Index> exclusive_max_span(
-        exclusive_max.data(), exclusive_max.size()
-    );
-    
     LOG4CXX_DEBUG_LEVEL(2, logger, "Expanding dataset from " << current_capacity 
         << " to " << new_capacity << " frames...");
     
     uint64_t resize_start = rte_get_tsc_cycles();
     
-    auto resize_status = tensorstore::Resize(
+    std::array<tensorstore::Index, 3> inclusive_min = {tensorstore::kImplicit, tensorstore::kImplicit, tensorstore::kImplicit};
+    std::array<tensorstore::Index, 3> exclusive_max = {new_capacity, tensorstore::kImplicit, tensorstore::kImplicit};
+    
+    auto resize_result = tensorstore::Resize(
         store,
-        inclusive_min_span,
-        exclusive_max_span,
-        tensorstore::ResizeMode::expand_only
+        inclusive_min,
+        exclusive_max,
+        tensorstore::expand_only
     ).result();
     
-    
-    if (!resize_status.ok()) {
-        LOG4CXX_ERROR(logger, "Failed to expand dataset");
+    if (!resize_result.ok()) {
+        LOG4CXX_ERROR(logger, "Failed to expand dataset: " << resize_result.status());
         // Return current capacity unchanged to prevent invalid state
         return current_capacity;
-    } else {
-        LOG4CXX_INFO(logger, "Dataset expanded successfully");
-        return new_capacity;
     }
+    
+    store = *resize_result;
+    
+    uint64_t resize_end = rte_get_tsc_cycles();
+    uint64_t resize_time_us = ((resize_end - resize_start) * 1000000) / rte_get_tsc_hz();
+    LOG4CXX_INFO(logger, "Dataset expanded successfully to " << new_capacity 
+        << " frames in " << resize_time_us << " us");
+    
+    return new_capacity;
 }
 
 // Shrinks the dataset to its actual size to remove empty spaces
@@ -65,35 +63,31 @@ bool TensorstoreResizer::ShrinkDataset(
     LOG4CXX_DEBUG_LEVEL(2, logger, "Shrinking dataset from " << current_capacity 
         << " to " << final_size << " frames...");
     
-    std::array<tensorstore::Index, 3> inclusive_min = {0, 0, 0};
-    std::array<tensorstore::Index, 3> exclusive_max = {
-        static_cast<tensorstore::Index>(final_size), height, width
-    };
-    
-    tensorstore::span<const tensorstore::Index> inclusive_min_span(
-        inclusive_min.data(), inclusive_min.size()
-    );
-    tensorstore::span<const tensorstore::Index> exclusive_max_span(
-        exclusive_max.data(), exclusive_max.size()
-    );
-    
     uint64_t resize_start = rte_get_tsc_cycles();
     
-    auto resize_status = tensorstore::Resize(
+    std::array<tensorstore::Index, 3> inclusive_min = {tensorstore::kImplicit, tensorstore::kImplicit, tensorstore::kImplicit};
+    std::array<tensorstore::Index, 3> exclusive_max = {static_cast<tensorstore::Index>(final_size), tensorstore::kImplicit, tensorstore::kImplicit};
+    
+    auto resize_result = tensorstore::Resize(
         store,
-        inclusive_min_span,
-        exclusive_max_span,
-        tensorstore::ResizeMode::resize_metadata_only | tensorstore::ResizeMode::shrink_only
+        inclusive_min,
+        exclusive_max,
+        tensorstore::shrink_only
     ).result();
     
-    
-    if (!resize_status.ok()) {
-        LOG4CXX_ERROR(logger, "Failed to shrink dataset");
+    if (!resize_result.ok()) {
+        LOG4CXX_ERROR(logger, "Failed to shrink dataset: " << resize_result.status());
         return false;
-    } else {
-        LOG4CXX_INFO(logger, "Dataset shrunk successfully");
-        return true;
     }
+    
+    store = *resize_result;
+    
+    uint64_t resize_end = rte_get_tsc_cycles();
+    uint64_t resize_time_us = ((resize_end - resize_start) * 1000000) / rte_get_tsc_hz();
+    LOG4CXX_INFO(logger, "Dataset shrunk successfully to " << final_size 
+        << " frames in " << resize_time_us << " us");
+    
+    return true;
 }
 
 } // namespace FrameProcessor

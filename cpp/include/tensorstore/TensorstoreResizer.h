@@ -3,6 +3,8 @@
 
 #include <tensorstore/tensorstore.h>
 #include <tensorstore/index.h>
+#include <tensorstore/index_space/dim_expression.h>
+#include <tensorstore/resize_options.h>
 #include <log4cxx/logger.h>
 #include <array>
 #include <cstdint>
