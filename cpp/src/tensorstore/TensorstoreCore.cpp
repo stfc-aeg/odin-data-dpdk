@@ -240,6 +240,17 @@ namespace FrameProcessor
                     perf_monitor_.FramesThisSecond()++;
                     processed_frames_++;
                 }
+                else if (!tensorstore_initialized_)
+                {
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Tensorstore not initialized. Forwarding frame " 
+                        << frame_number << " without writing.");
+                    forwardFrame(current_frame_buffer, frame_number);
+                    frames_forwarded_++;
+                    
+                    uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                    perf_monitor_.RecordFrameProcessing(cycles_spent);
+                    perf_monitor_.FramesThisSecond()++;
+                }
                 else if (tensorstore_initialized_ && store_.has_value() &&
                     pending_writes_queue_.size() < config_.max_concurrent_writes_)
                 {
@@ -341,6 +352,16 @@ namespace FrameProcessor
                         perf_monitor_.RecordFrameProcessing(cycles_spent);
                         perf_monitor_.FramesThisSecond()++;
                     }
+                }
+                else
+                {
+                    LOG4CXX_ERROR(logger_, "Unexpected state for frame " << frame_number << ". Forwarding.");
+                    forwardFrame(current_frame_buffer, frame_number);
+                    frames_forwarded_++;
+                    
+                    uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                    perf_monitor_.RecordFrameProcessing(cycles_spent);
+                    perf_monitor_.FramesThisSecond()++;
                 }
                 
             }
@@ -578,14 +599,45 @@ namespace FrameProcessor
     {
         int ret;
         
+        // Returns frame directly to clear_frames_ring_ if there are no downstream cores
+        if (config_.num_downstream_cores == 0 || downstream_rings_.empty()) {
+            if (clear_frames_ring_ != NULL) {
+                ret = rte_ring_enqueue(clear_frames_ring_, frame_buffer);
+                if (ret != 0) {
+                    LOG4CXX_ERROR(logger_, "Failed to return frame " << frame_number 
+                        << " to clear_frames_ring: " << rte_strerror(-ret));
+                } else {
+                    LOG4CXX_DEBUG_LEVEL(3, logger_, "Returned frame " << frame_number 
+                        << " to clear_frames_ring");
+                }
+            } else {
+                LOG4CXX_ERROR(logger_, "clear_frames_ring is NULL, cannot return frame " << frame_number);
+            }
+            return;
+        }
+        
         // Distribute frames across downstream cores for load balancing 
         ret = rte_ring_enqueue(
             downstream_rings_[frame_number % (config_.num_downstream_cores)], 
             frame_buffer
         );
         if (ret != 0) {
-            LOG4CXX_ERROR(logger_, "Error forwarding frame " << frame_number 
+            LOG4CXX_ERROR(logger_, "Failed to forward frame " << frame_number 
                 << " to downstream ring: " << rte_strerror(-ret));
+            
+            // Attempt to return frame to clear_frames_ring_ if forwarding fails
+            if (clear_frames_ring_ != NULL) {
+                int clear_ret = rte_ring_enqueue(clear_frames_ring_, frame_buffer);
+                if (clear_ret != 0) {
+                    LOG4CXX_ERROR(logger_, "Failed to return frame " << frame_number 
+                        << " to clear_frames_ring: " << rte_strerror(-clear_ret));
+                } else {
+                    LOG4CXX_DEBUG_LEVEL(2, logger_, "Returned frame " << frame_number 
+                        << " to clear_frames_ring");
+                }
+            } else {
+                LOG4CXX_ERROR(logger_, "Failed to return frame " << frame_number << ": clear_frames_ring is null");
+            }
         }
     }
 
