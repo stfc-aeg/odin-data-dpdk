@@ -23,7 +23,7 @@ public:
     // 1. Casts raw memory to the correct data type
     // 2. Creates a 2D view of the image data (zero-copy)
     // 3. Selects the target 2D slice in the store
-    // 4. Initiates the write operation
+    // 4. Starts the write operation
     // 5. Returns a Future that tracks the write completion
 
     template <typename T>
@@ -33,6 +33,26 @@ public:
         tensorstore::Index height,
         tensorstore::Index width,
         uint64_t frame_number,
+        log4cxx::LoggerPtr logger
+    );
+
+    // Asynchronously writes multiple frames (chunk) to tensorstore
+    //
+    // This template function handles asynchronous writing of multiple 2D frames within a "super frame":
+    // 1. Casts raw memory to the correct data type
+    // 2. Creates a 3D view of the image data (zero-copy) with shape [num_frames, height, width]
+    // 3. Selects the target 3D slice in the store
+    // 4. Starts the write operation
+    // 5. Returns a Future that tracks the write completion
+
+    template <typename T>
+    static tensorstore::WriteFutures AsyncWriteFrameChunk(
+        tensorstore::TensorStore<>& store,
+        void* raw_data,
+        tensorstore::Index num_frames,
+        tensorstore::Index height,
+        tensorstore::Index width,
+        uint64_t starting_frame_number,
         log4cxx::LoggerPtr logger
     );
 };
@@ -50,8 +70,7 @@ tensorstore::WriteFutures TensorstoreWriter::AsyncWriteFrame(
     // 1. Cast raw memory to the correct data type
     T* data_as_T = reinterpret_cast<T*>(raw_data);
 
-    // 2. Describe the 2D image's memory layout (shape and strides)
-    // Shape is [height, width] for row-major storage
+    // 2. Describe the 2D image's memory layout
     std::array<tensorstore::Index, 2> shape = {height, width};
     std::array<tensorstore::Index, 2> byte_strides = {
         width * static_cast<tensorstore::Index>(sizeof(T)),  //row
@@ -59,10 +78,10 @@ tensorstore::WriteFutures TensorstoreWriter::AsyncWriteFrame(
     };
     tensorstore::StridedLayout<2> layout(shape, byte_strides);
 
-    // 3. Create a "view" of the data (zero-copy)
+    // 3. Create a view of the data (zero-copy)
     tensorstore::ArrayView<T, 2> two_dim_view(data_as_T, layout);
 
-    // 4. Convert the view to a "shared" array for safe writing
+    // 4. Convert the view to a shared array for safe writing
     auto array2 = tensorstore::StaticRankCast<2>(tensorstore::UnownedToShared(two_dim_view));
 
     // 5. Select the target 2D slice
@@ -72,6 +91,48 @@ tensorstore::WriteFutures TensorstoreWriter::AsyncWriteFrame(
     // 6. Write the 2D image data to the target slice
     LOG4CXX_DEBUG_LEVEL(2, logger, "Calling write for frame " << frame_number);
     auto write_future = tensorstore::Write(array2, target);
+
+    // 7. Return the future immediately
+    return write_future;
+}
+
+template <typename T>
+tensorstore::WriteFutures TensorstoreWriter::AsyncWriteFrameChunk(
+    tensorstore::TensorStore<>& store,
+    void* raw_data,
+    tensorstore::Index num_frames,
+    tensorstore::Index height,
+    tensorstore::Index width,
+    uint64_t starting_frame_number,
+    log4cxx::LoggerPtr logger)
+{
+    // 1. Cast raw memory to the correct data type
+    T* data_as_T = reinterpret_cast<T*>(raw_data);
+
+    // 2. Describe the 3D chunk's memory layout
+    std::array<tensorstore::Index, 3> shape = {num_frames, height, width};
+    std::array<tensorstore::Index, 3> byte_strides = {
+        height * width * static_cast<tensorstore::Index>(sizeof(T)), // frame 
+        width * static_cast<tensorstore::Index>(sizeof(T)),   // row 
+        static_cast<tensorstore::Index>(sizeof(T))  // column 
+    };
+    tensorstore::StridedLayout<3> layout(shape, byte_strides);
+
+    // 3. Create a view of the data (zero-copy)
+    tensorstore::ArrayView<T, 3> three_dim_view(data_as_T, layout);
+
+    // 4. Convert the view to a shared array for safe writing
+    auto array3 = tensorstore::StaticRankCast<3>(tensorstore::UnownedToShared(three_dim_view));
+
+    // 5. Select the target 3D slice in the store 
+    tensorstore::Index start_idx = static_cast<tensorstore::Index>(starting_frame_number);
+    tensorstore::Index end_idx = start_idx + num_frames;
+    auto target = store | tensorstore::Dims(0).HalfOpenInterval(start_idx, end_idx);
+
+    // 6. Write the 3D chunk data to the target slice
+    LOG4CXX_DEBUG_LEVEL(2, logger, "Calling write for " << num_frames 
+        << " frames starting at frame " << starting_frame_number);
+    auto write_future = tensorstore::Write(array3, target);
 
     // 7. Return the future immediately
     return write_future;

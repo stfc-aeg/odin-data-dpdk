@@ -213,23 +213,6 @@ namespace FrameProcessor
                 LOG4CXX_DEBUG_LEVEL(2, logger_, "Dequeuing frame: " << frame_number);
                 last_frame_ = frame_number;
 
-                if (config_.enable_writing_ && config_.number_of_frames_ > 0 && frame_number >= config_.number_of_frames_)
-                {
-                    LOG4CXX_WARN(logger_, config_.core_name << " : " << proc_idx_ 
-                        << " Processed all frames from acquisition. (" << config_.number_of_frames_ 
-                        << "). Disabling writing. Frame " << frame_number 
-                        << " and subsequent frames will be forwarded only.");
-                    
-                    config_.enable_writing_ = false;
-                    
-                    if (tensorstore_initialized_) {
-                        LOG4CXX_INFO(logger_, "Flushing " << pending_writes_queue_.size() 
-                            << " pending writes...");
-                        
-                        flush_pending_writes = true;
-                    }
-                }
-
                 if (!config_.enable_writing_)
                 {
                     forwardFrame(current_frame_buffer, frame_number);
@@ -254,11 +237,21 @@ namespace FrameProcessor
                 else if (tensorstore_initialized_ && store_.has_value() &&
                     pending_writes_queue_.size() < config_.max_concurrent_writes_)
                 {
-                    if (config_.number_of_frames_ > 0 && frame_number >= config_.number_of_frames_)
+                    const uint64_t frames_in_super_frame = decoder_->get_frame_outer_chunk_size();
+                    const uint64_t starting_frame_index = frame_number * frames_in_super_frame;
+                    const uint64_t ending_frame_index = starting_frame_index + frames_in_super_frame - 1;
+                    
+                    if (config_.number_of_frames_ > 0 && starting_frame_index >= config_.number_of_frames_)
                     {
-                        LOG4CXX_WARN(logger_, "Frame " << frame_number 
-                            << " exceeds number_of_frames (" << config_.number_of_frames_ 
-                            << "). Forwarding without writing.");
+                        LOG4CXX_WARN(logger_, "Processed all frames from acquisition. (" << config_.number_of_frames_ 
+                            << "). Disabling writing. Subsequent frames will be forwarded.");
+                        
+                        config_.enable_writing_ = false;
+                        
+                        LOG4CXX_INFO(logger_, "Flushing " << pending_writes_queue_.size() 
+                            << " pending writes...");
+                        flush_pending_writes = true;
+                        
                         forwardFrame(current_frame_buffer, frame_number);
                         frames_forwarded_++;
                         
@@ -268,7 +261,8 @@ namespace FrameProcessor
                     }
                     else
                     {
-                        if (TensorstoreResizer::NeedsExpansion(frame_number, current_dataset_capacity_)) {
+                        
+                        if (TensorstoreResizer::NeedsExpansion(ending_frame_index, current_dataset_capacity_)) {
                             const tensorstore::Index height = decoder_->get_frame_y_resolution();
                             const tensorstore::Index width = decoder_->get_frame_x_resolution();
                             
@@ -282,47 +276,86 @@ namespace FrameProcessor
                             );
                         }
 
-                        if (frame_number > highest_frame_written_) {
-                            highest_frame_written_ = frame_number;
+                        if (ending_frame_index > highest_frame_written_) {
+                            highest_frame_written_ = ending_frame_index;
                         }
 
-                        void* frame_ptr = static_cast<void*>(current_frame_buffer);
+                        void* frame_ptr = static_cast<void*>(decoder_->get_image_data_start(current_frame_buffer));
                         const tensorstore::Index height = decoder_->get_frame_y_resolution();
                         const tensorstore::Index width = decoder_->get_frame_x_resolution();
 
                         tensorstore::WriteFutures write_future;
                         bool valid_pixel_type = true;
 
-                        switch(pixel_type_) {
-                            case PixelDataType::UINT8:
-                                write_future = TensorstoreWriter::AsyncWriteFrame<uint8_t>(
-                                    *store_, frame_ptr, height, width,
-                                    frame_number, logger_
-                                );
-                                break;
-                            case PixelDataType::UINT16:
-                                write_future = TensorstoreWriter::AsyncWriteFrame<uint16_t>(
-                                    *store_, frame_ptr, height, width,
-                                    frame_number, logger_
-                                );
-                                break;
-                            case PixelDataType::UINT32:
-                                write_future = TensorstoreWriter::AsyncWriteFrame<uint32_t>(
-                                    *store_, frame_ptr, height, width,
-                                    frame_number, logger_
-                                );
-                                break;
-                            case PixelDataType::UINT64:
-                                write_future = TensorstoreWriter::AsyncWriteFrame<uint64_t>(
-                                    *store_, frame_ptr, height, width,
-                                    frame_number, logger_
-                                );
-                                break;
-                            default:
-                                LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write for frame " 
-                                    << frame_number << ". Forwarding without writing.");
-                                valid_pixel_type = false;
-                                break;
+                        if (frames_in_super_frame > 1) {
+                            LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing chunk: super_frame=" << frame_number 
+                                << " frames=" << frames_in_super_frame 
+                                << " starting_index=" << starting_frame_index);
+                            
+                            switch(pixel_type_) {
+                                case PixelDataType::UINT8:
+                                    write_future = TensorstoreWriter::AsyncWriteFrameChunk<uint8_t>(
+                                        *store_, frame_ptr, frames_in_super_frame, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT16:
+                                    write_future = TensorstoreWriter::AsyncWriteFrameChunk<uint16_t>(
+                                        *store_, frame_ptr, frames_in_super_frame, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT32:
+                                    write_future = TensorstoreWriter::AsyncWriteFrameChunk<uint32_t>(
+                                        *store_, frame_ptr, frames_in_super_frame, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT64:
+                                    write_future = TensorstoreWriter::AsyncWriteFrameChunk<uint64_t>(
+                                        *store_, frame_ptr, frames_in_super_frame, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                default:
+                                    LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write for frames " 
+                                        << starting_frame_index << "-" << ending_frame_index 
+                                        << ". Forwarding without writing.");
+                                    valid_pixel_type = false;
+                                    break;
+                            }
+                        } else {
+                            switch(pixel_type_) {
+                                case PixelDataType::UINT8:
+                                    write_future = TensorstoreWriter::AsyncWriteFrame<uint8_t>(
+                                        *store_, frame_ptr, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT16:
+                                    write_future = TensorstoreWriter::AsyncWriteFrame<uint16_t>(
+                                        *store_, frame_ptr, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT32:
+                                    write_future = TensorstoreWriter::AsyncWriteFrame<uint32_t>(
+                                        *store_, frame_ptr, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                case PixelDataType::UINT64:
+                                    write_future = TensorstoreWriter::AsyncWriteFrame<uint64_t>(
+                                        *store_, frame_ptr, height, width,
+                                        starting_frame_index, logger_
+                                    );
+                                    break;
+                                default:
+                                    LOG4CXX_ERROR(logger_, "Unexpected pixel type in async write for frame " 
+                                        << starting_frame_index << ". Forwarding without writing.");
+                                    valid_pixel_type = false;
+                                    break;
+                            }
                         }
                         
                         // Forwards frame without writing if there is a pixel type error
@@ -341,12 +374,13 @@ namespace FrameProcessor
                         }
 
                         PendingWrite pw{
-                            .frame_number = frame_number,
+                            .frame_number = starting_frame_index,
                             .frame_buffers = {current_frame_buffer},
                             .write_future = std::move(write_future),
-                            .start_cycles = start_frame_cycles
+                            .start_cycles = start_frame_cycles,
+                            .num_frames = frames_in_super_frame
                         };
-                        pending_writes_queue_.insert({frame_number, std::move(pw)});
+                        pending_writes_queue_.insert({starting_frame_index, std::move(pw)});
 
                         uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
                         perf_monitor_.RecordFrameProcessing(cycles_spent);
@@ -389,7 +423,7 @@ namespace FrameProcessor
                         << " to " << config_.storage_driver_ << ": " << result.status());
                     csv_logger_.LogWrite(
                         pending.frame_number,
-                        pending.frame_buffers.size(),
+                        pending.num_frames,
                         write_time_us,
                         false,
                         frames_written_,
@@ -400,17 +434,17 @@ namespace FrameProcessor
                         rte_get_tsc_hz()
                     );
                 } else {
-                    frames_written_ += pending.frame_buffers.size();
+                    frames_written_ += pending.num_frames;
                     ++completed_writes_;
                     // Running average is calculated incrementally to avoid overflow
                     uint64_t total_write_time_us = avg_write_time_us_ * (completed_writes_ - 1);
                     avg_write_time_us_ = (total_write_time_us + write_time_us) / completed_writes_;
-                    LOG4CXX_DEBUG_LEVEL (2, logger_, "Successfully wrote " << pending.frame_buffers.size()
+                    LOG4CXX_DEBUG_LEVEL (2, logger_, "Successfully wrote " << pending.num_frames
                         << " frames starting at " << pending.frame_number
                         << " to " << config_.storage_driver_ << " in " << write_time_us << " us");
                     csv_logger_.LogWrite(
                         pending.frame_number,
-                        pending.frame_buffers.size(),
+                        pending.num_frames,
                         write_time_us,
                         true,
                         frames_written_,

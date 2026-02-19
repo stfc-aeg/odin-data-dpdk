@@ -75,6 +75,7 @@ namespace FrameProcessor
             std::vector<::SuperFrameHeader*> frame_buffers; // Frame buffer pointers
             tensorstore::WriteFutures write_future;      // TensorStore write future
             uint64_t start_cycles;                       // TSC timestamp when write started
+            uint64_t num_frames;                         // Number of frames in the write
         };
 
         // Checks for and processes completed write operations
