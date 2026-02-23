@@ -72,7 +72,7 @@ On Ubuntu 22.04.5, only CMake needs to be loaded (Python 3.10+ and GCC 10+ are a
 module load cmake/3-31-6
 ```
 
-On older Ubuntu versions, you may also need to load Python and GCC:
+On older Ubuntu versions, you may also need to load Python and GCC :
 
 ```bash
 module load python/3-11-7
@@ -80,6 +80,7 @@ module load cmake/3-31-6
 export CC=/usr/bin/gcc-10
 export CXX=/usr/bin/g++-10
 ```
+To check what version of these you have available use `module avail`
 
 ## Usage
 
@@ -87,14 +88,15 @@ Run the frame processor with DPDK plugin:
 
 ```bash
 cd ~/develop/install
-./bin/frameProcessor \
-    --ctrl tcp://0.0.0.0:5000 \
-    --log-config config/fp_log4cxx.xml \
+module load dpdk/23.11.5
+./bin/frameProcessor 
+    --ctrl tcp://0.0.0.0:5000 
+    --log-config config/fp_log4cxx.xml 
     --config config/<config_file_name>.json
 ```
 
 ## Available Plugins
-Detector sepcific plugins can built on top of this folder structure to allow odin-data-dpdk to load them at runtime. See available plugins below:
+Detector specific plugins can built on top of this folder structure to allow odin-data-dpdk to load them at runtime. See available plugins below:
 
 ### Packet-Based Plugins
 - [mercury-detector](https://github.com/stfc-aeg/mercury-detector/tree/dpdk-plugin)
