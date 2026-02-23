@@ -104,7 +104,6 @@
                     "s3_bucket": "tensorstore",
                     "s3_endpoint": "http://10.0.100.6:9000",
                     "max_concurrent_writes": 64,
-                    "frames_per_chunk": 1,
                     "path": "/data0/tensorstore/",
                     "cache_bytes_limit": 10737418240,
                     "csv_logging": true,
