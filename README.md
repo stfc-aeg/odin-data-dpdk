@@ -66,19 +66,20 @@ make -j install
 
 ### Environment Setup
 
-On Ubuntu 22.04.5, only CMake needs to be loaded (Python 3.10+ and GCC 10+ are available by default):
+On our current systems running Ubuntu 22.04.5, only CMake needs to be loaded (Python 3.10+ and GCC 10+ are available by default):
 
 ```bash
 module load cmake/3-31-6
 ```
 
-On older Ubuntu versions, you may also need to load Python and GCC :
+On older Ubuntu versions or systems configured differently, you may also need to load Python and GCC e.g.
 
 ```bash
 module load python/3-11-7
 module load cmake/3-31-6
 export CC=/usr/bin/gcc-10
 export CXX=/usr/bin/g++-10
+# or whatever versions you have avalible that meet the minimum requirements
 ```
 To check what version of these you have available use `module avail`
 
@@ -89,10 +90,7 @@ Run the frame processor with DPDK plugin:
 ```bash
 cd ~/develop/install
 module load dpdk/23.11.5
-./bin/frameProcessor 
-    --ctrl tcp://0.0.0.0:5000 
-    --log-config config/fp_log4cxx.xml 
-    --config config/<config_file_name>.json
+./bin/frameProcessor --ctrl tcp://0.0.0.0:5000 --log-config config/fp_log4cxx.xml --config config/<config_file_name>.json
 ```
 
 ## Available Plugins
@@ -112,6 +110,65 @@ Tensorstore support can be enabled at build time:
 
 ```bash
 cmake -DCMAKE_INSTALL_PREFIX=/develop/install -DODINDATA_ROOT_DIR=/develop/install -DENABLE_TENSORSTORE=ON -DCMAKE_MODULE_PATH=/develop/odin-data/cpp/cmake ..
+```
+
+## Python Tools
+
+The `tools/python/` directory contains several utilities for interacting with and analyzing odin-data-dpdk:
+
+### GUI and Control Tools
+
+#### odin-gui.py
+A GUI for controlling and monitoring odin-data-dpdk frame processors via ZMQ
+```bash
+python tools/python/odin-gui.py
+```
+
+#### liveviewer.py
+Real-time frame visualization tool that connects to the frame processor's ZMQ stream
+
+```bash
+python tools/python/liveviewer.py --endpoint tcp://localhost:5555
+```
+
+### Data Analysis Tools
+
+#### plot_tensorstore_performance.py
+Analyzes and visualizes Tensorstore write performance from CSV logs using Matplotlib
+
+```bash
+python tools/python/plot_tensorstore_performance.py
+# Opens file dialog to select CSV performance logs
+```
+
+#### TensorstoreViewer.py
+Interactive viewer for Tensorstore datasets (Zarr2/Zarr3)
+
+```bash
+# View a Zarr dataset
+python tools/python/TensorstoreViewer.py /path/to/dataset
+
+# View Zarr3 dataset
+python tools/python/TensorstoreViewer.py /path/to/dataset --spec zarr3
+```
+
+### Development Tools
+
+#### frame_producer
+UDP frame producer for testing and simulation. Useful for testing frame reception without a physical detector.
+
+#### bifrost
+Python library for zero-copy frame processing from odin-data-dpdk
+
+See [bifrost/README.md](tools/python/bifrost/README.md) for detailed usage.
+
+### Installation
+
+Install Python tool dependencies (preferably in a virtual environment):
+
+```bash
+cd tools/python
+pip install -r requirements.txt
 ```
 
 ## Documentation
