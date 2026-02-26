@@ -74,6 +74,16 @@ namespace FrameProcessor
     {
         LOG4CXX_DEBUG_LEVEL(2, logger_, "FrameBuilderCore destructor");
         stop();
+
+        // Free downstream rings
+        for (auto& ring : downstream_rings_)
+        {
+            if (ring)
+            {
+                rte_ring_free(ring);
+            }
+        }
+        downstream_rings_.clear();
     }
 
     bool FrameBuilderCore::run(unsigned int lcore_id)
@@ -193,8 +203,8 @@ namespace FrameProcessor
                         //        "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                     }
 
-                    LOG4CXX_INFO(logger_,
-                                "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
+                //     LOG4CXX_INFO(logger_,
+                //                 "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                 }
 
                 // Use the decoder to build that frame into another HP location

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <sstream>
+#include <cstring>
 #include "network/PacketRxCore.h"
 #include "DpdkUtils.h"
 #include "dpdk_version_compatibiliy.h"
@@ -80,10 +81,10 @@ namespace FrameProcessor
         {
             ring_name = ring_name_str(config_.core_name, socket_id_, core_idx);
             LOG4CXX_INFO(logger_, "Creating packet forward ring name "
-                << ring_name << " of size " << ring_size
+                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
             );
             struct rte_ring *fwd_ring = rte_ring_create(
-                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ
+                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ  
             );
             if (fwd_ring == NULL)
             {
@@ -99,7 +100,7 @@ namespace FrameProcessor
         ring_name = ring_name_pkt_release(socket_id_);
         ring_size = nearest_power_two(config_.release_ring_size_);
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
-            << ring_name << " of size " << ring_size
+            << ring_name << " of size " << ring_size << " numa node: " << socket_id_
         );
         packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
         if (packet_release_ring_ == NULL)
@@ -146,7 +147,7 @@ namespace FrameProcessor
         rte_ring_free(packet_release_ring_);
 
         if (device_) {
-            delete device_;
+            remove_device();
         }
 
     }
@@ -169,9 +170,6 @@ namespace FrameProcessor
         struct rte_icmp_hdr *pkt_icmp_hdr;
         struct rte_udp_hdr *pkt_udp_hdr;
 
-        uint64_t first = rte_get_tsc_cycles();
-        uint64_t ticks_per_sec = rte_get_tsc_hz();
-
         uint16_t num_replies = 0;
 
         bool pkt_tx_reply = false;
@@ -185,7 +183,6 @@ namespace FrameProcessor
 
         while (likely(run_lcore_))
         {
-
             uint16_t num_rx_pkts = rte_eth_rx_burst(
                 port_id_, config_.rx_queue_id_, pkt_bufs, config_.rx_burst_size_
             );
@@ -402,7 +399,7 @@ namespace FrameProcessor
     {
         bool tx_reply = false;
 
-        if (((*pkt_icmp_hdr)->icmp_type == RTE_IP_ICMP_ECHO_REQUEST) &&
+        if (((*pkt_icmp_hdr)->icmp_type == RTE_ICMP_TYPE_ECHO_REQUEST) &&
             ((*pkt_icmp_hdr)->icmp_code == 0))
         {
 
@@ -422,11 +419,11 @@ namespace FrameProcessor
             (*pkt_ipv4_hdr)->src_addr = (*pkt_ipv4_hdr)->dst_addr;
             (*pkt_ipv4_hdr)->dst_addr = tmp_ip_addr;
 
-            (*pkt_icmp_hdr)->icmp_type = RTE_IP_ICMP_ECHO_REPLY;
+            (*pkt_icmp_hdr)->icmp_type = RTE_ICMP_TYPE_ECHO_REPLY;
 
             uint32_t cksum = ~(*pkt_icmp_hdr)->icmp_cksum & 0xFFFF;
-            cksum += ~htons(RTE_IP_ICMP_ECHO_REQUEST << 8) & 0xFFFF;
-            cksum += htons(RTE_IP_ICMP_ECHO_REPLY << 8);
+            cksum += ~htons(RTE_ICMP_TYPE_ECHO_REQUEST << 8) & 0xFFFF;
+            cksum += htons(RTE_ICMP_TYPE_ECHO_REPLY << 8);
             cksum = (cksum & 0xffff) + (cksum >> 16);
             cksum = (cksum & 0xffff) + (cksum >> 16);
             (*pkt_icmp_hdr)->icmp_cksum = ~cksum;
@@ -492,16 +489,17 @@ namespace FrameProcessor
             // to create a variable to offset the frame number by, allow for frames to be
             // distributed as it the first frame has a frame number of 0
 
+            uint64_t packet_number = decoder_->get_packet_number(pkt_header);
+            uint64_t frame_number = decoder_->get_frame_number(pkt_header);
+
             if(unlikely(first_frame_number_ == -1))
             {
-                uint64_t packet_number = decoder_->get_packet_number(pkt_header);
-                uint64_t frame_number = decoder_->get_frame_number(pkt_header);
 
                 // Check if this is the first packet of a frame or the first seen packet of a new frame
 
                 if (packet_number == 0 || frame_number > first_seen_frame_number_)
                 {
-                    first_frame_number_ = decoder_->get_frame_number(pkt_header);
+                    first_frame_number_ = frame_number;
                     // LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
                 }
                 else
@@ -513,7 +511,7 @@ namespace FrameProcessor
                 }
             }
 
-            uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
+            uint64_t current_frame_number = frame_number - first_frame_number_;
 
             // Check to see if the packet recieved is within the current aquisition
             // if not then return this function and discard the packet
@@ -579,7 +577,7 @@ namespace FrameProcessor
             return false;
         }
 
-        device_ = new DpdkDevice(port_id_);
+        device_ = new DpdkDevice(port_id_, config_.dpdk_device());
         if (!device_->start()) {
             LOG4CXX_ERROR(logger_, "Failed to start device: " << pci_address);
             delete device_;
@@ -620,9 +618,9 @@ namespace FrameProcessor
     {
         LOG4CXX_DEBUG(logger_, "Status requested for packetrxcore_" << port_id_
             << " from the DPDK plugin");
-        
+
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
-        
+
         // Original status parameters
         status.set_param(status_path + "total_packets", total_packets_);
         status.set_param(status_path + "dropped_packets", dropped_packets_);
@@ -631,40 +629,76 @@ namespace FrameProcessor
         status.set_param(status_path + "rx_frames", rx_frames_);
         status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
         status.set_param(status_path + "first_frame_number", first_frame_number_);
-        
+
+        // RX Queue packet count
+        if (device_configured_ && port_id_ != UINT16_MAX) {
+            int rx_queue_count = rte_eth_rx_queue_count(port_id_, config_.rx_queue_id_);
+            if (rx_queue_count >= 0) {
+                status.set_param(status_path + "rx_queue_packet_count", (uint64_t)rx_queue_count);
+            }
+        }
+
+        // Port Extended Statistics (xstats)
+        if (device_configured_ && port_id_ != UINT16_MAX) {
+            int len = rte_eth_xstats_get(port_id_, NULL, 0);
+            if (len > 0) {
+                struct rte_eth_xstat *xstats = (struct rte_eth_xstat *)calloc(len, sizeof(*xstats));
+                struct rte_eth_xstat_name *xstats_names = (struct rte_eth_xstat_name *)calloc(len, sizeof(*xstats_names));
+
+                if (xstats && xstats_names) {
+                    int ret = rte_eth_xstats_get(port_id_, xstats, len);
+                    if (ret >= 0 && ret <= len) {
+                        ret = rte_eth_xstats_get_names(port_id_, xstats_names, len);
+                        if (ret >= 0 && ret <= len) {
+                            std::string xstats_path = status_path + "port_xstats/";
+                            for (int i = 0; i < len; i++) {
+                                if (xstats[i].value > 0) {
+                                    std::string stat_name(xstats_names[i].name);
+                                    status.set_param(xstats_path + stat_name, xstats[i].value);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (xstats) free(xstats);
+                if (xstats_names) free(xstats_names);
+            }
+        }
+
         // Memory pool monitoring - requires DpdkDevice::get_mbuf_pool() method
         // TODO: Add getter method to DpdkDevice class: struct rte_mempool* get_mbuf_pool() const { return mbuf_pool_; }
         if (device_) {
             // Try to lookup mbuf pool by name (if mbuf_pool_name_str function is available)
             std::string mbuf_pool_name = mbuf_pool_name_str(socket_id_);
-            struct rte_mempool* mbuf_pool = rte_mempool_lookup("mbuf_pool_4294967295");
-            
+            struct rte_mempool* mbuf_pool = rte_mempool_lookup(mbuf_pool_name.c_str());
+
             if (mbuf_pool) {
                 uint32_t mbuf_avail = rte_mempool_avail_count(mbuf_pool);
                 uint32_t mbuf_in_use = rte_mempool_in_use_count(mbuf_pool);
                 uint32_t mbuf_total = mbuf_avail + mbuf_in_use;
-                
+
                 status.set_param(status_path + "mbuf_pool_available", mbuf_avail);
                 status.set_param(status_path + "mbuf_pool_in_use", mbuf_in_use);
                 status.set_param(status_path + "mbuf_pool_total", mbuf_total);
-                status.set_param(status_path + "mbuf_pool_utilization_pct", 
+                status.set_param(status_path + "mbuf_pool_utilization_pct",
                                 mbuf_total > 0 ? (mbuf_in_use * 100) / mbuf_total : 0);
             }
         }
-        
+
         // Release ring monitoring
         if (packet_release_ring_) {
             uint64_t release_ring_count = (uint64_t)rte_ring_count(packet_release_ring_);
             uint64_t release_ring_free = (uint64_t)rte_ring_free_count(packet_release_ring_);
             uint64_t release_ring_size = (uint64_t)rte_ring_get_size(packet_release_ring_);
-            
+
             status.set_param(status_path + "release_ring_count", release_ring_count);
             status.set_param(status_path + "release_ring_free", release_ring_free);
             status.set_param(status_path + "release_ring_size", release_ring_size);
             uint64_t release_utilization_pct = release_ring_size > 0 ? (release_ring_count * 100) / release_ring_size : 0;
             status.set_param(status_path + "release_ring_utilization_pct", release_utilization_pct);
         }
-        
+
         // Forward rings monitoring
         for (size_t i = 0; i < packet_forward_rings_.size(); ++i) {
             if (packet_forward_rings_[i]) {
@@ -672,7 +706,7 @@ namespace FrameProcessor
                 uint64_t fwd_ring_count = (uint64_t)rte_ring_count(packet_forward_rings_[i]);
                 uint64_t fwd_ring_free = (uint64_t)rte_ring_free_count(packet_forward_rings_[i]);
                 uint64_t fwd_ring_size = (uint64_t)rte_ring_get_size(packet_forward_rings_[i]);
-                
+
                 status.set_param(fwd_ring_path + "count", fwd_ring_count);
                 status.set_param(fwd_ring_path + "free", fwd_ring_free);
                 status.set_param(fwd_ring_path + "size", fwd_ring_size);
@@ -680,7 +714,7 @@ namespace FrameProcessor
                 status.set_param(fwd_ring_path + "utilization_pct", fwd_utilization_pct);
             }
         }
-        
+
         // Additional performance metrics
         status.set_param(status_path + "num_downstream_cores", (uint64_t)config_.num_downstream_cores);
         status.set_param(status_path + "rx_burst_size", (uint64_t)config_.rx_burst_size_);

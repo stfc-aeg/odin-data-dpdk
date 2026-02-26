@@ -13,6 +13,7 @@ using namespace log4cxx::helpers;
 #include <rte_errno.h>
 #include <rte_ethdev.h>
 
+#include "network/DpdkDeviceConfiguration.h"
 
 namespace FrameProcessor
 {
@@ -20,7 +21,7 @@ namespace FrameProcessor
     {
     public:
 
-        DpdkDevice(uint16_t port_id);
+        DpdkDevice(uint16_t port_id, const DpdkDeviceConfiguration& config);
         ~DpdkDevice();
 
         bool start(void);

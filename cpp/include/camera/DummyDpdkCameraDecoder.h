@@ -5,11 +5,12 @@
 #include <rte_byteorder.h>
 #include <rte_memcpy.h>
 #include "DpdkWorkerCore.h"
+#include "dpdk_version_compatibiliy.h"
 
 #define FRAME_OUTER_CHUNK_SIZE 1
 #define PACKETS_PER_FRAME 1
 
-struct DummyDpdkCameraFrameHeader : RawFrameHeader
+struct __rte_packed_begin DummyDpdkCameraFrameHeader : RawFrameHeader
 {
     uint64_t frame_number;
     uint32_t packets_received;
@@ -20,7 +21,7 @@ struct DummyDpdkCameraFrameHeader : RawFrameHeader
     uint32_t frame_time_delta;
     uint64_t image_size;
     uint8_t packet_state[PACKETS_PER_FRAME];  // Flexible array member
-} __rte_packed;
+} __rte_packed_end;
 
 namespace Defaults
 {

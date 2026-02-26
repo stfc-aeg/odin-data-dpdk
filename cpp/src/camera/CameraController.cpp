@@ -80,7 +80,8 @@ void CameraController::configure(OdinData::IpcMessage& config_msg, OdinData::Ipc
     {
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Configure request has camera configuration");
         OdinData::ParamContainer::Document config_doc;
-        config_msg.encode_params(config_doc, CAMERA_CONFIG_PATH);
+        config_doc.SetObject();
+        config_msg.copy_params(config_doc, CAMERA_CONFIG_PATH);
 
         if (!camera_->configure(config_doc))
         {

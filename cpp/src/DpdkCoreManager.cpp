@@ -20,6 +20,7 @@
 #include <rte_lcore.h>
 #include <rte_debug.h>
 #include <rte_errno.h>
+#include <rte_ethdev.h>
 
 #include "DpdkUtils.h"
 #include "DpdkCoreLoader.h"
@@ -61,16 +62,19 @@ namespace FrameProcessor
         std::vector<char *> eal_argv;
         int eal_argc = build_dpdk_eal_args(config, eal_argv);
 
-        // Initialise the DPDK EAL. This will pin the current thread of execution to the master
-        // lcore
+        // Attempt to initialize the DPDK EAL - this may fail if already initialized
         int rc = rte_eal_init(eal_argc, eal_argv.data());
-        if (rc < 0)
+        if (rc < 0 && rte_errno != EALREADY)
         {
             std::stringstream ss;
             ss << "Failed to initialise DPDK EAL: " << rte_strerror(rte_errno);
-            // this->set_error(ss.str());
             reply.set_msg_type(OdinData::IpcMessage::MsgTypeNack);
             reply.set_param("error", ss.str());
+            throw std::runtime_error(ss.str());
+        }
+        else if (rc < 0 && rte_errno == EALREADY)
+        {
+            LOG4CXX_INFO(logger_, "DPDK EAL already initialized, continuing...");
         }
 
         // Restore syslog and stderr to their original state
@@ -81,17 +85,30 @@ namespace FrameProcessor
         // Bind the custom IO stream to the DPDK logger
         rte_openlog_stream(fopencookie(nullptr, "w", dpdk_log_funcs));
 
-       // Construct array of worker lcores by NUMA socket available to DPDK
+       // Initialize array to store worker lcores grouped by their NUMA socket
+        LOG4CXX_INFO(logger_, "Detected " << rte_socket_count() << " NUMA sockets");
         for (int i = 0 ; i < rte_socket_count(); i++)
         {
             std::vector<int> vc;
             available_core_ids_.push_back(vc);
         }
+        // Iterate through all worker lcores and map them to their sockets
         int lcore_id;
+        LOG4CXX_INFO(logger_, "Mapping available DPDK worker lcores to sockets:");
         RTE_LCORE_FOREACH_WORKER(lcore_id)
         {
             unsigned int lcore_socket = rte_lcore_to_socket_id(lcore_id);
+            LOG4CXX_INFO(logger_, "  DPDK lcore " << lcore_id << " -> socket " << lcore_socket);
             available_core_ids_[lcore_socket].push_back(lcore_id);
+        }
+        // Log the final mapping
+        for (size_t i = 0; i < available_core_ids_.size(); i++) {
+            std::stringstream ss;
+            ss << "Socket " << i << " has cores: ";
+            for (auto core : available_core_ids_[i]) {
+                ss << core << " ";
+            }
+            LOG4CXX_INFO(logger_, ss.str());
         }
 
 
@@ -265,7 +282,7 @@ namespace FrameProcessor
         DpdkSharedBuffer* shared_buffer =
             new DpdkSharedBuffer(
                 core_config_.shared_buffer_size_, decoder->get_frame_buffer_size(),
-                0
+                core_config_.socket_
             );
 
         shared_buffers_.push_back(shared_buffer);
@@ -308,7 +325,7 @@ namespace FrameProcessor
                         boost::shared_ptr<DpdkWorkerCore> core = FrameProcessor::DpdkCoreLoader<DpdkWorkerCore>::load_class(
                             worker_class_name.c_str(),
                             i + process_offset,
-                            0,
+                            core_config_.socket_, //Socket id
                             dpdkWorkCoreReferences
                         );
 
@@ -326,8 +343,11 @@ namespace FrameProcessor
     {
         LOG4CXX_INFO(logger_, "Cleaning up DPDK core manager");
 
-        // Stop all running worker cores
+        // Stop all running worker cores first
         stop();
+
+        // Wait a moment for cores to fully stop
+        rte_delay_us_block(1000);
 
         // Delete shared buffers
         for (auto& shared_buffer: shared_buffers_)
@@ -335,8 +355,20 @@ namespace FrameProcessor
             delete shared_buffer;
         }
 
+        // Close and cleanup all DPDK devices/ports
+        uint16_t port_id;
+        for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++) {
+            if (rte_eth_dev_is_valid_port(port_id)) {
+                // Stop the device first
+                rte_eth_dev_stop(port_id);
+                // Then close it
+                rte_eth_dev_close(port_id);
+            }
+        }
+
+        LOG4CXX_INFO(logger_, "Clean up the DPDK runtime environment");
         // Clean up the DPDK runtime environment
-        rte_eal_cleanup();
+        //rte_eal_cleanup();
     }
 
     void DpdkCoreManager::register_worker_core(boost::shared_ptr<DpdkWorkerCore> worker_core)
@@ -386,15 +418,18 @@ namespace FrameProcessor
                 end_socket = core_socket;
             }
 
+            // Search through requested socket range for first available unused core
             int next_lcore_id = RTE_MAX_LCORE;
             for (int socket = start_socket; socket <= end_socket; socket++)
             {
+                // Look through available cores on this socket
                 for (auto& avail_id: available_core_ids_[socket])
                 {
+                    // Check if this core ID hasn't been used yet
                     if (std::find(used_core_ids_.begin(), used_core_ids_.end(), avail_id) ==
                         std::end(used_core_ids_))
                     {
-                        next_lcore_id = avail_id;
+                        next_lcore_id = avail_id; // Found an unused core
                         break;
                     }
                 }
@@ -440,33 +475,52 @@ namespace FrameProcessor
             LOG4CXX_WARN(logger_, "No running worker cores to stop");
         }
 
-        // Stop all the running cores and clear the list of them
+        // First stop all cores and wait for them to complete
         for (boost::shared_ptr<DpdkWorkerCore>& core: running_cores_)
         {
-            uint32_t core_id = core->lcore_id();
-            LOG4CXX_DEBUG(logger_, "Stopping worker on lcore " << core_id);
-            core->stop();
-            rte_eal_wait_lcore(core_id);
+            if (core) {
+                uint32_t core_id = core->lcore_id();
+                LOG4CXX_DEBUG(logger_, "Stopping worker on lcore " << core_id);
+                core->stop();
+                rte_eal_wait_lcore(core_id);
+                used_core_ids_.erase(
+                    std::remove(used_core_ids_.begin(), used_core_ids_.end(), core_id),
+                    used_core_ids_.end()
+                );
+            }
+        }
 
-            used_core_ids_.erase(
-                std::remove(used_core_ids_.begin(), used_core_ids_.end(), core_id)
-            );
-            core.reset();
+        // Wait a moment for any pending operations to complete
+        rte_delay_us_block(1000);
+
+        // Then clean up the cores
+        for (boost::shared_ptr<DpdkWorkerCore>& core: running_cores_)
+        {
+            if (core) {
+                try {
+                    core.reset();
+                } catch (const std::exception& e) {
+                    LOG4CXX_ERROR(logger_, "Error resetting core: " << e.what());
+                }
+            }
         }
 
         // The list of used core IDs should be empty now that all running cores have been stopped
         if (!used_core_ids_.empty())
         {
-            LOG4CXX_WARN(logger_, "Stopped all running cores but used core ID list still contains"
+            LOG4CXX_WARN(logger_, "Stopped all running cores but used core ID list still contains "
                 << used_core_ids_.size() << " cores"
             );
+            used_core_ids_.clear();
         }
 
         // Clear the list of running cores
         running_cores_.clear();
         std::vector<boost::shared_ptr<DpdkWorkerCore>>(running_cores_).swap(running_cores_);
 
-
+        // Clear registered cores list as well
+        registered_cores_.clear();
+        std::vector<boost::shared_ptr<DpdkWorkerCore>>(registered_cores_).swap(registered_cores_);
     }
 
     ssize_t DpdkCoreManager::dpdk_log_writer(void *, const char *data, size_t len)

@@ -20,3 +20,4 @@ cmake-build*/
 
 docs/build/
 cpp/build*/
+tools/python/bifrost/src/odin_data_dpdk/lib/libdpdk_wrapper.so

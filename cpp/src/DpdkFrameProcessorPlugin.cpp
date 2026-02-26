@@ -93,9 +93,12 @@ namespace FrameProcessor
     }
     else
     {
-      core_manager_.reset(
-        new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback)
-      );
+      if (core_manager_)
+      {
+        core_manager_->stop();
+        core_manager_.reset();
+      }
+      core_manager_.reset(new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback));
       core_manager_->start();
     }
 
