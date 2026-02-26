@@ -1,8 +1,8 @@
 # Project name
 project(OdinDataDpdk)
 
-# Require CMake version >=3.0
-cmake_minimum_required(VERSION 3.0)
+# Require CMake version >=3.24 (required for TensorStore)
+cmake_minimum_required(VERSION 3.24)
 
 # Set output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -46,7 +46,58 @@ IF("${isSystemDir}" STREQUAL "-1")
    SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 ENDIF("${isSystemDir}" STREQUAL "-1")
 
+# Option to enable TensorStore support
+option(ENABLE_TENSORSTORE "Enable TensorStore support" OFF)
 
+if(ENABLE_TENSORSTORE)
+  message(STATUS "TensorStore support enabled")
+  
+  # Check CMake version (TensorStore requires CMake >= 3.24)
+  if(CMAKE_VERSION VERSION_LESS "3.24")
+    message(FATAL_ERROR "TensorStore requires CMake >= 3.24, found ${CMAKE_VERSION}")
+  endif()
+  message(STATUS "CMake version ${CMAKE_VERSION} is compatible with TensorStore")
+  
+  # Check Python version (TensorStore requires Python >= 3.10)
+  find_package(Python3 3.10 COMPONENTS Interpreter Development)
+  if(NOT Python3_FOUND)
+    message(FATAL_ERROR "TensorStore requires Python >= 3.10")
+  endif()
+  message(STATUS "Python version ${Python3_VERSION} is compatible with TensorStore")
+  
+  # Check GCC version (TensorStore requires GCC >= 10)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "10.0")
+      message(FATAL_ERROR "TensorStore requires GCC >= 10.0, found ${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+    message(STATUS "GCC version ${CMAKE_CXX_COMPILER_VERSION} is compatible with TensorStore")
+  endif()
+  
+  # Check C++17 support (TensorStore minimum requirement)
+  if(NOT CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 17)
+  elseif(CMAKE_CXX_STANDARD LESS 17)
+    message(FATAL_ERROR "TensorStore requires C++17 or higher")
+  endif()
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  message(STATUS "Using C++ standard: ${CMAKE_CXX_STANDARD}")
+  
+  # Fetch TensorStore library
+  include(FetchContent)
+  
+  FetchContent_Declare(
+    tensorstore
+    URL https://github.com/google/tensorstore/archive/refs/tags/v0.1.63.tar.gz
+  )
+  
+  FetchContent_MakeAvailable(tensorstore)
+  
+  # Set definition for conditional compilation
+  add_definitions(-DENABLE_TENSORSTORE)
+  
+else()
+  message(STATUS "TensorStore support disabled")
+endif()
 
 # Find and add external packages required for library
 find_package( Boost 1.41.0
