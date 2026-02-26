@@ -1054,6 +1054,7 @@ class ZmqOdinDataGUI(QWidget):
                     "max_concurrent_writes": max_concurrent_frames,
                     "number_of_frames": number_of_frames,
                     "enable_writing": enable_writing,
+                    "rx_frames": number_of_frames,
                 }
             }
 
