@@ -28,7 +28,7 @@ namespace FrameProcessor
         const std::size_t mem_size, const std::size_t buffer_size, const int socket_id
     ):
         mem_size_(mem_size),
-        buffer_size_(buffer_size + 3000000),
+        buffer_size_(buffer_size),
         socket_id_(socket_id),
         logger_(Logger::getLogger("FP.DpdkSharedBuffer"))
     {
@@ -47,6 +47,15 @@ namespace FrameProcessor
             << " on socket " << socket_id_
             << " With " << num_buffers_ << " with size " << buffer_size_ 
         );
+
+        // First try to lookup existing memzone
+        memzone_ = rte_memzone_lookup(name_.c_str());
+        if (memzone_ != NULL) {
+            LOG4CXX_INFO(logger_, "Found existing shared memory buffer " << name_);
+            return;
+        }
+
+        // If no existing memzone, try to create a new one
         memzone_ = rte_memzone_reserve(
             name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB
         );
@@ -58,16 +67,7 @@ namespace FrameProcessor
                         << " : " << rte_strerror(rte_errno)
                         << " : " << rte_errno
                 );
-            
-            memzone_ = rte_memzone_lookup(name_.c_str());
-            if (memzone_ == NULL)
-            {
-                LOG4CXX_ERROR(logger_, "Error looking up shared memory buffer " << name_
-                        << " on socket " << socket_id_
-                        << " : " << rte_strerror(rte_errno)
-                );
-                // TODO - this is fatal and should raise an exception
-            }
+            throw std::runtime_error("Failed to create or find shared memory buffer");
         }
     }
 

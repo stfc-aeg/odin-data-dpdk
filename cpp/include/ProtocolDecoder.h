@@ -3,10 +3,12 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
+#include "dpdk_version_compatibiliy.h"
 
 struct RawFrameHeader { };
 
-struct SuperFrameHeader 
+struct __rte_packed_begin SuperFrameHeader
 {
     uint64_t super_frame_number; // Chunk number
     uint64_t super_frame_start_time; // counter for timing out super frame
@@ -14,7 +16,7 @@ struct SuperFrameHeader
     uint64_t super_frame_image_size;
     uint32_t frames_received; // Counter for number of frames copied into the super frame
     uint8_t frame_state[];   //!< Flexible array member - length depends on number of frames
-} __rte_packed;
+} __rte_packed_end;
 
 class ProtocolDecoder
 {
@@ -180,6 +182,14 @@ public:
 
     virtual void set_frame_complete_time(RawFrameHeader* frame_hdr, uint64_t frame_complete_time) = 0;
     virtual const uint64_t get_frame_complete_time(RawFrameHeader* frame_hdr) const = 0;
+
+    virtual std::vector<std::size_t> get_frame_dimensions(void) const
+    {
+        std::vector<std::size_t> dims;
+        dims.push_back(frame_x_resolution_);
+        dims.push_back(frame_y_resolution_);
+        return dims;
+    }
 
 protected:
     std::size_t payload_size_;    

@@ -4,22 +4,22 @@
 
 namespace FrameProcessor
 {
-    DpdkDevice::DpdkDevice(uint16_t port_id) :
+    DpdkDevice::DpdkDevice(uint16_t port_id, const DpdkDeviceConfiguration& config) :
         port_id_(port_id),
-        mbuf_pool_size_(2000000), // TODO - parameterise these - pass in as input config?
-        mbuf_cache_size_(500),
-        mtu_(9600), 
-        rx_rings_(1),
-        rx_num_desc_(8192),
-        tx_rings_(1),
-        tx_num_desc_(8192),
+        mbuf_pool_size_(config.mbuf_pool_size()),
+        mbuf_cache_size_(config.mbuf_cache_size()),
+        mtu_(config.mtu()),
+        rx_rings_(config.rx_rings()),
+        rx_num_desc_(config.rx_num_desc()),
+        tx_rings_(config.tx_rings()),
+        tx_num_desc_(config.tx_num_desc()),
         logger_(Logger::getLogger("FP.DpdkDevice"))
     {
 
         int rc;
 
         // Get the NUMA socket ID for this device port is connected to
-        socket_id_ = rte_eth_dev_socket_id(port_id_);
+        socket_id_ = 0;// = rte_eth_dev_socket_id(port_id_);
 
         // Get the PCI device name
         char dev_name[RTE_DEV_NAME_MAX_LEN];
@@ -100,7 +100,7 @@ namespace FrameProcessor
             if (mbuf_pool_ == NULL)
             {
                 LOG4CXX_ERROR(logger_, "Error creating mbuf pool for device on port " << port_id_
-                    << " socket " << socket_id_
+                    << " socket " << socket_id_ << " name " << mbuf_pool_name
                     << " : " << rte_strerror(rte_errno)
                 );
                 return false;
@@ -134,21 +134,21 @@ namespace FrameProcessor
         };
 
         // Set offload capability for TX path if available
-        if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+        if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
         {
             LOG4CXX_DEBUG_LEVEL(2, logger_,
                 "Enabling TX offload for device on port " << port_id_
             );
-            port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
+            port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
         }
 
         // Enable RX offload scatter to support reception of jumbo frames
-        if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_SCATTER);
+        if (dev_info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_SCATTER)
         {
             LOG4CXX_DEBUG_LEVEL(2, logger_,
                 "Enabling RX offload scatter for device on port " << port_id_
             );
-            port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_SCATTER;
+            port_conf.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_SCATTER;
         }
 
         // Apply the configuration to the device

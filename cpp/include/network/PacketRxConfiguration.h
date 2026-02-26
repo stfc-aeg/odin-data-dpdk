@@ -1,5 +1,9 @@
+#ifndef PACKETRXCONFIGURATION_H_
+#define PACKETRXCONFIGURATION_H_
+
 #include "ParamContainer.h"
 #include "DpdkCoreConfiguration.h"
+#include "network/DpdkDeviceConfiguration.h"
 #include <sstream>
 
 namespace FrameProcessor
@@ -16,7 +20,7 @@ namespace FrameProcessor
         const unsigned int default_release_ring_size = 32768;
         const unsigned int default_max_packet_tx_retries = 64;
         const unsigned int default_max_packet_queue_retries = 64;
-        const std::string default_pcie_device = "";  
+        const std::string default_pcie_device = "";
     }
 
     class PacketRxConfiguration : public OdinData::ParamContainer
@@ -49,8 +53,17 @@ namespace FrameProcessor
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                }        
+
+                    // Resolve the dpdk_device subsection if present
+                    if (value_ptr->HasMember("dpdk_device"))
+                    {
+                        dpdk_device_.update((*value_ptr)["dpdk_device"]);
+                    }
+                }
             }
+
+            const DpdkDeviceConfiguration& dpdk_device(void) const { return dpdk_device_; }
+            DpdkDeviceConfiguration& dpdk_device(void) { return dpdk_device_; }
 
         private:
 
@@ -90,6 +103,10 @@ namespace FrameProcessor
 
             unsigned int num_processor_cores_;  //!< Number of packet processor cores running
 
+            DpdkDeviceConfiguration dpdk_device_;  //!< DPDK device configuration subsection
+
             friend class PacketRxCore;
     };
 }
+
+#endif // PACKETRXCONFIGURATION_H_

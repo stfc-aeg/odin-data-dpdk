@@ -4,12 +4,17 @@
 #include <PacketProtocolDecoder.h>
 #include <rte_byteorder.h>
 #include <rte_memcpy.h>
+#include <rte_ether.h>
+#include <rte_ip.h>
+#include <rte_udp.h>
+#include <boost/shared_ptr.hpp>
+#include "dpdk_version_compatibiliy.h"
 
 #define FRAME_OUTER_CHUNK_SIZE 1
 #define PACKETS_PER_FRAME 250
 #define PACKET_PAYLOAD_SIZE 8000
 
-struct X10GPacketHeader : PacketHeader
+struct __rte_packed_begin X10GPacketHeader : PacketHeader
 {
     rte_be64_t frame_number;
     rte_be64_t padding[6];
@@ -18,9 +23,9 @@ struct X10GPacketHeader : PacketHeader
     uint8_t _unused_1;
     uint8_t padding_bytes;
     uint8_t readout_lane;
-} __rte_packed;
+} __rte_packed_end;
 
-struct X10GRawFrameHeader : RawFrameHeader
+struct __rte_packed_begin X10GRawFrameHeader : RawFrameHeader
 {
     uint64_t frame_number;
     uint32_t packets_received;
@@ -31,7 +36,7 @@ struct X10GRawFrameHeader : RawFrameHeader
 	uint32_t frame_time_delta;
     uint64_t image_size;
     uint8_t packet_state[1];  // One for each packet in the frame
-} __rte_packed;
+} __rte_packed_end;
 
 namespace Defaults
 {
@@ -67,6 +72,13 @@ public:
     virtual const std::size_t get_packet_header_size(void) const
     {
         return sizeof(X10GPacketHeader);
+    }
+
+    virtual const std::size_t get_packet_payload_offset(void) const
+    {
+        // Headers are always before payload in dummy decoder
+        return sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + 
+                sizeof(struct rte_udp_hdr) + get_packet_header_size();
     }
 
     void set_frame_number(RawFrameHeader* frame_hdr, uint64_t frame_number)

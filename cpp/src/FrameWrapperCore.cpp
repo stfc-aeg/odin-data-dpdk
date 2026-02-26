@@ -56,13 +56,37 @@ namespace FrameProcessor
 
         // Frame variables
         struct SuperFrameHeader *current_super_frame_buffer_;
-        dimensions_t dims(2);
-
-        // Specific frame variables from decoder
-        // dims[2] = 1024;
-        dims[1] = decoder_->get_frame_y_resolution();
-        dims[0] = decoder_->get_frame_x_resolution();
-        std::size_t frame_size = dims[0] * dims[1] * 2 * decoder_->get_frame_outer_chunk_size();
+        
+        // Get dimensions from the decoder
+        std::vector<std::size_t> decoder_dims = decoder_->get_frame_dimensions();
+        LOG4CXX_DEBUG(logger_, "Got dimensions from decoder, size: " << decoder_dims.size());
+        
+        dimensions_t dims(decoder_dims.size());
+        LOG4CXX_DEBUG(logger_, "Created dimensions_t with size: " << dims.size());
+        
+        // Copy dimensions in correct order for HDF5
+        for (size_t i = 0; i < decoder_dims.size(); i++) {
+            dims[i] = decoder_dims[i];
+            LOG4CXX_DEBUG(logger_, "Dimension " << i << ": " << dims[i]);
+        }
+        LOG4CXX_DEBUG(logger_, "Using native dimension order without reversal");
+        
+        std::stringstream dim_str;
+        dim_str << "Frame dimensions: [";
+        for (size_t i = 0; i < dims.size(); i++) {
+            dim_str << dims[i];
+            if (i < dims.size() - 1) dim_str << ", ";
+        }
+        dim_str << "]";
+        LOG4CXX_DEBUG(logger_, dim_str.str());
+        
+        // Calculate total frame size based on dimensions and bit depth
+        std::size_t frame_size = 1;
+        for (const auto& dim : decoder_dims) {
+            frame_size *= dim;
+            LOG4CXX_DEBUG(logger_, "Accumulating frame size: " << frame_size);
+        }
+        frame_size *= decoder_->get_frame_outer_chunk_size() * (decoder_->get_frame_bit_depth() == FrameProcessor::DataType::raw_32bit ? 4 : 2);
             //dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
         std::size_t frame_header_size = decoder_->get_frame_header_size();
 
@@ -125,6 +149,11 @@ namespace FrameProcessor
                 frame_meta.set_frame_number(frame_number);
                 frame_meta.set_dimensions(dims);
                 frame_meta.set_data_type(decoder_->get_frame_bit_depth());
+                
+                LOG4CXX_DEBUG(logger_, "Created frame metadata:"
+                    << " Dataset: " << config_.dataset_name_
+                    << " Frame: " << frame_number
+                    << " Data type: " << decoder_->get_frame_bit_depth());
 
                 // Get the image size, with this we can work out if the frame has been compressed
                 uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);

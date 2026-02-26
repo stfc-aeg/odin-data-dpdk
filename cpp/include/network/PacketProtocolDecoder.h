@@ -35,6 +35,7 @@ public:
     }
 
     virtual const std::size_t get_packet_header_size(void) const = 0;
+    virtual const std::size_t get_packet_payload_offset(void) const = 0;
 
     virtual bool set_packet_received(RawFrameHeader* frame_hdr, uint32_t packet_number) = 0;
     virtual const uint32_t get_packets_received(RawFrameHeader* frame_hdr) const = 0;

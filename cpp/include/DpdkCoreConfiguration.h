@@ -9,6 +9,7 @@ namespace FrameProcessor
     namespace Defaults
     {
         const std::size_t default_shared_buffer_size = 8589934592;
+        const unsigned int default_socket = 0;
         const unsigned int default_num_processor_cores = 3;
         const unsigned int default_num_framebuilder_cores = 4;
         const unsigned int default_num_framecompression_cores = 0;
@@ -36,6 +37,7 @@ namespace FrameProcessor
 
             DpdkCoreConfiguration() :
                 ParamContainer(),
+                socket_(Defaults::default_socket),
                 shared_buffer_size_(Defaults::default_shared_buffer_size),
                 num_processor_cores_(Defaults::default_num_processor_cores),
                 num_framebuilder_cores_(Defaults::default_num_framebuilder_cores),
@@ -148,9 +150,11 @@ namespace FrameProcessor
                 bind_param<ParamContainer::Document>(frame_compressor_params_, "frame_compressor");
                 bind_param<ParamContainer::Document>(frame_wrapper_params_, "frame_wrapper");
                 bind_param<ParamContainer::Document>(worker_core_params_, "worker_cores");
+                bind_param<unsigned int>(socket_, "socket");
             }
 
-            std::size_t shared_buffer_size_;      //!< DPDK memzone shared buffer size
+            std::size_t shared_buffer_size_;
+            unsigned int socket_;      //!< DPDK memzone shared buffer size
             unsigned int num_processor_cores_;    //!< Number of packet processor cores to run
             unsigned int num_framebuilder_cores_; //!< Number of frame builder cores to run
             unsigned int num_framecompression_cores_; //!< Number of frame compression cores to run
