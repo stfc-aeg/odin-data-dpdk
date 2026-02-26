@@ -110,6 +110,8 @@ Tensorstore support can be enabled at build time:
 
 ```bash
 cmake -DCMAKE_INSTALL_PREFIX=/develop/install -DODINDATA_ROOT_DIR=/develop/install -DENABLE_TENSORSTORE=ON -DCMAKE_MODULE_PATH=/develop/odin-data/cpp/cmake ..
+
+NOTE: The fake cameras used to pass frames into the Tensorstore Core were modifed to enable them to output frames faster. These changes have not beenm commited as to not break other work that may be done with this repo.
 ```
 
 ## Python Tools
