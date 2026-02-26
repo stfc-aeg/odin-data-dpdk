@@ -15,10 +15,13 @@ namespace FrameProcessor
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
-        built_frames_(0),
-        built_frames_hz_(0),
+        processed_frames_(0),
+        processed_frames_hz_(0),
         idle_loops_(0),
-        avg_us_spent_compressing_(0)
+        mean_us_on_frame_(1),
+        maximum_us_on_frame_(1),
+        core_usage_(1),
+        last_frame_(-1)
     {
 
         // Get the configuration container for this worker
@@ -89,7 +92,7 @@ namespace FrameProcessor
         blosc_compcode_to_compname(1, &p_compressor_name);
 
         // Generic frame variables
-        struct RawFrameHeader *current_frame_buffer_, *compressed_frame_;
+        struct SuperFrameHeader *current_frame_buffer_, *compressed_frame_;
         dimensions_t dims(2);
         int compressed_size = 0;
 
@@ -102,11 +105,15 @@ namespace FrameProcessor
         std::size_t frame_header_size = decoder_->get_frame_header_size();
 
         // Status reporting variables
-        uint64_t frames_per_second = 0;
+        uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
-        uint64_t start_compressing = 1;
-        uint64_t average_compression_cycles = 1;
+        uint64_t cycles_working = 1;
+        uint64_t start_frame_cycles = 1;
+        uint64_t average_frame_cycles = 1;
+        uint64_t total_frame_cycles = 1;
+        uint64_t maximum_frame_cycles = 1;
+        uint64_t idle_loops = 0;
 
         while (compressed_frame_ == NULL)
         {
@@ -120,14 +127,19 @@ namespace FrameProcessor
             if (unlikely((now - last) >= (cycles_per_sec)))
             {
                 // Update any monitoring variables every second
-                built_frames_hz_ = frames_per_second;
-                avg_us_spent_compressing_ = (average_compression_cycles * 1000000 ) / cycles_per_sec;
+                processed_frames_hz_ = frames_per_second - 1;
+                mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
+                core_usage_ = (cycles_working * 255) / cycles_per_sec;
+
+                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
+
+                idle_loops_ = idle_loops;
 
                 // Reset any counters
-                frames_per_second = 0;
-                idle_loops_ = 0;
-                average_compression_cycles = 0;
-
+                frames_per_second = 1;
+                idle_loops = 0;
+                total_frame_cycles = 1;
+                cycles_working = 1;
                 last = now;
             }
             // Attempt to dequeue a new frame object
@@ -140,35 +152,46 @@ namespace FrameProcessor
             }
             else
             {
-                built_frames_++;
-                uint64_t frame_number = decoder_->get_frame_number(current_frame_buffer_);
+                start_frame_cycles = rte_get_tsc_cycles();
 
-                start_compressing = rte_get_tsc_cycles();
+                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
 
                 // Compress the cores using the provided config
                 compressed_size = blosc_compress_ctx(
                     1, 1,
                     get_size_from_enum(decoder_->get_frame_bit_depth()), frame_size,
-                    reinterpret_cast<char *>(current_frame_buffer_) + frame_header_size,
-                    reinterpret_cast<char *>(compressed_frame_) + frame_header_size, dest_data_size, p_compressor_name,
+                    decoder_->get_image_data_start(current_frame_buffer_),
+                    decoder_->get_image_data_start(compressed_frame_), dest_data_size, p_compressor_name,
                     0, 1
                 );
 
                 // Copy the Frame_Header to the new memory location
-                rte_memcpy(compressed_frame_, current_frame_buffer_, frame_header_size);
+                rte_memcpy(compressed_frame_, current_frame_buffer_, decoder_->get_super_frame_header_size() + decoder_->get_frame_header_size());
 
                 // Set the correct image size to ensure that correct data is saved out
-                decoder_->set_image_size(compressed_frame_, compressed_size);
+                decoder_->set_super_frame_image_size(compressed_frame_, compressed_size);
 
                 // Enqueue the frame to be wrapped into a shared pointer
                 rte_ring_enqueue(downstream_rings_[frame_number % (config_.num_downstream_cores)], compressed_frame_);
 
-                average_compression_cycles = 
-                    (average_compression_cycles + (rte_get_tsc_cycles() - start_compressing)) / 2;
-
                 // Resuse the old frame location for the next frame to be compressed
                 compressed_frame_ = current_frame_buffer_;
+
+                // Calculate status
+                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                total_frame_cycles += cycles_spent;
+                cycles_working += cycles_spent;
+                
+                if (maximum_frame_cycles < cycles_spent)
+                {
+                    maximum_frame_cycles = cycles_spent;
+                }
+                
+
                 frames_per_second++;
+                processed_frames_++;
+
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Compressed frame: " << frame_number);
                 
             }
         }
@@ -198,10 +221,29 @@ namespace FrameProcessor
 
         std::string status_path = path + "/FrameCompressorCore_" + std::to_string(proc_idx_) + "/";
 
-        status.set_param(status_path + "frames_built", built_frames_);
-        status.set_param(status_path + "frames_built_hz", built_frames_hz_);
+        // Create path for updstream ring status
+        std::string ring_status = status_path + "upstream_rings/";
+
+        // Create path for timing status
+        std::string timing_status = status_path + "timing/";
+
+        // Frame status reporting
+        status.set_param(status_path + "frames_processed", processed_frames_);
+        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
         status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "average_us_compressing", avg_us_spent_compressing_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
+        status.set_param(status_path + "last_frame_number", last_frame_);
+
+        // Core timing status reporting
+        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+
+        // Upstream ring status
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
     }
 
     bool FrameCompressorCore::connect(void)

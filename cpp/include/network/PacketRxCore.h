@@ -12,8 +12,9 @@ using namespace log4cxx::helpers;
 
 #include "DpdkWorkerCore.h"
 #include "DpdkCoreConfiguration.h"
-#include "PacketRxConfiguration.h"
-#include "ProtocolDecoder.h"
+#include "network/PacketRxConfiguration.h"
+#include "network/PacketProtocolDecoder.h"
+#include "DpdkDevice.h"
 
 #include <rte_ether.h>
 #include <rte_ring.h>
@@ -40,6 +41,8 @@ namespace FrameProcessor
 
 
     private:
+        bool add_device(const std::string& pci_address);
+        bool remove_device();
 
         bool handle_arp_request(
             struct rte_ether_hdr **pkt_ether_hdr, struct rte_arp_hdr **pkt_arp_hdr
@@ -59,10 +62,15 @@ namespace FrameProcessor
 
         PacketRxConfiguration config_;
 
+        DpdkDevice* device_;
+
         int proc_idx_;
-        uint64_t packet_counter_;
+        uint64_t total_packets_;
+        uint64_t dropped_packets_;
+        uint64_t captured_packets_;
         uint16_t port_id_;
-        ProtocolDecoder* decoder_;
+        bool device_configured_;
+        PacketProtocolDecoder* decoder_;
 
         int64_t first_frame_number_;
         uint64_t first_seen_frame_number_;

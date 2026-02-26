@@ -46,6 +46,8 @@ IF("${isSystemDir}" STREQUAL "-1")
    SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 ENDIF("${isSystemDir}" STREQUAL "-1")
 
+
+
 # Find and add external packages required for library
 find_package( Boost 1.41.0
 	      REQUIRED
@@ -53,6 +55,53 @@ find_package( Boost 1.41.0
 find_package(LOG4CXX 0.10.0 REQUIRED)
 find_package(DPDK 21.1.0 REQUIRED)
 find_package(Blosc)
+# find package HDF5
+message("\nSearching for HDF5")
+
+IF (HDF5_ROOT)
+  message(STATUS "HDF5_ROOT set: " ${HDF5_ROOT})
+  set( ENV{HDF5_ROOT} ${HDF5_ROOT} )
+  find_path( HDF5_INCLUDE_DIRS
+             NAMES hdf5.h hdf5_hl.h
+             PATHS ${HDF5_ROOT}/include
+             NO_DEFAULT_PATH )
+  find_library( HDF5_LIBRARIES
+                NAMES hdf5
+                PATHS ${HDF5_ROOT}/lib
+                NO_DEFAULT_PATH )
+  find_library( HDF5_HL_LIBRARIES
+                NAMES hdf5_hl
+                PATHS ${HDF5_ROOT}/lib
+                NO_DEFAULT_PATH )
+  if (HDF5_HL_LIBRARIES)
+    set(HDF5_FOUND true)
+  else (HDF5_HL_LIBRARIES)
+    set(HDF5_FOUND false)
+  endif (HDF5_HL_LIBRARIES)
+ELSE(HDF5_ROOT)
+    find_package(HDF5 1.8.14
+                 COMPONENTS C HL)
+ENDIF(HDF5_ROOT)
+
+if (HDF5_FOUND)
+  message(STATUS "HDF5 include files:  " ${HDF5_INCLUDE_DIRS})
+  message(STATUS "HDF5 libs:           " ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES})
+  message(STATUS "HDF5 defs:           " ${HDF5_DEFINITIONS})
+ENDIF(HDF5_FOUND)
+
+
+# Check if Boost version has placeholders and set definition accordingly
+message("\nChecking Boost version placeholder support")
+if (NOT DEFINED Boost_VERSION_STRING)
+  set(Boost_VERSION_STRING "${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
+endif ()
+if ((Boost_VERSION_STRING EQUAL 1.60.0) OR (Boost_VERSION_STRING GREATER 1.60.0))
+  message(STATUS "Boost version ${Boost_VERSION_STRING} has placeholders")
+  ADD_DEFINITIONS(-DBOOST_HAS_PLACEHOLDERS)
+  #ADD_DEFINITIONS(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
+else ()
+  message(STATUS "Boost version ${Boost_VERSION_STRING} does not have placeholders")
+endif ()
 
 message("Determining odin-data-dpdk version")
 include(GetGitRevisionDescription)
@@ -83,3 +132,6 @@ add_subdirectory(include)
 
 # Add the cmake subdirectory so that CMake finders are installed
 add_subdirectory(cmake)
+
+# Add the config subdirectory
+add_subdirectory(config)

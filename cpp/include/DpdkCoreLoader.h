@@ -19,8 +19,6 @@ namespace FrameProcessor
         ProtocolDecoder* decoder;
         FrameCallback& frame_callback;
         DpdkSharedBuffer* shared_buf;
-        uint16_t port_id;
-
 
     };
 

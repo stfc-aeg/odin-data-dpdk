@@ -81,11 +81,11 @@ namespace FrameProcessor
     OdinData::IpcMessage& config, OdinData::IpcMessage& reply,
     ProtocolDecoder* decoder_ptr, FrameCallback& frame_callback)
   {
-    LOG4CXX_INFO(logger_, "Configuring DPDKFrameProcessor plugin");
+    LOG4CXX_DEBUG(logger_, "Configuring DPDKFrameProcessor plugin");
 
     if (config.get_param("update_config", false))
     {
-      LOG4CXX_INFO(logger_, "Got update config");
+      LOG4CXX_DEBUG(logger_, "Got update config");
       if (core_manager_ != nullptr)
       {
         core_manager_->configure(config);
@@ -93,9 +93,12 @@ namespace FrameProcessor
     }
     else
     {
-      core_manager_.reset(
-        new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback)
-      );
+      if (core_manager_)
+      {
+        core_manager_->stop();
+        core_manager_.reset();
+      }
+      core_manager_.reset(new DpdkCoreManager(config, reply, this->get_name(), decoder_ptr, frame_callback));
       core_manager_->start();
     }
 
@@ -104,7 +107,9 @@ namespace FrameProcessor
   void DpdkFrameProcessorPlugin::requestConfiguration(OdinData::IpcMessage& reply)
   {
     // Return the configuration of the plugin
-    LOG4CXX_DEBUG(logger_, "Configuration requested for DPDKFrameProcessor plugin");
+    LOG4CXX_TRACE(logger_, "Configuration requested for DPDKFrameProcessor plugin");
+
+
   }
 
   /**
@@ -115,9 +120,13 @@ namespace FrameProcessor
   void DpdkFrameProcessorPlugin::status(OdinData::IpcMessage& status)
   {
     // Record the plugin's status items
-    LOG4CXX_DEBUG(logger_, "Status requested for DPDKFrameProcessor plugin");
+    LOG4CXX_TRACE(logger_, "Status requested for DPDKFrameProcessor plugin");
 
-    core_manager_->status(status);
+    if (core_manager_ != nullptr)
+    {
+      core_manager_->status(status);
+    }
+    
   }
 
   /**
@@ -125,7 +134,7 @@ namespace FrameProcessor
    */
   bool DpdkFrameProcessorPlugin::reset_statistics(void)
   {
-    LOG4CXX_DEBUG(logger_, "Statistics reset requested for DPDKFrameProcessor plugin")
+    LOG4CXX_DEBUG(logger_, "Statistics reset requested for DPDKFrameProcessor plugin");
 
     return true;
   }

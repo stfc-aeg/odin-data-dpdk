@@ -12,12 +12,12 @@ namespace FrameProcessor {
  * @param image_offset 
  */
 DpdkSharedBufferFrame::DpdkSharedBufferFrame(const FrameMetaData & meta_data,
-                                                 void *data_src,
-                                                 size_t nbytes,
-                                                 rte_ring *frame_processed,
-                                                 const int& image_offset)
+                                                void *data_src,
+                                                size_t nbytes,
+                                                rte_ring *frame_processed,
+                                                const int& image_offset)
     : Frame(meta_data, nbytes, image_offset) {
-                                                    
+    
     data_ptr_ = data_src;
     frame_processed_ = frame_processed;
 }
@@ -39,7 +39,10 @@ DpdkSharedBufferFrame::DpdkSharedBufferFrame(const DpdkSharedBufferFrame &frame)
  */
 DpdkSharedBufferFrame::~DpdkSharedBufferFrame () {
     /** Enqueue the memory location back to the starting ring */
-    rte_ring_enqueue(frame_processed_, data_ptr_);
+    if(frame_processed_ != nullptr)
+    {
+        rte_ring_enqueue(frame_processed_, data_ptr_);
+    }
 }
 
 /**

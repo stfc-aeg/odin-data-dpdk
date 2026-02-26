@@ -8,16 +8,18 @@ namespace FrameProcessor
 {
     FrameBuilderCore::FrameBuilderCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
-                                        ) : DpdkWorkerCore(socket_id),
-                                        logger_(Logger::getLogger("FP.FrameBuilderCore")),
-                                        proc_idx_(fb_idx),
-                                        decoder_(dpdkWorkCoreReferences.decoder),
-                                        shared_buf_(dpdkWorkCoreReferences.shared_buf),
-                                        built_frames_(0),
-                                        built_frames_hz_(0),
-                                        idle_loops_(0),
-                                        avg_us_spent_building_(0)
-    {
+    ) : DpdkWorkerCore(socket_id),
+        logger_(Logger::getLogger("FP.FrameBuilderCore")),
+        proc_idx_(fb_idx),
+        decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
+        shared_buf_(dpdkWorkCoreReferences.shared_buf),
+        built_frames_(0),
+        built_frames_hz_(1),
+        idle_loops_(0),
+        mean_us_on_frame_(0),
+        maximum_us_on_frame_(0),
+        core_usage_(1)
+{
 
         // Get the configuration container for this worker
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -71,8 +73,17 @@ namespace FrameProcessor
     FrameBuilderCore::~FrameBuilderCore(void)
     {
         LOG4CXX_DEBUG_LEVEL(2, logger_, "FrameBuilderCore destructor");
-        std::cout << "FBC Destory" << std::endl;
         stop();
+
+        // Free downstream rings
+        for (auto& ring : downstream_rings_)
+        {
+            if (ring)
+            {
+                rte_ring_free(ring);
+            }
+        }
+        downstream_rings_.clear();
     }
 
     bool FrameBuilderCore::run(unsigned int lcore_id)
@@ -99,11 +110,14 @@ namespace FrameProcessor
         std::size_t payload_size = decoder_->get_payload_size();
 
         // Status reporting variables
-        uint64_t frames_per_second = 0;
+        uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
-        uint64_t start_building = 1;
-        uint64_t average_building_cycles = 1;
+        uint64_t cycles_working = 1;
+        uint64_t start_frame_cycles = 1;
+        uint64_t average_frame_cycles = 1;
+        uint64_t total_frame_cycles = 1;
+        uint64_t maximum_frame_cycles = 1;
 
         // Get a memory location for the reordered frame to go into
         rte_ring_dequeue(clear_frames_ring_, (void **)&reordered_frame_location_);
@@ -115,17 +129,21 @@ namespace FrameProcessor
             if (unlikely((now - last) >= (cycles_per_sec)))
             {
                 // Update any monitoring variables every second
-                built_frames_hz_ = frames_per_second;
-                avg_us_spent_building_ = (average_building_cycles * 1000000) / cycles_per_sec;
+                built_frames_hz_ = frames_per_second - 1;
+                mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
+                core_usage_ = (cycles_working * 255) / cycles_per_sec;
+
+                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
 
                 // Reset any counters
-                frames_per_second = 0;
+                frames_per_second = 1;
                 idle_loops_ = 0;
-                average_building_cycles = 0;
+                total_frame_cycles = 1;
+                cycles_working = 1;
                 last = now;
             }
             // Attempt to dequeue a new frame object
-            if (rte_ring_dequeue(upstream_ring, (void **)&current_frame_buffer_) < 0)
+            if (rte_ring_dequeue(upstream_ring_, (void **)&current_frame_buffer_) < 0)
             {
                 // No frame was dequeued, try again
                 idle_loops_++;
@@ -133,47 +151,60 @@ namespace FrameProcessor
             }
             else
             {
+                start_frame_cycles = rte_get_tsc_cycles();
+
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
 
-                //LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Got frame: " << frame_number);
 
+                // If a superframe has any incomplete frames, iterate through them
                 // If the frame has any dropped packets, iterate through the frame and clear
                 // the payload of the dropped packets
-                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_recieved(current_frame_buffer_);
+                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() - decoder_->get_super_frame_frames_received(current_frame_buffer_);
 
                 if (incomplete_frames)
                 {
+                    // Incomplete frames have been found
                     uint32_t frame_idx = 0;
                     uint32_t frames_cleared = 0;
 
+                    // While there are still incomplete frames
                     while(frames_cleared < incomplete_frames)
                     {
                         uint32_t packet_idx = 0;
                         uint32_t packets_cleared = 0;
 
+
+                        // Get the number of dropped packets of this sub frame
                         uint32_t packets_dropped = decoder_->get_packets_dropped(
                             decoder_->get_frame_header(current_frame_buffer_, frame_idx)
                         );
 
+
+                        // Loop over packets in the subframe
                         while (packets_cleared < packets_dropped)
                         {
+                            // Check to see if this subframe is missing packets
                             if (decoder_->get_packet_state(decoder_->get_frame_header(current_frame_buffer_, frame_idx), packet_idx) == 0)
                             {
                                 // This is a dropped packet and needs to be zeroed out
                                 // to prevent corrupting the data
+                                // This is becuase we reuse memory
                                 memset(
                                     decoder_->get_image_data_start(current_frame_buffer_) + ((frame_idx * payload_size * decoder_->get_packets_per_frame())) + (packet_idx * payload_size),
                                     0, payload_size);
-
+                                    
                                 packets_cleared++;
                             }
                             packet_idx++;
                         }
                         frames_cleared++;
+                        //LOG4CXX_INFO(logger_,
+                        //        "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                     }
 
-                    LOG4CXX_INFO(logger_,
-                                 "Got incomplete super frame with " << incomplete_frames << " incomplete frames");
+                //     LOG4CXX_INFO(logger_,
+                //                 "Got incomplete super frame ("<< frame_number <<" ) with " << incomplete_frames << " incomplete frames");
                 }
 
                 // Use the decoder to build that frame into another HP location
@@ -193,11 +224,20 @@ namespace FrameProcessor
                     reordered_frame_location_ = current_frame_buffer_;
                 }
 
-                average_building_cycles = 
-                    (average_building_cycles + (rte_get_tsc_cycles() - start_building)) / 2;
+                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                total_frame_cycles += cycles_spent;
+                cycles_working += cycles_spent;
+                
+                if (maximum_frame_cycles < cycles_spent)
+                {
+                    maximum_frame_cycles = cycles_spent;
+                }
+                
 
                 frames_per_second++;
                 built_frames_++;
+
+                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Built frame: " << frame_number);
             }
         }
 
@@ -224,15 +264,28 @@ namespace FrameProcessor
         LOG4CXX_DEBUG(logger_, "Status requested for framebuilderCore_" << proc_idx_
                                                                         << " from the DPDK plugin");
 
+        // Base status reporting path in staus message
         std::string status_path = path + "/framebuildercore_" + std::to_string(proc_idx_) + "/";
 
-        status.set_param(status_path + "frames_built", built_frames_);
+        // Create path for updstream ring status
+        std::string ring_status = status_path + "upstream_rings/";
 
-        status.set_param(status_path + "frames_built_hz", built_frames_hz_);
+        // Create path for timing status
+        std::string timing_status = status_path + "timing/";
 
+        // Frame status reporting
+        status.set_param(status_path + "frames_processed", built_frames_);
+        status.set_param(status_path + "frames_processed_per_second", built_frames_hz_);
         status.set_param(status_path + "idle_loops", idle_loops_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
 
-        status.set_param(status_path + "average_us_compressing", avg_us_spent_building_);
+        // Core timing status reporting
+        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+        
+        // Upstream ring status
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
     }
 
     bool FrameBuilderCore::connect(void)
@@ -240,8 +293,8 @@ namespace FrameProcessor
 
         // connect to the ring for incoming packets
         std::string upstream_ring_name = ring_name_str(config_.upstream_core, socket_id_, proc_idx_);
-        upstream_ring = rte_ring_lookup(upstream_ring_name.c_str());
-        if (upstream_ring == NULL)
+        upstream_ring_ = rte_ring_lookup(upstream_ring_name.c_str());
+        if (upstream_ring_ == NULL)
         {
             // this needs to error out as there should always be upstream resources at this point
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Failed to Connect to upstream resources!");

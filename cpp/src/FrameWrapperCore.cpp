@@ -14,10 +14,13 @@ namespace FrameProcessor
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
         frame_callback_(dpdkWorkCoreReferences.frame_callback),
-        frames_wrapped_(0),
-        frames_wrapped_hz_(0),
+        processed_frames_(0),
+        processed_frames_hz_(0),
         idle_loops_(0),
-        avg_us_spent_wrapping_(0)
+        mean_us_on_frame_(1),
+        maximum_us_on_frame_(1),
+        core_usage_(1),
+        last_frame_(-1)
     {
 
         // Get the configuration container for this worker
@@ -53,24 +56,53 @@ namespace FrameProcessor
 
         // Frame variables
         struct SuperFrameHeader *current_super_frame_buffer_;
-        dimensions_t dims(2);
-
-        // Specific frame variables from decoder
-        dims[0] = decoder_->get_frame_x_resolution();
-        dims[1] = decoder_->get_frame_y_resolution();
-        std::size_t frame_size = decoder_->get_frame_data_size() * decoder_->get_frame_outer_chunk_size();
+        
+        // Get dimensions from the decoder
+        std::vector<std::size_t> decoder_dims = decoder_->get_frame_dimensions();
+        LOG4CXX_DEBUG(logger_, "Got dimensions from decoder, size: " << decoder_dims.size());
+        
+        dimensions_t dims(decoder_dims.size());
+        LOG4CXX_DEBUG(logger_, "Created dimensions_t with size: " << dims.size());
+        
+        // Copy dimensions in correct order for HDF5
+        for (size_t i = 0; i < decoder_dims.size(); i++) {
+            dims[i] = decoder_dims[i];
+            LOG4CXX_DEBUG(logger_, "Dimension " << i << ": " << dims[i]);
+        }
+        LOG4CXX_DEBUG(logger_, "Using native dimension order without reversal");
+        
+        std::stringstream dim_str;
+        dim_str << "Frame dimensions: [";
+        for (size_t i = 0; i < dims.size(); i++) {
+            dim_str << dims[i];
+            if (i < dims.size() - 1) dim_str << ", ";
+        }
+        dim_str << "]";
+        LOG4CXX_DEBUG(logger_, dim_str.str());
+        
+        // Calculate total frame size based on dimensions and bit depth
+        std::size_t frame_size = 1;
+        for (const auto& dim : decoder_dims) {
+            frame_size *= dim;
+            LOG4CXX_DEBUG(logger_, "Accumulating frame size: " << frame_size);
+        }
+        frame_size *= decoder_->get_frame_outer_chunk_size() * (decoder_->get_frame_bit_depth() == FrameProcessor::DataType::raw_32bit ? 4 : 2);
             //dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
         std::size_t frame_header_size = decoder_->get_frame_header_size();
 
+
+        //uint64_t data_pointer_offset = (frame_header_size * decoder_->get_frame_outer_chunk_size()) + decoder_->get_super_frame_header_size();
+        uint64_t data_pointer_offset = decoder_->get_image_data_offset();
         // Status reporting variables
-        uint64_t frames_per_second = 0;
+        uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
         uint64_t cycles_per_sec = rte_get_tsc_hz();
-        uint64_t start_compressing = 1;
-        uint64_t average_wrapping_cycles = 1;
-        uint64_t last_Frame = -1;
-        uint64_t frames_wrapped_ = 0;
-        uint64_t data_pointer_offset = (frame_header_size * decoder_->get_frame_outer_chunk_size()) + decoder_->get_super_frame_header_size();
+        uint64_t cycles_working = 1;
+        uint64_t start_frame_cycles = 1;
+        uint64_t average_frame_cycles = 1;
+        uint64_t total_frame_cycles = 1;
+        uint64_t maximum_frame_cycles = 1;
+        uint64_t idle_loops = 0;
 
         //While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
@@ -79,27 +111,35 @@ namespace FrameProcessor
             if (unlikely((now - last) >= (cycles_per_sec)))
             {
                 // Update any monitoring variables every second
-                frames_wrapped_hz_ = frames_per_second;
-                avg_us_spent_wrapping_ = (average_wrapping_cycles * 1000000 )/ cycles_per_sec;
+                processed_frames_hz_ = frames_per_second - 1;
+                mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
+                core_usage_ = (cycles_working * 255) / cycles_per_sec;
+
+                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
+
+                idle_loops_ = idle_loops;
 
                 // Reset any counters
-                frames_per_second = 0;
-                idle_loops_ = 0;
-                average_wrapping_cycles = 0;
-
+                frames_per_second = 1;
+                idle_loops = 0;
+                total_frame_cycles = 1;
+                cycles_working = 1;
                 last = now;
             }
             // Attempt to dequeue a new frame object
             if (rte_ring_dequeue(upstream_ring_, (void**) &current_super_frame_buffer_) < 0)
             {
                 // No frame was dequeued, try again
-                idle_loops_++;
+                idle_loops++;
                 continue;
             }
             else
             {
+                start_frame_cycles = rte_get_tsc_cycles();
+                
                 uint64_t frame_number = decoder_->get_super_frame_number(current_super_frame_buffer_);
-                last_Frame = frame_number;
+                last_frame_ = frame_number;
+
 
                 decoder_->set_super_frame_image_size(current_super_frame_buffer_, frame_size);
 
@@ -109,6 +149,11 @@ namespace FrameProcessor
                 frame_meta.set_frame_number(frame_number);
                 frame_meta.set_dimensions(dims);
                 frame_meta.set_data_type(decoder_->get_frame_bit_depth());
+                
+                LOG4CXX_DEBUG(logger_, "Created frame metadata:"
+                    << " Dataset: " << config_.dataset_name_
+                    << " Frame: " << frame_number
+                    << " Data type: " << decoder_->get_frame_bit_depth());
 
                 // Get the image size, with this we can work out if the frame has been compressed
                 uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);
@@ -133,19 +178,22 @@ namespace FrameProcessor
                 complete_frame->set_outer_chunk_size(decoder_->get_frame_outer_chunk_size());
                 frame_callback_(complete_frame);
 
-                // Update monitoring variables now that the Frame has been pushed
-                average_wrapping_cycles = 
-                    (average_wrapping_cycles + (rte_get_tsc_cycles() - start_compressing)) / 2;
+
+                // Calculate status
+                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                total_frame_cycles += cycles_spent;
+                cycles_working += cycles_spent;
+                
+                if (maximum_frame_cycles < cycles_spent)
+                {
+                    maximum_frame_cycles = cycles_spent;
+                }
+                
 
                 frames_per_second++;
-                frames_wrapped_++;
+                processed_frames_++;
 
-                // if(frame_number % 1000 == 0)
-                // {
-                //     LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number * decoder_->get_frame_outer_chunk_size());
-                // }
-
-                //LOG4CXX_INFO(logger_, "Wrapped frame: " << frame_number);
+                LOG4CXX_DEBUG(logger_,  config_.core_name << " : " << proc_idx_ << " Wrapped frame: " << frame_number);
             }
         }
 
@@ -174,13 +222,29 @@ namespace FrameProcessor
 
         std::string status_path = path + "/FrameWrapperCore_" + std::to_string(proc_idx_) + "/";
 
-        status.set_param(status_path + "frames_wrapped", frames_wrapped_);
+        // Create path for updstream ring status
+        std::string ring_status = status_path + "upstream_rings/";
 
-        status.set_param(status_path + "frames_wrapped_hz", frames_wrapped_hz_);
+        // Create path for timing status
+        std::string timing_status = status_path + "timing/";
 
+        // Frame status reporting
+        status.set_param(status_path + "frames_processed", processed_frames_);
+        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
         status.set_param(status_path + "idle_loops", idle_loops_);
+        status.set_param(status_path + "core_usage", (int)core_usage_);
+        status.set_param(status_path + "last_frame_number", last_frame_);
 
-        status.set_param(status_path + "frames_wrapped_us_compressing", avg_us_spent_wrapping_);
+        // Core timing status reporting
+        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
+        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+
+        // Upstream ring status
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
     }
 
     bool FrameWrapperCore::connect(void)

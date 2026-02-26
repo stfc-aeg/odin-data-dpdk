@@ -34,7 +34,7 @@ namespace FrameProcessor
     {
 
         // Calculate the number of buffers in the memory zone and check that it is non-zero
-        num_buffers_ = mem_size_ / buffer_size_;
+        num_buffers_ = mem_size_ / (buffer_size_);
         if (!num_buffers_)
         {
             // TODO - buffer size exceeds memory size - should raise an exception
@@ -42,25 +42,32 @@ namespace FrameProcessor
 
         // Create the memory zone for the shared memory buffer used to assemble frame packets
         name_ = shared_mem_name_str(socket_id_);
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating shared memory buffer " << name_
+        LOG4CXX_INFO(logger_, "Creating shared memory buffer " << name_
             << " of size " << mem_size_
             << " on socket " << socket_id_
+            << " With " << num_buffers_ << " with size " << buffer_size_ 
         );
+
+        // First try to lookup existing memzone
+        memzone_ = rte_memzone_lookup(name_.c_str());
+        if (memzone_ != NULL) {
+            LOG4CXX_INFO(logger_, "Found existing shared memory buffer " << name_);
+            return;
+        }
+
+        // If no existing memzone, try to create a new one
         memzone_ = rte_memzone_reserve(
-            name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB | RTE_MEMZONE_IOVA_CONTIG
+            name_.c_str(), mem_size_, socket_id_, RTE_MEMZONE_1GB
         );
 
         if (memzone_ == NULL)
         {
-            memzone_ = rte_memzone_lookup(name_.c_str());
-            if (memzone_ == NULL)
-            {
-                LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
+            LOG4CXX_ERROR(logger_, "Error creating shared memory buffer " << name_
                         << " on socket " << socket_id_
                         << " : " << rte_strerror(rte_errno)
+                        << " : " << rte_errno
                 );
-                // TODO - this is fatal and should raise an exception
-            }
+            throw std::runtime_error("Failed to create or find shared memory buffer");
         }
     }
 

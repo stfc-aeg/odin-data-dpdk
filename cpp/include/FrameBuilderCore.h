@@ -10,7 +10,7 @@ using namespace log4cxx::helpers;
 #include "DpdkSharedBuffer.h"
 #include "DpdkCoreConfiguration.h"
 #include "FrameBuilderConfiguration.h"
-#include "ProtocolDecoder.h"
+#include "network/PacketProtocolDecoder.h"
 #include <rte_ring.h>
 #include <blosc.h>
 
@@ -34,19 +34,22 @@ namespace FrameProcessor
 
     private:
         int proc_idx_;
-        ProtocolDecoder* decoder_;
+        PacketProtocolDecoder* decoder_;
         DpdkSharedBuffer* shared_buf_;
         FrameBuilderConfiguration config_;
 
         LoggerPtr logger_;
 
+        // Status reporting variables
         uint64_t built_frames_;
         uint64_t built_frames_hz_;
         uint64_t idle_loops_;
-        uint64_t avg_us_spent_building_;
+        uint64_t mean_us_on_frame_;
+        uint64_t maximum_us_on_frame_;
+        uint8_t core_usage_;
 
 
-        struct rte_ring* upstream_ring;
+        struct rte_ring* upstream_ring_;
         struct rte_ring* clear_frames_ring_;
         std::vector<struct rte_ring*> downstream_rings_;
     };

@@ -1,5 +1,5 @@
-#ifndef INCLUDE_PACKETPROCESSORCORE_H_
-#define INCLUDE_PACKETPROCESSORCORE_H_
+#ifndef INCLUDE_CameraCONTROLCORE_H_
+#define INCLUDE_CameraCONTROLCORE_H_
 
 #include <vector>
 
@@ -11,20 +11,26 @@ using namespace log4cxx::helpers;
 #include "DpdkWorkerCore.h"
 #include "DpdkSharedBuffer.h"
 #include "DpdkCoreConfiguration.h"
-#include "PacketProcessorConfiguration.h"
+#include "camera/CameraControlCoreConfiguration.h"
 #include "ProtocolDecoder.h"
+#include "camera/CameraController.h"
+
 #include <rte_ring.h>
 
+#include "IpcChannel.h"
+#include "IpcMessage.h"
+#include <boost/scoped_ptr.hpp>
+#include <boost/thread.hpp>
 
 namespace FrameProcessor
 {
-    class PacketProcessorCore : public DpdkWorkerCore
+    class CameraControlCore : public DpdkWorkerCore
     {
     public:
-        PacketProcessorCore(
+        CameraControlCore(
             int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
         );
-        ~PacketProcessorCore();
+        ~CameraControlCore();
 
         bool run(unsigned int lcore_id);
         void stop(void);
@@ -38,23 +44,16 @@ namespace FrameProcessor
         ProtocolDecoder* decoder_;
         DpdkSharedBuffer* shared_buf_;
 
-        PacketProcessorConfiguration config_;
-
+        CameraControlCoreConfiguration config_;
         LoggerPtr logger_;
 
-        uint64_t dropped_frames_;
-        uint64_t dropped_packets_;
-        int64_t current_frame_;
-        uint64_t incomplete_frames_;
-        uint64_t complete_frames_;
-        uint64_t frames_complete_hz_;
+        OdinData::IpcChannel Camera_Ctrl_Channel_;
 
-        int64_t first_frame_number_;
+        
+        CameraController* CameraController_;
 
-        struct rte_ring* packet_fwd_ring_;
-        struct rte_ring* packet_release_ring_;
         struct rte_ring* clear_frames_ring_;
         std::vector<struct rte_ring*> downstream_rings_;
     };
 }
-#endif // INCLUDE_PACKETPROCESSORCORE_H_
+#endif // INCLUDE_CameraControlCore_H_

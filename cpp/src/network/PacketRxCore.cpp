@@ -1,8 +1,9 @@
 #include <algorithm>
 #include <sstream>
-#include "PacketRxCore.h"
+#include <cstring>
+#include "network/PacketRxCore.h"
 #include "DpdkUtils.h"
-
+#include "dpdk_version_compatibiliy.h"
 
 namespace FrameProcessor
 {
@@ -10,17 +11,22 @@ namespace FrameProcessor
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
         DpdkWorkerCore(socket_id),
-        port_id_(dpdkWorkCoreReferences.port_id),
         proc_idx_(proc_idx),
-        decoder_(dpdkWorkCoreReferences.decoder),
+        decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         logger_(Logger::getLogger("FP.PacketRxCore")),
         first_frame_number_(-1),
-        rx_enable_(true),
-        rx_frames_(100000),
-        first_seen_frame_number_(-1)
+        rx_enable_(false),
+        rx_frames_(0),
+        first_seen_frame_number_(-1),
+        dropped_packets_(0),
+        captured_packets_(0),
+        total_packets_(0),
+        port_id_(UINT16_MAX),
+        device_configured_(false),
+        device_(nullptr)
     {
 
-        // Resolve configuration parameters for this core from the config object passed as an
+        // Resolve configuration parameters for athis core from the config object passed as an
         // argument, and the current port ID
         config_.resolve(dpdkWorkCoreReferences.core_config);
 
@@ -31,6 +37,13 @@ namespace FrameProcessor
             << " | num_downsteam_cores: " << config_.num_downstream_cores
         );
 
+
+        // Add devices provided in the configuration
+        if (!config_.pcie_device_.empty()) {
+            if (!add_device(config_.pcie_device_)) {
+                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << config_.pcie_device_);
+            }
+        }
 
         // Resolve the device MAC address for this port, to allow ARP requests to be responded to
         int rc = rte_eth_macaddr_get(port_id_, &dev_eth_addr_);
@@ -68,10 +81,10 @@ namespace FrameProcessor
         {
             ring_name = ring_name_str(config_.core_name, socket_id_, core_idx);
             LOG4CXX_INFO(logger_, "Creating packet forward ring name "
-                << ring_name << " of size " << ring_size
+                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
             );
             struct rte_ring *fwd_ring = rte_ring_create(
-                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ
+                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ  
             );
             if (fwd_ring == NULL)
             {
@@ -87,7 +100,7 @@ namespace FrameProcessor
         ring_name = ring_name_pkt_release(socket_id_);
         ring_size = nearest_power_two(config_.release_ring_size_);
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
-            << ring_name << " of size " << ring_size
+            << ring_name << " of size " << ring_size << " numa node: " << socket_id_
         );
         packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
         if (packet_release_ring_ == NULL)
@@ -133,6 +146,10 @@ namespace FrameProcessor
         // Free the packet release ring
         rte_ring_free(packet_release_ring_);
 
+        if (device_) {
+            remove_device();
+        }
+
     }
 
     bool PacketRxCore::run(unsigned int lcore_id)
@@ -153,19 +170,19 @@ namespace FrameProcessor
         struct rte_icmp_hdr *pkt_icmp_hdr;
         struct rte_udp_hdr *pkt_udp_hdr;
 
-        uint64_t first = rte_get_tsc_cycles();
-        uint64_t ticks_per_sec = rte_get_tsc_hz();
-
         uint16_t num_replies = 0;
-
-        uint64_t packet_counter_ = 0;
 
         bool pkt_tx_reply = false;
         bool pkt_forwarded = false;
 
+        // check to see if a valid device has been configured
+        if (!device_configured_ || !device_) {
+            LOG4CXX_ERROR(logger_, "No device configured. Stopping RxCore.");
+            return false;
+        }
+
         while (likely(run_lcore_))
         {
-
             uint16_t num_rx_pkts = rte_eth_rx_burst(
                 port_id_, config_.rx_queue_id_, pkt_bufs, config_.rx_burst_size_
             );
@@ -222,7 +239,7 @@ namespace FrameProcessor
                                     &pkt, &pkt_ether_hdr, &pkt_ipv4_hdr, &pkt_udp_hdr
                                 );
 
-                                packet_counter_++;
+                                
                                                                 
                                 break;
 
@@ -237,20 +254,26 @@ namespace FrameProcessor
 
                 } // switch(rte_bswap16(pkt_ether_hdr->ether_type))
 
+
+                total_packets_++;
+
                 // If a handler wants to send a reply to the packet, add it to the buffer
                 // and increment the number of replies. If the packet has been forwarded by a
                 // handler (e.g. valid UDP packets) do nothing, otherwise free the packet mbuf
                 if (pkt_tx_reply)
                 {
                     pkt_bufs[num_replies++] = pkt;
+                    dropped_packets_++;
                 }
                 else if (pkt_forwarded)
                 {
                     // Do nothing with the packet - handler has forwarded it
+                    captured_packets_++;
                 }
                 else
                 {
                     rte_pktmbuf_free(pkt);
+                    dropped_packets_++;
                 }
             } // for (uint16_t idx = 0; idx < num_rx_pkts; idx++)
 
@@ -266,7 +289,7 @@ namespace FrameProcessor
                     uint32_t retry = 0;
                     while ((num_tx_pkts < num_replies) && (retry++ < config_.max_packet_tx_retries_))
                     {
-                        rte_delay_us(1);
+                        //rte_delay_us(1);
                         num_tx_pkts += rte_eth_tx_burst(
                             port_id_, config_.tx_queue_id_, &pkt_bufs[num_tx_pkts],
                             num_replies - num_tx_pkts
@@ -286,9 +309,10 @@ namespace FrameProcessor
             }
 
             // Free packets fed back on the release ring from downstream cores
-            if (rte_ring_dequeue_bulk(packet_release_ring_, (void **)&release_pkt, config_.rx_burst_size_, NULL) > 0)
+            uint16_t num_released = rte_ring_dequeue_burst(packet_release_ring_, (void **)&release_pkt, config_.rx_burst_size_, NULL);
+            if (num_released > 0)
             {
-                rte_pktmbuf_free_bulk((struct rte_mbuf **)&release_pkt, config_.rx_burst_size_);
+                rte_pktmbuf_free_bulk((struct rte_mbuf **)&release_pkt, num_released);
             }
         }
 
@@ -375,7 +399,7 @@ namespace FrameProcessor
     {
         bool tx_reply = false;
 
-        if (((*pkt_icmp_hdr)->icmp_type == RTE_IP_ICMP_ECHO_REQUEST) &&
+        if (((*pkt_icmp_hdr)->icmp_type == RTE_ICMP_TYPE_ECHO_REQUEST) &&
             ((*pkt_icmp_hdr)->icmp_code == 0))
         {
 
@@ -395,11 +419,11 @@ namespace FrameProcessor
             (*pkt_ipv4_hdr)->src_addr = (*pkt_ipv4_hdr)->dst_addr;
             (*pkt_ipv4_hdr)->dst_addr = tmp_ip_addr;
 
-            (*pkt_icmp_hdr)->icmp_type = RTE_IP_ICMP_ECHO_REPLY;
+            (*pkt_icmp_hdr)->icmp_type = RTE_ICMP_TYPE_ECHO_REPLY;
 
             uint32_t cksum = ~(*pkt_icmp_hdr)->icmp_cksum & 0xFFFF;
-            cksum += ~htons(RTE_IP_ICMP_ECHO_REQUEST << 8) & 0xFFFF;
-            cksum += htons(RTE_IP_ICMP_ECHO_REPLY << 8);
+            cksum += ~htons(RTE_ICMP_TYPE_ECHO_REQUEST << 8) & 0xFFFF;
+            cksum += htons(RTE_ICMP_TYPE_ECHO_REPLY << 8);
             cksum = (cksum & 0xffff) + (cksum >> 16);
             cksum = (cksum & 0xffff) + (cksum >> 16);
             (*pkt_icmp_hdr)->icmp_cksum = ~cksum;
@@ -434,12 +458,12 @@ namespace FrameProcessor
 
         uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
 
-        LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-            << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
-            << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
-            << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
-            << " rx port: " << dst_port
-        );
+        // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
+        //     << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
+        //     << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
+        //     << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
+        //     << " rx port: " << dst_port
+        // );
 
         // If the destination port is in the list of allowed RX ports continue to process the
         // packet
@@ -465,17 +489,18 @@ namespace FrameProcessor
             // to create a variable to offset the frame number by, allow for frames to be
             // distributed as it the first frame has a frame number of 0
 
+            uint64_t packet_number = decoder_->get_packet_number(pkt_header);
+            uint64_t frame_number = decoder_->get_frame_number(pkt_header);
+
             if(unlikely(first_frame_number_ == -1))
             {
-                uint64_t packet_number = decoder_->get_packet_number(pkt_header);
-                uint64_t frame_number = decoder_->get_frame_number(pkt_header);
 
                 // Check if this is the first packet of a frame or the first seen packet of a new frame
 
                 if (packet_number == 0 || frame_number > first_seen_frame_number_)
                 {
-                    first_frame_number_ = decoder_->get_frame_number(pkt_header);
-                    LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
+                    first_frame_number_ = frame_number;
+                    // LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
                 }
                 else
                 {
@@ -486,7 +511,7 @@ namespace FrameProcessor
                 }
             }
 
-            uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
+            uint64_t current_frame_number = frame_number - first_frame_number_;
 
             // Check to see if the packet recieved is within the current aquisition
             // if not then return this function and discard the packet
@@ -497,10 +522,10 @@ namespace FrameProcessor
             }
 
 
-            LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-                << " protocol header: frame: " << current_frame_number
-                << " packet: " << decoder_->get_packet_number(pkt_header)
-            );
+            // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
+            //     << " protocol header: frame: " << current_frame_number
+            //     << " packet: " << decoder_->get_packet_number(pkt_header)
+            // );
 
             // Queue the packet on the appropriate forwarding ring based on the frame number
             int rc = rte_ring_enqueue(
@@ -513,33 +538,187 @@ namespace FrameProcessor
                 uint32_t retry = 0;
                 while ((rc != 0) && (retry++ < config_.max_packet_queue_retries_))
                 {
-                    rte_delay_us(1);
+                    //rte_delay_us(1);
                     rc = rte_ring_enqueue(
                         packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores],
                         *pkt
                     );
                 }
+                LOG4CXX_INFO(logger_, "PacketRxCore failed to enqueue packet, ring full");
             }
 
 
             if (likely(rc == 0))
             {
                 pkt_forwarded = true;
+                // The packet was enqueued to a packet ring, increment the captured packet counter
             }
         }
 
         return pkt_forwarded;
     }
 
+    bool PacketRxCore::add_device(const std::string& pci_address)
+    {
+        if (device_configured_) {
+            LOG4CXX_WARN(logger_, "Device already configured. Ignoring: " << pci_address);
+            return false;
+        }
+
+        int ret = rte_eal_hotplug_add("pci", pci_address.c_str(), "");
+        if (ret < 0) {
+            LOG4CXX_ERROR(logger_, "Failed to hot plug device: " << pci_address);
+            return false;
+        }
+
+        ret = rte_eth_dev_get_port_by_name(pci_address.c_str(), &port_id_);
+        if (ret != 0) {
+            LOG4CXX_ERROR(logger_, "Failed to get port ID for device: " << pci_address);
+            return false;
+        }
+
+        device_ = new DpdkDevice(port_id_, config_.dpdk_device());
+        if (!device_->start()) {
+            LOG4CXX_ERROR(logger_, "Failed to start device: " << pci_address);
+            delete device_;
+            device_ = nullptr;
+            return false;
+        }
+
+        device_configured_ = true;
+        LOG4CXX_INFO(logger_, "Successfully added device: " << pci_address << " (Port ID: " << port_id_ << ")");
+        return true;
+    }
+    
+    bool PacketRxCore::remove_device()
+    {
+        if (!device_configured_) {
+            return true;
+        }
+
+        if (device_) {
+            device_->stop();
+            delete device_;
+            device_ = nullptr;
+        }
+
+        int ret = rte_eal_hotplug_remove("pci", config_.pcie_device_.c_str());
+        if (ret < 0) {
+            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << config_.pcie_device_);
+            return false;
+        }
+
+        device_configured_ = false;
+        port_id_ = UINT16_MAX;
+        LOG4CXX_INFO(logger_, "Successfully removed device: " << config_.pcie_device_);
+        return true;
+    }
+
     void PacketRxCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-
         LOG4CXX_DEBUG(logger_, "Status requested for packetrxcore_" << port_id_
             << " from the DPDK plugin");
 
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
 
-        status.set_param(status_path + "total_packets", packet_counter_);
+        // Original status parameters
+        status.set_param(status_path + "total_packets", total_packets_);
+        status.set_param(status_path + "dropped_packets", dropped_packets_);
+        status.set_param(status_path + "captured_packets", captured_packets_);
+        status.set_param(status_path + "rx_enable", rx_enable_);
+        status.set_param(status_path + "rx_frames", rx_frames_);
+        status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
+        status.set_param(status_path + "first_frame_number", first_frame_number_);
+
+        // RX Queue packet count
+        if (device_configured_ && port_id_ != UINT16_MAX) {
+            int rx_queue_count = rte_eth_rx_queue_count(port_id_, config_.rx_queue_id_);
+            if (rx_queue_count >= 0) {
+                status.set_param(status_path + "rx_queue_packet_count", (uint64_t)rx_queue_count);
+            }
+        }
+
+        // Port Extended Statistics (xstats)
+        if (device_configured_ && port_id_ != UINT16_MAX) {
+            int len = rte_eth_xstats_get(port_id_, NULL, 0);
+            if (len > 0) {
+                struct rte_eth_xstat *xstats = (struct rte_eth_xstat *)calloc(len, sizeof(*xstats));
+                struct rte_eth_xstat_name *xstats_names = (struct rte_eth_xstat_name *)calloc(len, sizeof(*xstats_names));
+
+                if (xstats && xstats_names) {
+                    int ret = rte_eth_xstats_get(port_id_, xstats, len);
+                    if (ret >= 0 && ret <= len) {
+                        ret = rte_eth_xstats_get_names(port_id_, xstats_names, len);
+                        if (ret >= 0 && ret <= len) {
+                            std::string xstats_path = status_path + "port_xstats/";
+                            for (int i = 0; i < len; i++) {
+                                if (xstats[i].value > 0) {
+                                    std::string stat_name(xstats_names[i].name);
+                                    status.set_param(xstats_path + stat_name, xstats[i].value);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (xstats) free(xstats);
+                if (xstats_names) free(xstats_names);
+            }
+        }
+
+        // Memory pool monitoring - requires DpdkDevice::get_mbuf_pool() method
+        // TODO: Add getter method to DpdkDevice class: struct rte_mempool* get_mbuf_pool() const { return mbuf_pool_; }
+        if (device_) {
+            // Try to lookup mbuf pool by name (if mbuf_pool_name_str function is available)
+            std::string mbuf_pool_name = mbuf_pool_name_str(socket_id_);
+            struct rte_mempool* mbuf_pool = rte_mempool_lookup(mbuf_pool_name.c_str());
+
+            if (mbuf_pool) {
+                uint32_t mbuf_avail = rte_mempool_avail_count(mbuf_pool);
+                uint32_t mbuf_in_use = rte_mempool_in_use_count(mbuf_pool);
+                uint32_t mbuf_total = mbuf_avail + mbuf_in_use;
+
+                status.set_param(status_path + "mbuf_pool_available", mbuf_avail);
+                status.set_param(status_path + "mbuf_pool_in_use", mbuf_in_use);
+                status.set_param(status_path + "mbuf_pool_total", mbuf_total);
+                status.set_param(status_path + "mbuf_pool_utilization_pct",
+                                mbuf_total > 0 ? (mbuf_in_use * 100) / mbuf_total : 0);
+            }
+        }
+
+        // Release ring monitoring
+        if (packet_release_ring_) {
+            uint64_t release_ring_count = (uint64_t)rte_ring_count(packet_release_ring_);
+            uint64_t release_ring_free = (uint64_t)rte_ring_free_count(packet_release_ring_);
+            uint64_t release_ring_size = (uint64_t)rte_ring_get_size(packet_release_ring_);
+
+            status.set_param(status_path + "release_ring_count", release_ring_count);
+            status.set_param(status_path + "release_ring_free", release_ring_free);
+            status.set_param(status_path + "release_ring_size", release_ring_size);
+            uint64_t release_utilization_pct = release_ring_size > 0 ? (release_ring_count * 100) / release_ring_size : 0;
+            status.set_param(status_path + "release_ring_utilization_pct", release_utilization_pct);
+        }
+
+        // Forward rings monitoring
+        for (size_t i = 0; i < packet_forward_rings_.size(); ++i) {
+            if (packet_forward_rings_[i]) {
+                std::string fwd_ring_path = status_path + "forward_ring_" + std::to_string(i) + "_";
+                uint64_t fwd_ring_count = (uint64_t)rte_ring_count(packet_forward_rings_[i]);
+                uint64_t fwd_ring_free = (uint64_t)rte_ring_free_count(packet_forward_rings_[i]);
+                uint64_t fwd_ring_size = (uint64_t)rte_ring_get_size(packet_forward_rings_[i]);
+
+                status.set_param(fwd_ring_path + "count", fwd_ring_count);
+                status.set_param(fwd_ring_path + "free", fwd_ring_free);
+                status.set_param(fwd_ring_path + "size", fwd_ring_size);
+                uint64_t fwd_utilization_pct = fwd_ring_size > 0 ? (fwd_ring_count * 100) / fwd_ring_size : 0;
+                status.set_param(fwd_ring_path + "utilization_pct", fwd_utilization_pct);
+            }
+        }
+
+        // Additional performance metrics
+        status.set_param(status_path + "num_downstream_cores", (uint64_t)config_.num_downstream_cores);
+        status.set_param(status_path + "rx_burst_size", (uint64_t)config_.rx_burst_size_);
+        status.set_param(status_path + "max_packet_queue_retries", (uint64_t)config_.max_packet_queue_retries_);
     }
 
     bool PacketRxCore::connect(void)

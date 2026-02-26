@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odin-data-dpdk"
+version = "0.1.0"
+description = "Python interface for ODIN Data DPDK communication"
+readme = "README.md"
+requires-python = ">=3.7"
+
+dependencies = [
+    "numpy",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/stfc-aeg/odin-data-dpdk"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Include the shared library files
+[tool.setuptools.package-data]
+"odin_data_dpdk.lib" = ["*.so"]

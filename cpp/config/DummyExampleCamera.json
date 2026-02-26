@@ -1,0 +1,143 @@
+[
+    {
+        "fr_setup": {
+            "fr_ready_cnxn": "tcp://0.0.0.0:6969",
+            "fr_release_cnxn": "tcp://0.0.0.0:6970"
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "DummyDpdkCamera",
+                "name": "DummyDpdkCameraPlugin",
+                "library": "./lib/libDummyDpdkCameraPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "Liveview",
+                "name": "LiveViewPlugin",
+                "library": "./lib/libLiveViewPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "hdf",
+                "name": "FileWriterPlugin",
+                "library": "./lib/libHdf5Plugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "DummyDpdkCamera",
+                "connection": "frame_receiver"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "Liveview",
+                "connection": "DummyDpdkCamera"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "hdf",
+                "connection": "Liveview"
+            }
+        }
+    },
+    {
+        "DummyDpdkCamera": {
+            "update_config": false,
+            "dpdk_process_rank": 0,
+            "num_secondary_processes": 0,
+            "shared_buffer_size": 17179869184,
+            "dpdk_eal": {
+                "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
+                "loglevel": "debug",
+                "proc-type": "Primary",
+                "file-prefix": "odin-data"
+            },
+            "worker_cores": {
+                "camera_capture": {
+                    "core_name": "CameraCaptureCore",
+                    "num_cores": 1
+                },
+                
+                "camera_control": {
+                    "core_name": "CameraControlCore",
+                    "num_cores": 1,
+                    "camera_config": {
+                        "camera_name": "SimulatedDpdkCamera",
+                        "camera_number": 1,
+                        "image_timeout": 10.0,
+                        "num_frames": 0,
+                        "timestamp_mode": 2,
+                        "frame_height": 2304,
+                        "frame_width": 4096,
+                        "frame_bitdepth": 16,
+                        "image_file_path": "/livex_sw/install/simulated_frames.h5",
+                        "dataset_name": "test-image",
+                        "frames_per_second": 10,
+                        "enable_text_overlay": true,
+                        "enable_frame_number_overlay": true
+                    }
+                },
+                "frame_wrapper": {
+                    "core_name": "FrameWrapperCore",
+                    "dataset_name": "dummy",
+                    "num_cores": 1,
+                    "connect": "camera_capture"
+                }
+            }
+        }
+    },
+    {
+        "hdf": {
+            "dataset": {
+                "dummy": {
+                    "datatype": "uint16",
+                    "dims": [
+                        2304,
+                        4096
+                    ],
+                    "chunks": [
+                        1,
+                        2304,
+                        4096
+                    ],
+                    "compression": "none"
+                }
+            },
+            "file": {
+                "path": "/data/"
+            },
+            "frames": 250,
+            "acquisition_id": "default",
+            "write": false,
+            "timeout_timer_period": 10000,
+            "process": {
+                "number": 1,
+                "rank": 0
+            }
+        },
+        "Liveview":       
+        {
+            "frame_frequency": 0,
+            "per_second": 1,
+            "live_view_socket_addr": "tcp://0.0.0.0:5020",
+            "dataset_name": "",
+            "filter_tagged": ""
+        }
+    }
+]

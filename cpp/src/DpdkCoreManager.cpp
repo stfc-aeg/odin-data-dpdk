@@ -20,6 +20,7 @@
 #include <rte_lcore.h>
 #include <rte_debug.h>
 #include <rte_errno.h>
+#include <rte_ethdev.h>
 
 #include "DpdkUtils.h"
 #include "DpdkCoreLoader.h"
@@ -43,7 +44,7 @@ namespace FrameProcessor
 
         // Update core configuration parameters from the config message provided in the arguments
         ParamContainer::Document config_params;
-        config.encode_params(config_params);
+        config.copy_params(config_params);
         core_config_.update(config_params);
 
         // Create a custom IO stream bound to a local method, which can be used to redirect DPDK
@@ -61,16 +62,19 @@ namespace FrameProcessor
         std::vector<char *> eal_argv;
         int eal_argc = build_dpdk_eal_args(config, eal_argv);
 
-        // Initialise the DPDK EAL. This will pin the current thread of execution to the master
-        // lcore
+        // Attempt to initialize the DPDK EAL - this may fail if already initialized
         int rc = rte_eal_init(eal_argc, eal_argv.data());
-        if (rc < 0)
+        if (rc < 0 && rte_errno != EALREADY)
         {
             std::stringstream ss;
             ss << "Failed to initialise DPDK EAL: " << rte_strerror(rte_errno);
-            // this->set_error(ss.str());
             reply.set_msg_type(OdinData::IpcMessage::MsgTypeNack);
             reply.set_param("error", ss.str());
+            throw std::runtime_error(ss.str());
+        }
+        else if (rc < 0 && rte_errno == EALREADY)
+        {
+            LOG4CXX_INFO(logger_, "DPDK EAL already initialized, continuing...");
         }
 
         // Restore syslog and stderr to their original state
@@ -81,172 +85,269 @@ namespace FrameProcessor
         // Bind the custom IO stream to the DPDK logger
         rte_openlog_stream(fopencookie(nullptr, "w", dpdk_log_funcs));
 
-       // Construct array of worker lcores by NUMA socket available to DPDK
+       // Initialize array to store worker lcores grouped by their NUMA socket
+        LOG4CXX_INFO(logger_, "Detected " << rte_socket_count() << " NUMA sockets");
         for (int i = 0 ; i < rte_socket_count(); i++)
         {
             std::vector<int> vc;
             available_core_ids_.push_back(vc);
         }
+        // Iterate through all worker lcores and map them to their sockets
         int lcore_id;
+        LOG4CXX_INFO(logger_, "Mapping available DPDK worker lcores to sockets:");
         RTE_LCORE_FOREACH_WORKER(lcore_id)
         {
             unsigned int lcore_socket = rte_lcore_to_socket_id(lcore_id);
+            LOG4CXX_INFO(logger_, "  DPDK lcore " << lcore_id << " -> socket " << lcore_socket);
             available_core_ids_[lcore_socket].push_back(lcore_id);
         }
-
-
-        if(core_config_.worker_core_params_.IsObject()) {
-
-            // Construct the core_chain_order_
-            for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
-                itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
-            {
-                const char* json_key = itr->name.GetString();
-                const rapidjson::Value& core_config = itr->value;
-
-                if(core_config.HasMember("connect")) {
-                    std::string upstream_core = core_config["connect"].GetString();
-
-                    // Add this pair to the bimap
-                    core_chain_order_.insert({upstream_core, json_key});
-                }
+        // Log the final mapping
+        for (size_t i = 0; i < available_core_ids_.size(); i++) {
+            std::stringstream ss;
+            ss << "Socket " << i << " has cores: ";
+            for (auto core : available_core_ids_[i]) {
+                ss << core << " ";
             }
-
-            // Iterate to add "num_downstream_cores" to the upstream cores
-            for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
-                itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
-            {
-                const char* json_key = itr->name.GetString();
-                const rapidjson::Value& core_config = itr->value;
-
-                if(core_config.HasMember("connect") && core_config["connect"].IsString()) {
-                    std::string upstream_core_json_key = core_config["connect"].GetString();
-
-                    // Find the core this one connects to, and add the new field "num_downstream_cores" to it
-                    if(core_config.HasMember("num_cores") && core_config["num_cores"].IsInt()) {
-                        int num_downstream_cores = core_config["num_cores"].GetInt();
-
-                        // Check the upstream core for the "secondary_fanout" flag and adjust number of downstream cores accordingly
-                        const rapidjson::Value& upstream_core_config = core_config_.worker_core_params_[upstream_core_json_key.c_str()];
-                        if(upstream_core_config.HasMember("secondary_fanout") && upstream_core_config["secondary_fanout"].GetBool()) {
-                            num_downstream_cores += num_downstream_cores * core_config_.num_secondary_processes_;
-                        }
-                                
-                        // Ensure the upstream core exists before adding the member
-                        if(core_config_.worker_core_params_.HasMember(upstream_core_json_key.c_str())) {
-                            core_config_.worker_core_params_[upstream_core_json_key.c_str()].AddMember("num_downstream_cores", 
-                                rapidjson::Value(num_downstream_cores), core_config_.worker_core_params_.GetAllocator());
-                        }
-                    }
-                }
-
-                // Find the "upstream_core" for the current core
-                if(core_chain_order_.right.count(json_key) > 0)
-                {
-                    std::string upstream_core_name = core_chain_order_.right.at(json_key);
-                    std::string upstream_core = core_config_.worker_core_params_[upstream_core_name.c_str()]["core_name"].GetString();
-
-                    // Add the new field "upstream_core" to the current core.
-                    core_config_.worker_core_params_[json_key].AddMember("upstream_core", 
-                        rapidjson::Value(upstream_core.c_str(), core_config_.worker_core_params_.GetAllocator()), 
-                        core_config_.worker_core_params_.GetAllocator());
-                }
-            }
+            LOG4CXX_INFO(logger_, ss.str());
         }
 
+
+        try {
+            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Beginning worker core configuration parsing");
         
-
-
-
-        // Loop over all the ethernet devices available to DPDK, creating a device for each of them
-        int port_id;
-        RTE_ETH_FOREACH_DEV(port_id)
-        {
-            DpdkDevice* device = new DpdkDevice(port_id);
-            devices_.push_back(device);
-            LOG4CXX_INFO(logger_, "Device on port " << port_id
-                << " socket " << device->socket_id()
-                << " has " << available_core_ids_[device->socket_id()].size()
-                << " lcores available"
-            );
-        }
-
-        // Loop over initialised devices, creating a shared memory buffer and registering worker
-        // cores for each as appropriate
-        for (auto& device: devices_)
-        {
-            
-            // Create a shared buffer for packet processor cores to build raw frames into. This will
-            // be shared between all PPCs, where the first to start will set up the frame processed
-            // ring
-            DpdkSharedBuffer* shared_buffer =
-                new DpdkSharedBuffer(
-                    core_config_.shared_buffer_size_, decoder->get_frame_buffer_size(),
-                    device->socket_id()
-                );
-            shared_buffers_.push_back(shared_buffer);
-            LOG4CXX_DEBUG(logger_, "Created shared buffer for device on port " << device->port_id()
-                << " socket " << device->socket_id()
-                << " total size " << shared_buffer->get_mem_size()
-                << " buffer size " << shared_buffer->get_buffer_size()
-                << " num buffers " << shared_buffer->get_num_buffers()
-            );
-
-            // Declare composite data structure to hold the configuration that all workers will likely require
-
-            // change name
-            DpdkWorkCoreReferences dpdkWorkCoreReferences = 
-            {
-                core_config_,
-                decoder,
-                frame_callback_,
-                shared_buffer,
-                device->port_id()
-
-            };
-
-
             if(core_config_.worker_core_params_.IsObject()) {
+                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: worker_core_params_ is a valid object with " 
+                            << core_config_.worker_core_params_.MemberCount() << " members");
+        
+                // Construct the core_chain_order_
+                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Building core chain order mapping");
                 for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
                     itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
                 {
-                    // Check if the current worker has "num_cores" and "core_name"
-                    if(itr->value.HasMember("num_cores") && itr->value["num_cores"].IsInt() &&
-                    itr->value.HasMember("core_name") && itr->value["core_name"].IsString())
-                    {
-                        // Extract the number of cores and the worker class name
-                        unsigned int num_cores = itr->value["num_cores"].GetUint();
-                        std::string worker_class_name = itr->value["core_name"].GetString();
-
-                        unsigned int process_offset = num_cores * core_config_.dpdk_process_rank_;
-
-                        // Launch each worker core
-                        for(unsigned int i = 0; i < num_cores; i++)
+                    try {
+                        const char* json_key = itr->name.GetString();
+                        LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Processing core: " << json_key);
+                        
+                        const rapidjson::Value& core_config = itr->value;
+                        
+                        if (!core_config.IsObject()) {
+                            LOG4CXX_WARN(logger_, "DPDKCoreManager: Core config for " << json_key << " is not an object, skipping");
+                            continue;
+                        }
+        
+                        if(core_config.HasMember("connect")) {
+                            if (!core_config["connect"].IsString()) {
+                                LOG4CXX_WARN(logger_, "DPDKCoreManager: 'connect' field for " << json_key << " is not a string, skipping");
+                                continue;
+                            }
+                            
+                            std::string upstream_core = core_config["connect"].GetString();
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Core " << json_key << " connects to upstream core " << upstream_core);
+        
+                            // Add this pair to the bimap
+                            core_chain_order_.insert({upstream_core, json_key});
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Added connection " << upstream_core << " -> " << json_key << " to chain order");
+                        } else {
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Core " << json_key << " has no upstream connection");
+                        }
+                    } catch (const std::exception& ex) {
+                        LOG4CXX_ERROR(logger_, "DPDKCoreManager: Exception while processing core chain: " << ex.what());
+                    }
+                }
+        
+        
+                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Matching upstream to downstream cores and adding metadata");
+        
+                // Iterate to add "num_downstream_cores" to the upstream cores
+                for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
+                    itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
+                {
+                    try {
+                        const char* json_key = itr->name.GetString();
+                        LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Processing downstream metadata for core: " << json_key);
+                        
+                        const rapidjson::Value& core_config = itr->value;
+                        
+                        if (!core_config.IsObject()) {
+                            LOG4CXX_WARN(logger_, "DPDKCoreManager: Core config for " << json_key << " is not an object, skipping metadata");
+                            continue;
+                        }
+        
+                        // Process "num_downstream_cores" for the upstream core
+                        if(core_config.HasMember("connect")) {
+                            if (!core_config["connect"].IsString()) {
+                                LOG4CXX_WARN(logger_, "DPDKCoreManager: 'connect' field for " << json_key << " is not a string, skipping");
+                                continue;
+                            }
+                            
+                            std::string upstream_core_json_key = core_config["connect"].GetString();
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Found upstream connection to " << upstream_core_json_key << " for core " << json_key);
+        
+                            // Find the core this one connects to, and add the new field "num_downstream_cores" to it
+                            if(core_config.HasMember("num_cores") && core_config["num_cores"].IsInt()) {
+                                int num_downstream_cores = core_config["num_cores"].GetInt();
+                                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Core " << json_key << " has " << num_downstream_cores << " initial downstream cores");
+        
+                                // Check if the upstream core exists
+                                if(!core_config_.worker_core_params_.HasMember(upstream_core_json_key.c_str())) {
+                                    LOG4CXX_ERROR(logger_, "DPDKCoreManager: Upstream core " << upstream_core_json_key << " not found in configuration");
+                                    continue;
+                                }
+        
+                                // Check the upstream core for the "secondary_fanout" flag and adjust number of downstream cores accordingly
+                                const rapidjson::Value& upstream_core_config = core_config_.worker_core_params_[upstream_core_json_key.c_str()];
+                                
+                                if (!upstream_core_config.IsObject()) {
+                                    LOG4CXX_ERROR(logger_, "DPDKCoreManager: Upstream core config for " << upstream_core_json_key << " is not an object");
+                                    continue;
+                                }
+        
+                                if(upstream_core_config.HasMember("secondary_fanout") && upstream_core_config["secondary_fanout"].IsBool() && 
+                                    upstream_core_config["secondary_fanout"].GetBool()) {
+                                    int original_cores = num_downstream_cores;
+                                    num_downstream_cores += num_downstream_cores * core_config_.num_secondary_processes_;
+                                    LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Secondary fanout applied, increasing downstream cores from " 
+                                                << original_cores << " to " << num_downstream_cores);
+                                }
+                                        
+                                // Ensure the upstream core exists before adding the member
+                                if(core_config_.worker_core_params_.HasMember(upstream_core_json_key.c_str())) {
+                                    try {
+                                        LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Adding num_downstream_cores=" << num_downstream_cores 
+                                                    << " to upstream core " << upstream_core_json_key);
+                                        core_config_.worker_core_params_[upstream_core_json_key.c_str()].AddMember("num_downstream_cores", 
+                                            rapidjson::Value(num_downstream_cores), core_config_.worker_core_params_.GetAllocator());
+                                    } catch (const std::exception& ex) {
+                                        LOG4CXX_ERROR(logger_, "DPDKCoreManager: Exception while adding num_downstream_cores to " 
+                                                    << upstream_core_json_key << ": " << ex.what());
+                                    }
+                                }
+                            } else {
+                                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Core " << json_key << " doesn't have a valid 'num_cores' field");
+                            }
+                        }
+        
+                        // Find the "upstream_core" for the current core
+                        LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Looking for upstream core name for " << json_key);
+                        if(core_chain_order_.right.count(json_key) > 0)
                         {
-                            LOG4CXX_INFO(logger_, "Launching worker core from class: " << worker_class_name);
+                            std::string upstream_core_name = core_chain_order_.right.at(json_key);
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Found upstream core JSON key: " << upstream_core_name << " for " << json_key);
+                            
+                            // Check if the upstream core JSON key exists and has a core_name
+                            if(!core_config_.worker_core_params_.HasMember(upstream_core_name.c_str())) {
+                                LOG4CXX_ERROR(logger_, "DPDKCoreManager: Upstream core " << upstream_core_name << " not found in configuration");
+                                continue;
+                            }
+                            
+                            const rapidjson::Value& upstream_core_config = core_config_.worker_core_params_[upstream_core_name.c_str()];
+                            if(!upstream_core_config.HasMember("core_name") || !upstream_core_config["core_name"].IsString()) {
+                                LOG4CXX_ERROR(logger_, "DPDKCoreManager: Upstream core " << upstream_core_name << " doesn't have a valid 'core_name' field");
+                                continue;
+                            }
+                            
+                            std::string upstream_core = upstream_core_config["core_name"].GetString();
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Adding upstream_core=" << upstream_core << " to core " << json_key);
+        
+                            try {
+                                // Add the new field "upstream_core" to the current core.
+                                core_config_.worker_core_params_[json_key].AddMember("upstream_core", 
+                                    rapidjson::Value(upstream_core.c_str(), core_config_.worker_core_params_.GetAllocator()), 
+                                    core_config_.worker_core_params_.GetAllocator());
+                            } catch (const std::exception& ex) {
+                                LOG4CXX_ERROR(logger_, "DPDKCoreManager: Exception while adding upstream_core to " 
+                                            << json_key << ": " << ex.what());
+                            }
+                        } else {
+                            LOG4CXX_DEBUG(logger_, "DPDKCoreManager: No upstream core found for " << json_key << " in core_chain_order_");
+                        }
+                    } catch (const std::exception& ex) {
+                        LOG4CXX_ERROR(logger_, "DPDKCoreManager: Exception while processing downstream metadata: " << ex.what());
+                    }
+                }
+                LOG4CXX_DEBUG(logger_, "DPDKCoreManager: Completed worker core configuration processing");
+            } else {
+                LOG4CXX_WARN(logger_, "DPDKCoreManager: worker_core_params_ is not a valid object");
+            }
+        } catch (const std::exception& ex) {
+            LOG4CXX_ERROR(logger_, "DPDKCoreManager: Fatal exception during core configuration: " << ex.what());
+        }
 
-                            boost::shared_ptr<DpdkWorkerCore> core = FrameProcessor::DpdkCoreLoader<DpdkWorkerCore>::load_class(
-                                worker_class_name.c_str(),
-                                i + process_offset,
-                                device->socket_id(),
-                                dpdkWorkCoreReferences
-                            );
+            
+        // Create a shared buffer for packet processor cores to build raw frames into. This will
+        // be shared between all PPCs, where the first to start will set up the frame processed
+        // ring
 
-                            register_worker_core(core);
+        LOG4CXX_DEBUG(logger_, " DPDKCoreManager: Creating SharedBuffer");
+        DpdkSharedBuffer* shared_buffer =
+            new DpdkSharedBuffer(
+                core_config_.shared_buffer_size_, decoder->get_frame_buffer_size(),
+                core_config_.socket_
+            );
+
+        shared_buffers_.push_back(shared_buffer);
+        LOG4CXX_DEBUG(logger_, "Created shared buffer for worker cores"
+            << " socket " << 0
+            << " total size " << shared_buffer->get_mem_size()
+            << " buffer size " << shared_buffer->get_buffer_size()
+            << " num buffers " << shared_buffer->get_num_buffers()
+        );
+
+        // Declare composite data structure to hold the configuration that all workers will likely require
+        DpdkWorkCoreReferences dpdkWorkCoreReferences = 
+        {
+            core_config_,
+            decoder,
+            frame_callback_,
+            shared_buffer,
+        };
+
+
+        if(core_config_.worker_core_params_.IsObject()) {
+            for (rapidjson::Value::ConstMemberIterator itr = core_config_.worker_core_params_.MemberBegin();
+                itr != core_config_.worker_core_params_.MemberEnd(); ++itr)
+            {
+                // Check if the current worker has "num_cores" and "core_name"
+                if(itr->value.HasMember("num_cores") && itr->value["num_cores"].IsInt() &&
+                itr->value.HasMember("core_name") && itr->value["core_name"].IsString())
+                {
+                    // Extract the number of cores and the worker class name
+                    unsigned int num_cores = itr->value["num_cores"].GetUint();
+                    std::string worker_class_name = itr->value["core_name"].GetString();
+
+                    unsigned int process_offset = num_cores * core_config_.dpdk_process_rank_;
+
+                    // Launch each worker core
+                    for(unsigned int i = 0; i < num_cores; i++)
+                    {
+                        LOG4CXX_INFO(logger_, "Launching worker core from class: " << worker_class_name);
+
+                        boost::shared_ptr<DpdkWorkerCore> core = FrameProcessor::DpdkCoreLoader<DpdkWorkerCore>::load_class(
+                            worker_class_name.c_str(),
+                            i + process_offset,
+                            core_config_.socket_, //Socket id
+                            dpdkWorkCoreReferences
+                        );
+
+                        
+                        register_worker_core(core);
                         }
                     }
                 }
             }
         }
-    }
+
 
 
     DpdkCoreManager::~DpdkCoreManager()
     {
         LOG4CXX_INFO(logger_, "Cleaning up DPDK core manager");
 
-        // Stop all running worker cores and ethernet devices
+        // Stop all running worker cores first
         stop();
+
+        // Wait a moment for cores to fully stop
+        rte_delay_us_block(1000);
 
         // Delete shared buffers
         for (auto& shared_buffer: shared_buffers_)
@@ -254,14 +355,20 @@ namespace FrameProcessor
             delete shared_buffer;
         }
 
-        // Delete devices
-        for (auto& device: devices_)
-        {
-            delete device;
+        // Close and cleanup all DPDK devices/ports
+        uint16_t port_id;
+        for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++) {
+            if (rte_eth_dev_is_valid_port(port_id)) {
+                // Stop the device first
+                rte_eth_dev_stop(port_id);
+                // Then close it
+                rte_eth_dev_close(port_id);
+            }
         }
 
+        LOG4CXX_INFO(logger_, "Clean up the DPDK runtime environment");
         // Clean up the DPDK runtime environment
-        rte_eal_cleanup();
+        //rte_eal_cleanup();
     }
 
     void DpdkCoreManager::register_worker_core(boost::shared_ptr<DpdkWorkerCore> worker_core)
@@ -277,14 +384,6 @@ namespace FrameProcessor
             <<" socket: " << rte_socket_id());
         LOG4CXX_INFO(logger_, "Main lcore:    " << rte_get_main_lcore());
 
-        if (core_config_.dpdk_process_rank_ == 0)
-        {
-            // Start the ethernet devices
-            for (auto& device: devices_)
-            {
-                device->start();
-            }
-        }
 
         // Connect all cores to their upstream resources
 
@@ -319,15 +418,18 @@ namespace FrameProcessor
                 end_socket = core_socket;
             }
 
+            // Search through requested socket range for first available unused core
             int next_lcore_id = RTE_MAX_LCORE;
             for (int socket = start_socket; socket <= end_socket; socket++)
             {
+                // Look through available cores on this socket
                 for (auto& avail_id: available_core_ids_[socket])
                 {
+                    // Check if this core ID hasn't been used yet
                     if (std::find(used_core_ids_.begin(), used_core_ids_.end(), avail_id) ==
                         std::end(used_core_ids_))
                     {
-                        next_lcore_id = avail_id;
+                        next_lcore_id = avail_id; // Found an unused core
                         break;
                     }
                 }
@@ -373,43 +475,52 @@ namespace FrameProcessor
             LOG4CXX_WARN(logger_, "No running worker cores to stop");
         }
 
-        // Stop all the running cores and clear the list of them
+        // First stop all cores and wait for them to complete
         for (boost::shared_ptr<DpdkWorkerCore>& core: running_cores_)
         {
-            uint32_t core_id = core->lcore_id();
-            LOG4CXX_DEBUG(logger_, "Stopping worker on lcore " << core_id);
-            core->stop();
-            rte_eal_wait_lcore(core_id);
+            if (core) {
+                uint32_t core_id = core->lcore_id();
+                LOG4CXX_DEBUG(logger_, "Stopping worker on lcore " << core_id);
+                core->stop();
+                rte_eal_wait_lcore(core_id);
+                used_core_ids_.erase(
+                    std::remove(used_core_ids_.begin(), used_core_ids_.end(), core_id),
+                    used_core_ids_.end()
+                );
+            }
+        }
 
-            used_core_ids_.erase(
-                std::remove(used_core_ids_.begin(), used_core_ids_.end(), core_id)
-            );
-            core.reset();
+        // Wait a moment for any pending operations to complete
+        rte_delay_us_block(1000);
+
+        // Then clean up the cores
+        for (boost::shared_ptr<DpdkWorkerCore>& core: running_cores_)
+        {
+            if (core) {
+                try {
+                    core.reset();
+                } catch (const std::exception& e) {
+                    LOG4CXX_ERROR(logger_, "Error resetting core: " << e.what());
+                }
+            }
         }
 
         // The list of used core IDs should be empty now that all running cores have been stopped
         if (!used_core_ids_.empty())
         {
-            LOG4CXX_WARN(logger_, "Stopped all running cores but used core ID list still contains"
+            LOG4CXX_WARN(logger_, "Stopped all running cores but used core ID list still contains "
                 << used_core_ids_.size() << " cores"
             );
+            used_core_ids_.clear();
         }
 
         // Clear the list of running cores
         running_cores_.clear();
         std::vector<boost::shared_ptr<DpdkWorkerCore>>(running_cores_).swap(running_cores_);
 
-        // Warn if there are no ethernet devices to stop
-        if (devices_.empty())
-        {
-            LOG4CXX_WARN(logger_, "No devices to stop");
-        }
-
-        // Stop all the ethernet devices
-        for (auto& device: devices_)
-        {
-            device->stop();
-        }
+        // Clear registered cores list as well
+        registered_cores_.clear();
+        std::vector<boost::shared_ptr<DpdkWorkerCore>>(registered_cores_).swap(registered_cores_);
     }
 
     ssize_t DpdkCoreManager::dpdk_log_writer(void *, const char *data, size_t len)
@@ -529,11 +640,5 @@ namespace FrameProcessor
 
 
     }
-
-
-    
-
-
-
 
 }

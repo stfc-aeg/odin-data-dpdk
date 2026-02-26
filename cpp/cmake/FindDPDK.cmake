@@ -29,36 +29,35 @@ find_library(LIBRTE_EAL_LIBRARY
 )
 
 include(FindPackageHandleStandardArgs)
-
-find_package_handle_standard_args(LIBDPDK
+find_package_handle_standard_args(DPDK
     DEFAULT_MSG
     LIBRTE_EAL_LIBRARY
     LIBDPDK_INCLUDE_DIR
 )
 
-if(LIBDPDK_FOUND)
-    set(LIBDPDK_VERSION ${PC_LIBDPDK_VERSION})
-    get_filename_component(LIBDPDK_LIBRARY_DIR ${LIBRTE_EAL_LIBRARY} PATH)
-    set(LIBDPDK_LIBRARY_DIRS ${LIBDPDK_LIBRARY_DIR})
-    set(LIBDPDK_INCLUDE_DIRS ${LIBDPDK_INCLUDE_DIR})
-    set(LIBDPDK_CFLAGS ${PC_LIBDPDK_CFLAGS})
-    set(LIBDPDK_LDFLAGS ${PC_LIBDPDK_LDFLAGS})
+if(DPDK_FOUND)
+    set(DPDK_VERSION ${PC_LIBDPDK_VERSION})
+    get_filename_component(DPDK_LIBRARY_DIR ${LIBRTE_EAL_LIBRARY} PATH)
+    set(DPDK_LIBRARY_DIRS ${DPDK_LIBRARY_DIR})
+    set(DPDK_INCLUDE_DIRS ${DPDK_INCLUDE_DIR})
+    set(DPDK_CFLAGS ${PC_LIBDPDK_CFLAGS})
+    set(DPDK_LDFLAGS ${PC_LIBDPDK_LDFLAGS})
 
     mark_as_advanced(
-        LIBDPDK_VERSION
-        LIBDPDK_INCLUDE_DIR
-        LIBDPDK_INCLUDE_DIRS
-        LIBDPDK_LIBRARY_DIR
-        LIBDPDK_LIBRARY_DIRS
-        LIBDPDK_CFLAGS
-        LIBDPDK_LDFLAGS
+        DPDK_VERSION
+        DPDK_INCLUDE_DIR
+        DPDK_INCLUDE_DIRS
+        DPDK_LIBRARY_DIR
+        DPDK_LIBRARY_DIRS
+        DPDK_CFLAGS
+        DPDK_LDFLAGS
     )
 
-    message(STATUS "Found DPDK version: ${LIBDPDK_VERSION}")
-    message(STATUS "DPDK library path: ${LIBDPDK_LIBRARY_DIR}")
-    message(STATUS "DPDK include path: ${LIBDPDK_INCLUDE_DIR}")
-    message(STATUS "DPDK CFLAGS: ${LIBDPDK_CFLAGS}")
-    message(STATUS "DPDK LDFLAGS: ${LIBDPDK_LDFLAGS}")
+    message(STATUS "Found DPDK version: ${DPDK_VERSION}")
+    message(STATUS "DPDK library path: ${DPDK_LIBRARY_DIR}")
+    message(STATUS "DPDK include path: ${DPDK_INCLUDE_DIR}")
+    message(STATUS "DPDK CFLAGS: ${DPDK_CFLAGS}")
+    message(STATUS "DPDK LDFLAGS: ${DPDK_LDFLAGS}")
 else()
     message(STATUS "DPDK not found, not building DPDK support libraries")
 endif()

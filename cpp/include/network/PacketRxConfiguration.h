@@ -1,5 +1,9 @@
+#ifndef PACKETRXCONFIGURATION_H_
+#define PACKETRXCONFIGURATION_H_
+
 #include "ParamContainer.h"
 #include "DpdkCoreConfiguration.h"
+#include "network/DpdkDeviceConfiguration.h"
 #include <sstream>
 
 namespace FrameProcessor
@@ -16,6 +20,7 @@ namespace FrameProcessor
         const unsigned int default_release_ring_size = 32768;
         const unsigned int default_max_packet_tx_retries = 64;
         const unsigned int default_max_packet_queue_retries = 64;
+        const std::string default_pcie_device = "";
     }
 
     class PacketRxConfiguration : public OdinData::ParamContainer
@@ -34,7 +39,8 @@ namespace FrameProcessor
                 release_ring_size_(Defaults::default_release_ring_size),
                 max_packet_tx_retries_(Defaults::default_max_packet_tx_retries),
                 max_packet_queue_retries_(Defaults::default_max_packet_queue_retries),
-                num_processor_cores_(Defaults::default_num_processor_cores)
+                num_processor_cores_(Defaults::default_num_processor_cores),
+                pcie_device_(Defaults::default_pcie_device)
             {
                 bind_params();
             }
@@ -47,8 +53,17 @@ namespace FrameProcessor
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                }        
+
+                    // Resolve the dpdk_device subsection if present
+                    if (value_ptr->HasMember("dpdk_device"))
+                    {
+                        dpdk_device_.update((*value_ptr)["dpdk_device"]);
+                    }
+                }
             }
+
+            const DpdkDeviceConfiguration& dpdk_device(void) const { return dpdk_device_; }
+            DpdkDeviceConfiguration& dpdk_device(void) { return dpdk_device_; }
 
         private:
 
@@ -67,6 +82,7 @@ namespace FrameProcessor
                 bind_param<unsigned int>(release_ring_size_, "release_ring_size");
                 bind_param<unsigned int>(max_packet_tx_retries_, "max_packet_tx_retries");
                 bind_param<unsigned int>(max_packet_queue_retries_, "max_packet_queue_retries");
+                bind_param<std::string>(pcie_device_, "pcie_device");
 
             }
 
@@ -83,9 +99,14 @@ namespace FrameProcessor
             unsigned int release_ring_size_;        //!< Packet release ring size
             unsigned int max_packet_tx_retries_;    //!< Max num of packet RX retries
             unsigned int max_packet_queue_retries_; //!< Max num of packet queue retries
+            std::string pcie_device_;  //!< Vector of address to allow claiming of multiple PCIE devices 
 
             unsigned int num_processor_cores_;  //!< Number of packet processor cores running
+
+            DpdkDeviceConfiguration dpdk_device_;  //!< DPDK device configuration subsection
 
             friend class PacketRxCore;
     };
 }
+
+#endif // PACKETRXCONFIGURATION_H_
