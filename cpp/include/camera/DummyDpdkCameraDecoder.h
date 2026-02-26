@@ -118,12 +118,12 @@ public:
      */
     virtual const std::size_t get_frame_x_resolution(void) const
     {
-        return 2304;  // OrcaQuest X resolution
+        return 4096; // OrcaQuest X resolution
     }
 
     virtual const std::size_t get_frame_y_resolution(void) const
     {
-        return 4096;  // OrcaQuest Y resolution
+        return 2304;  // OrcaQuest Y resolution
     }
 
     /**

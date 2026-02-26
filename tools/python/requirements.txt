@@ -2,3 +2,6 @@ zmq
 PyQt5
 opencv-python
 matplotlib
+numpy
+tensorstore
+pandas

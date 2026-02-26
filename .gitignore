@@ -2,7 +2,7 @@
 /*build*
 /*prefix/
 *.pyc
-/tools/python/venv/
+/tools/python/pyvenv
 /.settings
 /.metadata
 /.cproject
@@ -10,6 +10,7 @@
 /.pydevproject
 .project
 venv*
+performance_testing/
 tools/python/.coverage
 *.egg-info/
 
