@@ -12,7 +12,11 @@ include_directories(
   ${HDF5_INCLUDE_DIRS}
 )
 
-add_library(${ODINDATA_DPDK_LIBRARY} SHARED
+if(ENABLE_TENSORSTORE)
+  include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include/tensorstore)
+endif()
+
+set(ODINDATA_DPDK_SOURCES
         # Core DPDK files
         DpdkCoreManager.cpp
         DpdkDevice.cpp
@@ -37,18 +41,38 @@ add_library(${ODINDATA_DPDK_LIBRARY} SHARED
         # Network-related
         network/PacketProcessorCore.cpp
         network/PacketRxCore.cpp
-
-        #Tensorstore
-        TensorstoreCore.cpp
 )
+
+# Tensorstore related
+if(ENABLE_TENSORSTORE)
+    list(APPEND ODINDATA_DPDK_SOURCES
+        tensorstore/TensorstoreCore.cpp
+        tensorstore/TensorstoreJsonSpec.cpp
+        tensorstore/TensorstoreDataset.cpp
+        tensorstore/TensorstoreWriter.cpp
+        tensorstore/TensorstoreCSVLogger.cpp
+        tensorstore/TensorstoreResizer.cpp
+        tensorstore/TensorstorePerformanceMonitor.cpp
+        tensorstore/TensorstoreErrorHandler.cpp
+        tensorstore/TensorstoreFlushManager.cpp
+    )
+endif()
+
+add_library(${ODINDATA_DPDK_LIBRARY} SHARED ${ODINDATA_DPDK_SOURCES})
 
 target_compile_options(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_CFLAGS})
 target_link_directories(${ODINDATA_DPDK_LIBRARY} PRIVATE ${DPDK_LIBRARY_DIRS})
 target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
     rte_eal rte_kvargs rte_telemetry
-    ${DPDK_LDFLAGS} ${DCAMAPI_LIBRARY} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES} 
-    tensorstore::tensorstore tensorstore::all_drivers
+    ${DPDK_LDFLAGS} ${DCAMAPI_LIBRARY} ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
 )
+
+# Add library for Tensorstore
+if(ENABLE_TENSORSTORE)
+    target_link_libraries(${ODINDATA_DPDK_LIBRARY} PRIVATE
+        tensorstore::tensorstore tensorstore::all_drivers
+    )
+endif()
 
 get_target_property(PLUGIN_INSTALL_RPATH ${ODINDATA_DPDK_LIBRARY} INSTALL_RPATH)
 set_target_properties(${ODINDATA_DPDK_LIBRARY} PROPERTIES

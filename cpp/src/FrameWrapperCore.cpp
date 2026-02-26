@@ -60,8 +60,8 @@ namespace FrameProcessor
 
         // Specific frame variables from decoder
         // dims[2] = 1024;
-        dims[1] = decoder_->get_frame_y_resolution();
-        dims[0] = decoder_->get_frame_x_resolution();
+        dims[0] = decoder_->get_frame_y_resolution();
+        dims[1] = decoder_->get_frame_x_resolution();
         std::size_t frame_size = dims[0] * dims[1] * 2 * decoder_->get_frame_outer_chunk_size();
             //dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
         std::size_t frame_header_size = decoder_->get_frame_header_size();

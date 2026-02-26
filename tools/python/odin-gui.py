@@ -4,7 +4,7 @@ import zmq
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
                              QLineEdit, QLabel, QComboBox, QSpinBox, QSplitter, QDialog, QFormLayout,
-                             QTreeWidget, QTreeWidgetItem, QTabWidget, QHeaderView, QGroupBox)
+                             QTreeWidget, QTreeWidgetItem, QTabWidget, QHeaderView, QGroupBox, QSizePolicy)
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 
 import liveviewer
@@ -92,15 +92,35 @@ class TensorstoreDialog(QDialog):
         layout = QFormLayout(self)
 
         self.path_input = QLineEdit(self)
-        self.path_input.setText("/data2/tensorstore/")
+        self.path_input.setText("/data0/tensorstore/")
         self.filename_input = QLineEdit(self)
         self.filename_input.setText("odin-data-capture")
         self.frames_input = QLineEdit(self)
         self.frames_input.setText("1000")
+        self.max_concurrent_frames_input = QLineEdit(self)
+        self.max_concurrent_frames_input.setText("64")
+
+        self.storage_driver_combo = QComboBox(self)
+        self.storage_driver_combo.addItem("zarr")
+        self.storage_driver_combo.addItem("zarr3")
+
+        self.kvstore_driver_combo = QComboBox(self)
+        self.kvstore_driver_combo.addItem("file")
+        self.kvstore_driver_combo.addItem("s3")
+        self.kvstore_driver_combo.setCurrentText("file")
+
+        from PyQt5.QtWidgets import QCheckBox
+        self.enable_writing_checkbox = QCheckBox("Enable Writing", self)
+        self.enable_writing_checkbox.setChecked(True)
 
         layout.addRow("File Path:", self.path_input)
         layout.addRow("File Name:", self.filename_input)
         layout.addRow("Number of Frames:", self.frames_input)
+        layout.addRow("Max Concurrent Frames:", self.max_concurrent_frames_input)
+        layout.addRow("Storage Driver:", self.storage_driver_combo)
+        layout.addRow("KVStore Driver:", self.kvstore_driver_combo)
+        layout.addRow("Enable Writing:", self.enable_writing_checkbox)
+        
 
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.accept)
@@ -140,7 +160,7 @@ class ZmqOdinDataGUI(QWidget):
         conn_layout = QHBoxLayout()
         self.conn_input = QLineEdit()
         self.conn_input.setPlaceholderText("Enter endpoint")
-        self.conn_input.setText("tcp://192.168.0.30:5000")
+        self.conn_input.setText("tcp://192.168.0.32:6000")
         conn_button = QPushButton("Connect")
         conn_button.clicked.connect(self.add_connection)
         conn_layout.addWidget(self.conn_input)
@@ -178,13 +198,25 @@ class ZmqOdinDataGUI(QWidget):
         refresh_layout.addWidget(self.refresh_interval)
         main_layout.addLayout(refresh_layout)
 
+        # Main vertical splitter for resizable sections
+        main_vertical_splitter = QSplitter(Qt.Vertical)
+        main_vertical_splitter.setChildrenCollapsible(False)  # Prevent sections from collapsing
+        main_vertical_splitter.setHandleWidth(4)  # Make splitter handle more visible
+
         # Log display
+        log_widget = QWidget()
+        log_layout = QVBoxLayout(log_widget)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.addWidget(QLabel("Log"))
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        main_layout.addWidget(self.log_display)
+        self.log_display.setMinimumHeight(50)  # Set minimum height
+        log_layout.addWidget(self.log_display)
+        main_vertical_splitter.addWidget(log_widget)
 
-        # Plugin status area
-        plugin_layout = QHBoxLayout()
+        # Plugin status area (no scroll wrapper)
+        plugin_widget = QWidget()
+        plugin_layout = QHBoxLayout(plugin_widget)
 
         # Liveview plugin
         liveview_widget = QGroupBox("Liveview Plugin")
@@ -217,11 +249,6 @@ class ZmqOdinDataGUI(QWidget):
         hdf_widget.setLayout(hdf_layout)
         plugin_layout.addWidget(hdf_widget)
 
-        main_layout.addLayout(plugin_layout)
-
-        # Splitter for Config and Status
-        splitter = QSplitter(Qt.Horizontal)
-
         # Camera Control section
         camera_widget = QGroupBox("Camera Control")
         camera_layout = QVBoxLayout()
@@ -238,16 +265,21 @@ class ZmqOdinDataGUI(QWidget):
         
         self.camera_capture_button = QPushButton("Start Capture")
         self.camera_capture_button.clicked.connect(self.toggle_camera_capture)
-        self.camera_capture_button.setEnabled(False)  # Disabled until connected
+        self.camera_capture_button.setEnabled(False)
         
         camera_buttons_layout.addWidget(self.camera_connect_button)
         camera_buttons_layout.addWidget(self.camera_capture_button)
         
         camera_layout.addLayout(camera_buttons_layout)
         
-        # Camera properties section
+        # Camera properties section with scroll area
+        from PyQt5.QtWidgets import QScrollArea
+        
         properties_group = QGroupBox("Camera Properties")
-        self.properties_layout = QFormLayout()
+        properties_group_layout = QVBoxLayout(properties_group)
+        
+        properties_container = QWidget()
+        self.properties_layout = QFormLayout(properties_container)
         
         # Create placeholder widgets for camera properties
         for prop_path, config in self.camera_property_config.items():
@@ -264,11 +296,9 @@ class ZmqOdinDataGUI(QWidget):
                 widget = QLineEdit()
                 widget.setReadOnly(not editable)
                 
-            # Store widget and add to layout
             self.camera_property_widgets[prop_path] = widget
             self.properties_layout.addRow(display_name + ":", widget)
             
-            # Connect editable widgets to update handler
             if editable:
                 if prop_type == bool:
                     widget.currentIndexChanged.connect(
@@ -281,41 +311,81 @@ class ZmqOdinDataGUI(QWidget):
                         )
                     )
         
-        # Add refresh button for properties
+        # Create scroll area for properties only (without refresh button)
+        properties_scroll = QScrollArea()
+        properties_scroll.setWidget(properties_container)
+        properties_scroll.setWidgetResizable(True)
+        properties_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        properties_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        # Let it expand when there is room, but allow scrolling when constrained
+        properties_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Add scroll area to properties group
+        properties_group_layout.addWidget(properties_scroll)
+        
+        # Add refresh button outside the scroll area
         refresh_props_button = QPushButton("Refresh Properties")
         refresh_props_button.clicked.connect(self.request_camera_config)
-        self.properties_layout.addRow("", refresh_props_button)
+        properties_group_layout.addWidget(refresh_props_button)
         
-        properties_group.setLayout(self.properties_layout)
         camera_layout.addWidget(properties_group)
         
         camera_widget.setLayout(camera_layout)
-        
-        # Add to plugin layout
         plugin_layout.addWidget(camera_widget)
+
+        # Set maximum height for plugin widget so it doesn't grow unnecessarily large
+        plugin_widget.setMaximumHeight(550)  # Adjust this value as needed
+
+        # Add plugin widget directly to splitter (no scroll wrapper)
+        main_vertical_splitter.addWidget(plugin_widget)
+
+        # Horizontal splitter for Config and Status
+        config_status_splitter = QSplitter(Qt.Horizontal)
+        config_status_splitter.setChildrenCollapsible(False)  # Prevent sections from collapsing
+        config_status_splitter.setHandleWidth(8)  # Make splitter handle wider for better spacing
 
         # Config display
         self.config_tree = JsonTreeWidget(editable=True)
         self.config_tree.itemChanged.connect(self.on_config_changed)
+        self.config_tree.setMinimumWidth(100)  # Set minimum width
         config_widget = QWidget()
         config_layout = QVBoxLayout(config_widget)
+        config_layout.setContentsMargins(0, 0, 0, 0)
         config_layout.addWidget(QLabel("Configuration"))
         config_layout.addWidget(self.config_tree)
-        splitter.addWidget(config_widget)
+        config_status_splitter.addWidget(config_widget)
 
         # Status display
         self.status_tree = JsonTreeWidget()
+        self.status_tree.setMinimumWidth(100)  # Set minimum width
         status_widget = QWidget()
         status_layout = QVBoxLayout(status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.addWidget(QLabel("Status"))
         status_layout.addWidget(self.status_tree)
-        splitter.addWidget(status_widget)
+        config_status_splitter.addWidget(status_widget)
 
-        main_layout.addWidget(splitter)
+        # Set minimum height for config/status section
+        config_status_splitter.setMinimumHeight(100)
+
+        # Add config/status splitter to lower section of main vertical splitter
+        main_vertical_splitter.addWidget(config_status_splitter)
+
+        # Set stretch factors for the vertical splitter
+        main_vertical_splitter.setStretchFactor(0, 1)  # Log (flexible)
+        main_vertical_splitter.setStretchFactor(1, 0)  # Plugin section (fixed-ish)
+        main_vertical_splitter.setStretchFactor(2, 3)  # Config/Status (most flexible)
+
+        # Set initial sizes for the vertical splitter
+        main_vertical_splitter.setSizes([150, 300, 350])
+
+        # Add the vertical splitter to the layout
+        main_layout.addWidget(main_vertical_splitter)
 
         self.setLayout(main_layout)
         self.setWindowTitle('ZMQ Odin Data GUI Client')
-        self.setGeometry(300, 300, 1000, 800)
+        self.setGeometry(300, 300, 1200, 900)
 
         # Set up refresh timer
         self.refresh_timer = QTimer(self)
@@ -888,14 +958,21 @@ class ZmqOdinDataGUI(QWidget):
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not detected. Please refresh configuration first.")
             return
-            
         dialog = TensorstoreDialog(self)
         if dialog.exec_():
             path = dialog.path_input.text()
             acquisition_id = dialog.filename_input.text()
-            frames = dialog.frames_input.text()
-            self.start_tensorstore_acquisition(path, acquisition_id, frames)
-
+            number_of_frames = dialog.frames_input.text()
+            self.number_of_frames = number_of_frames
+            storage_driver = dialog.storage_driver_combo.currentText()
+            kvstore_driver = dialog.kvstore_driver_combo.currentText()
+            enable_writing = dialog.enable_writing_checkbox.isChecked()
+            max_concurrent_frames = dialog.max_concurrent_frames_input.text()
+            self.max_concurrent_frames = max_concurrent_frames
+            self.storage_driver = storage_driver
+            self.kvstore_driver = kvstore_driver
+            self.enable_writing = enable_writing
+            self.start_tensorstore_acquisition(path, acquisition_id)
     def start_acquisition(self, path, acquisition_id, frames):
         if self.acquisition(path, acquisition_id, frames):
             self.start_sequence()
@@ -953,29 +1030,31 @@ class ZmqOdinDataGUI(QWidget):
 
         return True
 
-    def start_tensorstore_acquisition(self, path, acquisition_id, frames):
-        if self.tensorstore_acquisition(path, acquisition_id, frames):
+    def start_tensorstore_acquisition(self, path, acquisition_id):
+        if self.tensorstore_acquisition(path, acquisition_id):
             self.start_sequence()
 
-    def tensorstore_acquisition(self, path, acquisition_id, frames):
-        # Check if we have a plugin name
+    def tensorstore_acquisition(self, path, acquisition_id):
         if not self.main_plugin_name:
             self.log_message("Error: Main plugin name not set. Cannot start Tensorstore acquisition.")
             return False
-            
         try:
-            frames_count = int(frames)
+            storage_driver = self.storage_driver if hasattr(self, 'storage_driver') else "zarr2"
+            kvstore_driver = self.kvstore_driver if hasattr(self, 'kvstore_driver') else "file"
+            max_concurrent_frames = int(self.max_concurrent_frames) if hasattr(self, 'max_concurrent_frames') else 64
+            number_of_frames = int(self.number_of_frames) if hasattr(self, 'number_of_frames') else 1000
+            enable_writing = self.enable_writing if hasattr(self, 'enable_writing') else True
 
-            # Use the dynamically extracted plugin name with Tensorstore-specific config
             common_config = {
                 self.main_plugin_name: {
                     "update_config": True,
-                    "file_path": path,
-                    "driver": "zarr3",
-                    "max_concurrent_writes": 64,
-                },
-                "hdf": {
-                    "write": False
+                    "path": path,
+                    "storage_driver": storage_driver,
+                    "kvstore_driver": kvstore_driver,
+                    "max_concurrent_writes": max_concurrent_frames,
+                    "number_of_frames": number_of_frames,
+                    "enable_writing": enable_writing,
+                    "rx_frames": number_of_frames,
                 }
             }
 
@@ -984,27 +1063,10 @@ class ZmqOdinDataGUI(QWidget):
                 self.log_message("Failed to send the first Tensorstore configuration message. Aborting acquisition setup.")
                 return False
 
-            second_config = {
-                self.main_plugin_name: common_config[self.main_plugin_name],
-                "hdf": {
-                    "file": {
-                        "path": path
-                    },
-                    "frames": frames_count,
-                    "acquisition_id": acquisition_id,
-                    "write": True
-                }
-            }
-
-            self.log_message("Sending second Tensorstore configuration.")
-            if not self.send_config_message({"params": second_config}):
-                self.log_message("Failed to send the second Tensorstore configuration message. Aborting acquisition setup.")
-                return False
-
             self.log_message("Tensorstore acquisition setup completed successfully.")
 
         except ValueError as e:
-            self.log_message(f"Invalid frames count provided: {e}")
+            self.log_message(f"Invalid input provided: {e}")
             return False
 
         return True

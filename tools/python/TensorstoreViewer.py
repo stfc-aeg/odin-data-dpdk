@@ -48,26 +48,57 @@ class TensorStoreViewer:
                 # Use provided spec
                 self.dataset = ts.open(spec).result()
             else:
-                # Try to open with default spec (assumes zarr or n5 format)
+                # Try to auto-detect format by checking for metadata files
+                dataset_path = Path(self.dataset_path)
+                
+                # Check for Zarr v2 (.zarray or .zgroup)
+                if (dataset_path / '.zarray').exists() or (dataset_path / '.zgroup').exists():
+                    driver = 'zarr'
+                    print(f"Detected Zarr v2 format")
+                # Check for Zarr v3 (zarr.json)
+                elif (dataset_path / 'zarr.json').exists():
+                    driver = 'zarr3'
+                    print(f"Detected Zarr v3 format")
+                # Check for N5 (attributes.json)
+                elif (dataset_path / 'attributes.json').exists():
+                    driver = 'n5'
+                    print(f"Detected N5 format")
+                else:
+                    # Default fallback - try zarr v2 first
+                    driver = 'zarr'
+                    print(f"No metadata files detected, trying Zarr v2...")
+                
                 self.dataset = ts.open({
-                    'driver': 'zarr3',  # Try zarr first, can be changed
+                    'driver': driver,
                     'kvstore': {
                         'driver': 'file',
                         'path': str(self.dataset_path),
                     },
                 }).result()
         except Exception as e:
-            print(f"Failed to open with zarr driver, trying n5...")
-            try:
-                self.dataset = ts.open({
-                    'driver': 'n5',
-                    'kvstore': {
-                        'driver': 'file',
-                        'path': str(self.dataset_path),
-                    },
-                }).result()
-            except Exception as e2:
-                raise RuntimeError(f"Could not open dataset: {e2}")
+            print(f"Failed to open with {driver if 'driver' in locals() else 'initial'} driver: {e}")
+            # Try fallback formats
+            fallback_drivers = ['zarr', 'zarr3', 'n5']
+            if 'driver' in locals() and driver in fallback_drivers:
+                fallback_drivers.remove(driver)
+            
+            for fallback_driver in fallback_drivers:
+                try:
+                    print(f"Trying {fallback_driver} driver...")
+                    self.dataset = ts.open({
+                        'driver': fallback_driver,
+                        'kvstore': {
+                            'driver': 'file',
+                            'path': str(self.dataset_path),
+                        },
+                    }).result()
+                    print(f"Successfully opened with {fallback_driver} driver")
+                    break
+                except Exception as e2:
+                    print(f"Failed with {fallback_driver}: {e2}")
+                    continue
+            else:
+                raise RuntimeError(f"Could not open dataset with any supported driver (zarr, zarr3, n5)")
         
         # Get dataset shape and determine image dimensions
         self.shape = self.dataset.shape
@@ -275,14 +306,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # View a zarr dataset
+  # View a zarr v2 dataset (auto-detected)
   python tensorstore_viewer.py /path/to/dataset.zarr
+  
+  # View a zarr v3 dataset
+  python tensorstore_viewer.py /path/to/dataset.zarr --driver zarr3
   
   # View an n5 dataset
   python tensorstore_viewer.py /path/to/dataset.n5
   
-  # Specify driver explicitly
-  python tensorstore_viewer.py /path/to/dataset --driver n5
+  # Specify driver explicitly for zarr v2
+  python tensorstore_viewer.py /path/to/dataset --driver zarr
         """
     )
     
@@ -295,9 +329,9 @@ Examples:
     parser.add_argument(
         '--driver',
         type=str,
-        choices=['zarr', 'n5', 'neuroglancer_precomputed'],
+        choices=['zarr', 'zarr3', 'n5', 'neuroglancer_precomputed'],
         default=None,
-        help='TensorStore driver to use (default: auto-detect zarr or n5)'
+        help='TensorStore driver to use: zarr (v2), zarr3 (v3), n5, etc. (default: auto-detect)'
     )
     
     parser.add_argument(
