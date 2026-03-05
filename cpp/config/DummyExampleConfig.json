@@ -64,11 +64,11 @@
                 "packet_rx": {
                     "core_name": "PacketRxCore",
                     "num_cores": 1,
-                    "pcie_device": "0000:2d:00.0",
+                    "pcie_device": ["0000:2d:00.0"],
                     "rx_ports": [
                         1234
                     ],
-                    "device_ip": "10.0.100.6",
+                    "device_ip": ["10.0.100.6"],
                     "rx_burst_size": 128,
                     "fwd_ring_size": 32786,
                     "release_ring_size": 32768,

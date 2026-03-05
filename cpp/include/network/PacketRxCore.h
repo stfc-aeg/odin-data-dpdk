@@ -65,6 +65,8 @@ namespace FrameProcessor
         DpdkDevice* device_;
 
         int proc_idx_;
+        std::string instance_pcie_device_;  //!< PCIe address for this instance's NIC
+        std::string instance_device_ip_;    //!< IP address for this instance's NIC
         uint64_t total_packets_;
         uint64_t dropped_packets_;
         uint64_t captured_packets_;

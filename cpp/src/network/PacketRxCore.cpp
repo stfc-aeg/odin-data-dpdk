@@ -38,10 +38,27 @@ namespace FrameProcessor
         );
 
 
+        // Select per-instance PCIe device and IP from the config vectors using proc_idx_.
+        // num_cores must match the length of pcie_device and device_ip arrays in config.
+        if (proc_idx_ < (int)config_.pcie_device_.size()) {
+            instance_pcie_device_ = config_.pcie_device_[proc_idx_];
+        } else {
+            LOG4CXX_ERROR(logger_, "PacketRxCore " << proc_idx_ << ": pcie_device array has "
+                << config_.pcie_device_.size() << " entries but num_cores is " << config_.num_cores
+                << ". Add a pcie_device entry for each core. This core will not receive packets.");
+        }
+        if (proc_idx_ < (int)config_.device_ip_.size()) {
+            instance_device_ip_ = config_.device_ip_[proc_idx_];
+        } else {
+            LOG4CXX_ERROR(logger_, "PacketRxCore " << proc_idx_ << ": device_ip array has "
+                << config_.device_ip_.size() << " entries but num_cores is " << config_.num_cores
+                << ". Add a device_ip entry for each core. This core will not receive packets.");
+        }
+
         // Add devices provided in the configuration
-        if (!config_.pcie_device_.empty()) {
-            if (!add_device(config_.pcie_device_)) {
-                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << config_.pcie_device_);
+        if (!instance_pcie_device_.empty()) {
+            if (!add_device(instance_pcie_device_)) {
+                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << instance_pcie_device_);
             }
         }
 
@@ -58,10 +75,10 @@ namespace FrameProcessor
         // DPDK does not implement an IP stack, so cannot resolve any existing IP address assigned
         // by the kernel to the ethernet device. The IP address, which is also required to respond
         // to ARP requests, must be provided from configuration
-        if (inet_pton(AF_INET, config_.device_ip_.c_str(), &dev_ip_addr_) < 1)
+        if (inet_pton(AF_INET, instance_device_ip_.c_str(), &dev_ip_addr_) < 1)
         {
             LOG4CXX_ERROR(logger_, "Error resolving device IP address for port " << port_id_
-                << " from value" << config_.device_ip_
+                << " from value" << instance_device_ip_
             );
             // TODO - raise exception here?
         }
@@ -74,41 +91,61 @@ namespace FrameProcessor
         unsigned int ring_size;
         std::string ring_name;
 
-        // Create packet forwarding rings for each of the packet processing cores with the ring
-        // size rounded up to the next power of two
+        // Create or look up packet forwarding rings for each of the packet processing cores.
+        // Multiple PacketRxCore instances share these rings (MP/MC safe - no SP/SC flags),
+        // so only the first instance creates them; subsequent instances look them up.
         ring_size = nearest_power_two(config_.fwd_ring_size_);
         for (int core_idx = 0; core_idx < config_.num_downstream_cores; core_idx++)
         {
             ring_name = ring_name_str(config_.core_name, socket_id_, core_idx);
-            LOG4CXX_INFO(logger_, "Creating packet forward ring name "
-                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
-            );
-            struct rte_ring *fwd_ring = rte_ring_create(
-                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ  
-            );
+            struct rte_ring *fwd_ring = rte_ring_lookup(ring_name.c_str());
             if (fwd_ring == NULL)
             {
-                LOG4CXX_ERROR(logger_, "Error creating packet forward ring " << ring_name
-                    << " : " << rte_strerror(rte_errno)
+                LOG4CXX_INFO(logger_, "Creating packet forward ring name "
+                    << ring_name << " of size " << ring_size << " numa node: " << socket_id_
                 );
-                // TODO - raise exception here?
+                fwd_ring = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+                if (fwd_ring == NULL)
+                {
+                    LOG4CXX_ERROR(logger_, "Error creating packet forward ring " << ring_name
+                        << " : " << rte_strerror(rte_errno)
+                    );
+                    // TODO - raise exception here?
+                }
+            }
+            else
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Packet forward ring " << ring_name
+                    << " already exists, reusing"
+                );
             }
             packet_forward_rings_.push_back(fwd_ring);
         }
 
-        // Create the packet release ring with the ring size rounded up to the next power of two
+        // Create or look up the packet release ring. Multiple PacketRxCore instances share this
+        // ring; only the first instance creates it, subsequent instances look it up.
         ring_name = ring_name_pkt_release(socket_id_);
         ring_size = nearest_power_two(config_.release_ring_size_);
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
-            << ring_name << " of size " << ring_size << " numa node: " << socket_id_
-        );
-        packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+        packet_release_ring_ = rte_ring_lookup(ring_name.c_str());
         if (packet_release_ring_ == NULL)
         {
-            LOG4CXX_ERROR(logger_, "Error creating packet release ring " << ring_name
-                << " : " << rte_strerror(rte_errno)
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
+                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
             );
-            // TODO - raise exception here?
+            packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+            if (packet_release_ring_ == NULL)
+            {
+                LOG4CXX_ERROR(logger_, "Error creating packet release ring " << ring_name
+                    << " : " << rte_strerror(rte_errno)
+                );
+                // TODO - raise exception here?
+            }
+        }
+        else
+        {
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Packet release ring " << ring_name
+                << " already exists, reusing"
+            );
         }
 
         // Check that at least one RX port has been defined
@@ -135,16 +172,12 @@ namespace FrameProcessor
         // Stop the core polling loop so the run method terminates
         stop();
 
-        // Free the packet forwarding rings
-        for (auto& fwd_ring: packet_forward_rings_)
-        {
-            rte_ring_free(fwd_ring);
-        }
+        // Clear the local references to shared rings. Rings are shared across multiple
+        // PacketRxCore instances, so we do not free them here — DPDK EAL teardown handles
+        // ring cleanup on process exit.
         packet_forward_rings_.clear();
         std::vector<struct rte_ring *>(packet_forward_rings_).swap(packet_forward_rings_);
-
-        // Free the packet release ring
-        rte_ring_free(packet_release_ring_);
+        packet_release_ring_ = nullptr;
 
         if (device_) {
             remove_device();
@@ -602,15 +635,15 @@ namespace FrameProcessor
             device_ = nullptr;
         }
 
-        int ret = rte_eal_hotplug_remove("pci", config_.pcie_device_.c_str());
+        int ret = rte_eal_hotplug_remove("pci", instance_pcie_device_.c_str());
         if (ret < 0) {
-            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << config_.pcie_device_);
+            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << instance_pcie_device_);
             return false;
         }
 
         device_configured_ = false;
         port_id_ = UINT16_MAX;
-        LOG4CXX_INFO(logger_, "Successfully removed device: " << config_.pcie_device_);
+        LOG4CXX_INFO(logger_, "Successfully removed device: " << instance_pcie_device_);
         return true;
     }
 
