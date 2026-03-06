@@ -1,6 +1,7 @@
 #ifndef INCLUDE_PACKETRXCORE_H_
 #define INCLUDE_PACKETRXCORE_H_
 
+#include <atomic>
 #include <set>
 #include <string>
 #include <vector>
@@ -59,6 +60,7 @@ namespace FrameProcessor
         static const uint16_t DEFAULT_BURST_SIZE;
         static const unsigned int DEFAULT_FWD_RING_SIZE;
         static const unsigned int DEFAULT_RELEASE_RING_SIZE;
+        static std::atomic<int64_t> shared_first_frame_number_;  //!< Shared latch: proc_idx_==0 sets, others adopt
 
         PacketRxConfiguration config_;
 

@@ -1,0 +1,18 @@
+{
+    "nics": [
+        {
+            "pcie_addr": "0000:2a:00.0",
+            "src_ip":    "10.0.100.7",
+            "src_mac":   "9c:63:c0:db:bb:dc",
+            "dest_ip":   "10.0.100.6",
+            "dest_mac":  "58:a2:e1:c1:fe:e8"
+        },
+        {
+            "pcie_addr": "0000:2a:00.1",
+            "src_ip":    "10.0.101.7",
+            "src_mac":   "9c:63:c0:db:bb:dd",
+            "dest_ip":   "10.0.101.6",
+            "dest_mac":  "58:a2:e1:c1:fe:e9"
+        }
+    ]
+}

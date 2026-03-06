@@ -7,6 +7,9 @@
 
 namespace FrameProcessor
 {
+    // Static definition: proc_idx_==0 sets this latch, all other RxCores adopt it
+    std::atomic<int64_t> PacketRxCore::shared_first_frame_number_(-1);
+
     PacketRxCore::PacketRxCore(
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
@@ -216,6 +219,17 @@ namespace FrameProcessor
 
         while (likely(run_lcore_))
         {
+            // Follower cores adopt the shared latch as soon as the leader (proc_idx_==0) sets it,
+            // without waiting for the next packet to arrive
+            if (unlikely(proc_idx_ != 0 && first_frame_number_ == -1))
+            {
+                int64_t shared_latch = shared_first_frame_number_.load(std::memory_order_acquire);
+                if (shared_latch != -1)
+                {
+                    first_frame_number_ = shared_latch;
+                }
+            }
+
             uint16_t num_rx_pkts = rte_eth_rx_burst(
                 port_id_, config_.rx_queue_id_, pkt_bufs, config_.rx_burst_size_
             );
@@ -527,20 +541,31 @@ namespace FrameProcessor
 
             if(unlikely(first_frame_number_ == -1))
             {
-
-                // Check if this is the first packet of a frame or the first seen packet of a new frame
-
-                if (packet_number == 0 || frame_number > first_seen_frame_number_)
+                if (proc_idx_ == 0)
                 {
-                    first_frame_number_ = frame_number;
-                    // LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
+                    // Leader: run existing latch detection and publish result to all other RxCores
+                    if (packet_number == 0 || frame_number > first_seen_frame_number_)
+                    {
+                        first_frame_number_ = frame_number;
+                        shared_first_frame_number_.store((int64_t)frame_number, std::memory_order_release);
+                        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Frame latch set to: " << first_frame_number_);
+                    }
+                    else
+                    {
+                        first_seen_frame_number_ = frame_number;
+                        return pkt_forwarded;
+                    }
                 }
                 else
                 {
-                    first_seen_frame_number_ = frame_number;
-                    // If the packet recieved is not the start of the frame, then it is sent
-                    // back  to the main fast loop to be discarded
-                    return pkt_forwarded;
+                    // Follower: wait for leader to publish latch, discard packets until then
+                    int64_t shared_latch = shared_first_frame_number_.load(std::memory_order_acquire);
+                    if (shared_latch == -1)
+                    {
+                        return pkt_forwarded;
+                    }
+                    first_frame_number_ = shared_latch;
+                    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Adopted frame latch from leader: " << first_frame_number_);
                 }
             }
 
@@ -778,9 +803,13 @@ namespace FrameProcessor
         // Only update the other config is rx_enable is currently false
         // Whenever rx_enabled is false then make sure first_frame_number_ is ready for when it's turned on
         if (!rx_enable_)
-        {   
+        {
             first_frame_number_ = -1;
             first_seen_frame_number_ = -1;
+            if (proc_idx_ == 0)
+            {
+                shared_first_frame_number_.store(-1, std::memory_order_release);
+            }
             rx_frames_ = config.get_param("rx_frames", rx_frames_);
             LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reseting frame latch and setting rx_frames_ to: " <<  rx_frames_);
         }
