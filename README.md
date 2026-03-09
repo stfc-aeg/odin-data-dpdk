@@ -49,8 +49,9 @@ odin-data-dpdk/
 ```bash
 # Clone and build odin-data first
 cd ~/develop/repos
-git clone https://github.com/stfc-aeg/odin-data
+git clone https://github.com/odin-detector/odin-data
 cd odin-data/cpp
+git checkout 1.10.2
 mkdir build && cd build
 cmake -DCMAKE_INSTALL_PREFIX=~/develop/install ..
 make -j install
