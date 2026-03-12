@@ -65,8 +65,12 @@ namespace FrameProcessor
 
         // Applies runtime configuration updates
         void configure(OdinData::IpcMessage& config);
+        void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+        std::vector<std::string> requestCommands() override;
 
     private:
+        void start_writing_cmd();
+        void stop_writing_cmd();
         
         // Tracks information for an in-progress asynchronous write
         struct PendingWrite

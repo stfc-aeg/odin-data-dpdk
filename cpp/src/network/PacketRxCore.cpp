@@ -817,5 +817,60 @@ namespace FrameProcessor
 
     }
 
+    std::vector<std::string> PacketRxCore::requestCommands()
+    {
+        return {"start_capture", "stop_capture"};
+    }
+
+    void PacketRxCore::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        if (command == "start_capture")
+        {
+            start_capture(reply);
+        }
+        else if (command == "stop_capture")
+        {
+            stop_capture(reply);
+        }
+        else
+        {
+            reply.set_nack("PacketRxCore: unknown command: " + command);
+        }
+    }
+
+    void PacketRxCore::start_capture(OdinData::IpcMessage& reply)
+    {
+        if (rx_enable_)
+        {
+            reply.set_nack("PacketRxCore: capture already running");
+            return;
+        }
+        first_frame_number_ = -1;
+        first_seen_frame_number_ = -1;
+        if (proc_idx_ == 0)
+        {
+            shared_first_frame_number_.store(-1, std::memory_order_release);
+        }
+        rx_enable_ = true;
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " start_capture: rx_enable_ = true");
+    }
+
+    void PacketRxCore::stop_capture(OdinData::IpcMessage& reply)
+    {
+        if (!rx_enable_)
+        {
+            reply.set_nack("PacketRxCore: capture already stopped");
+            return;
+        }
+        rx_enable_ = false;
+        first_frame_number_ = -1;
+        first_seen_frame_number_ = -1;
+        if (proc_idx_ == 0)
+        {
+            shared_first_frame_number_.store(-1, std::memory_order_release);
+        }
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " stop_capture: rx_enable_ = false");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, PacketRxCore, "PacketRxCore");
 }

@@ -834,6 +834,55 @@ namespace FrameProcessor
 
     }
 
+    std::vector<std::string> TensorstoreCore::requestCommands()
+    {
+        return {"start_writing", "stop_writing"};
+    }
+
+    void TensorstoreCore::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        if (command == "start_writing")
+        {
+            start_writing_cmd();
+        }
+        else if (command == "stop_writing")
+        {
+            stop_writing_cmd();
+        }
+        else
+        {
+            reply.set_nack("TensorstoreCore: unknown command: " + command);
+        }
+    }
+
+    void TensorstoreCore::start_writing_cmd()
+    {
+        bool previous_state = config_.enable_writing_;
+        config_.enable_writing_ = true;
+        if (config_.enable_writing_ != previous_state)
+        {
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " start_writing: enable_writing_ = true");
+        }
+    }
+
+    void TensorstoreCore::stop_writing_cmd()
+    {
+        bool previous_state = config_.enable_writing_;
+        config_.enable_writing_ = false;
+        if (config_.enable_writing_ != previous_state)
+        {
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " stop_writing: enable_writing_ = false");
+            if (tensorstore_initialized_)
+            {
+                LOG4CXX_DEBUG_LEVEL(2, logger_, "Writing disabled. Flushing "
+                    << pending_writes_queue_.size() << " pending writes");
+                flush_pending_writes = true;
+            }
+        }
+    }
+
     DPDKREGISTER(DpdkWorkerCore, TensorstoreCore, "TensorstoreCore");
 
 } // End of the FrameProcessor namespace

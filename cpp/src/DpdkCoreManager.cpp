@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <string>
 #include <algorithm>
+#include <set>
 
 #include <rte_memory.h>
 #include <rte_launch.h>
@@ -639,6 +640,37 @@ namespace FrameProcessor
         }
 
 
+    }
+
+    std::vector<std::string> DpdkCoreManager::requestCommands()
+    {
+        std::set<std::string> seen;
+        std::vector<std::string> all_commands;
+        for (auto& core: registered_cores_)
+        {
+            for (auto& cmd: core->requestCommands())
+            {
+                if (seen.insert(cmd).second)
+                {
+                    all_commands.push_back(cmd);
+                }
+            }
+        }
+        return all_commands;
+    }
+
+    void DpdkCoreManager::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        for (auto& core: registered_cores_)
+        {
+            std::vector<std::string> supported = core->requestCommands();
+            if (std::find(supported.begin(), supported.end(), command) != supported.end())
+            {
+                core->execute(command, reply);
+                return;
+            }
+        }
+        reply.set_nack("No core supports command: " + command);
     }
 
 }

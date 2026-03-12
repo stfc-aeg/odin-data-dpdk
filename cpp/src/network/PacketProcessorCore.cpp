@@ -641,5 +641,28 @@ namespace FrameProcessor
 
     }
 
+    std::vector<std::string> PacketProcessorCore::requestCommands()
+    {
+        return {"arm"};
+    }
+
+    void PacketProcessorCore::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        if (command == "arm")
+        {
+            arm();
+        }
+        else
+        {
+            reply.set_nack("PacketProcessorCore: unknown command: " + command);
+        }
+    }
+
+    void PacketProcessorCore::arm()
+    {
+        first_frame_number_ = -1;
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " arm: first_frame_number_ reset to -1");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, PacketProcessorCore, "PacketProcessorCore");
 }

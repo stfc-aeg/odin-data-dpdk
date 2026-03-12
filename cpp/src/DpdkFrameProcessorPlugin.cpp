@@ -129,6 +129,27 @@ namespace FrameProcessor
     
   }
 
+  void DpdkFrameProcessorPlugin::execute(const std::string& command, OdinData::IpcMessage& reply)
+  {
+    if (core_manager_ != nullptr)
+    {
+      core_manager_->execute(command, reply);
+    }
+    else
+    {
+      reply.set_nack("DPDK core manager not initialised");
+    }
+  }
+
+  std::vector<std::string> DpdkFrameProcessorPlugin::requestCommands()
+  {
+    if (core_manager_ != nullptr)
+    {
+      return core_manager_->requestCommands();
+    }
+    return {};
+  }
+
   /**
    * Reset process plugin statistics, i.e. counter of packets lost
    */

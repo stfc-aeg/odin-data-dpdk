@@ -39,9 +39,12 @@ namespace FrameProcessor
         void status(OdinData::IpcMessage& status, const std::string& path);
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
-
+        void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+        std::vector<std::string> requestCommands() override;
 
     private:
+        void start_capture(OdinData::IpcMessage& reply);
+        void stop_capture(OdinData::IpcMessage& reply);
         bool add_device(const std::string& pci_address);
         bool remove_device();
 
