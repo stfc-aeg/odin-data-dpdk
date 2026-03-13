@@ -642,35 +642,55 @@ namespace FrameProcessor
 
     }
 
-    std::vector<std::string> DpdkCoreManager::requestCommands()
+    std::vector<std::pair<std::string, int>> DpdkCoreManager::requestCommands()
     {
-        std::set<std::string> seen;
-        std::vector<std::string> all_commands;
+        // Collect all commands across cores; for duplicates keep the highest priority
+        std::map<std::string, int> best_priority;
         for (auto& core: registered_cores_)
         {
-            for (auto& cmd: core->requestCommands())
+            for (auto& [cmd, priority]: core->requestCommands())
             {
-                if (seen.insert(cmd).second)
+                auto it = best_priority.find(cmd);
+                if (it == best_priority.end() || priority > it->second)
                 {
-                    all_commands.push_back(cmd);
+                    best_priority[cmd] = priority;
                 }
             }
         }
+        std::vector<std::pair<std::string, int>> all_commands(best_priority.begin(), best_priority.end());
         return all_commands;
     }
 
     void DpdkCoreManager::execute(const std::string& command, OdinData::IpcMessage& reply)
     {
+        // Collect all cores that support this command, paired with their declared priority
+        std::vector<std::pair<int, boost::shared_ptr<DpdkWorkerCore>>> candidates;
         for (auto& core: registered_cores_)
         {
-            std::vector<std::string> supported = core->requestCommands();
-            if (std::find(supported.begin(), supported.end(), command) != supported.end())
+            for (auto& [cmd, priority]: core->requestCommands())
             {
-                core->execute(command, reply);
-                return;
+                if (cmd == command)
+                {
+                    candidates.emplace_back(priority, core);
+                    break;
+                }
             }
         }
-        reply.set_nack("No core supports command: " + command);
+
+        if (candidates.empty())
+        {
+            reply.set_nack("No core supports command: " + command);
+            return;
+        }
+
+        // Sort descending by priority so highest runs first
+        std::sort(candidates.begin(), candidates.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+
+        for (auto& [priority, core]: candidates)
+        {
+            core->execute(command, reply);
+        }
     }
 
 }

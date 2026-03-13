@@ -43,11 +43,13 @@ namespace FrameProcessor
         virtual bool connect(void) = 0;
         virtual void configure(OdinData::IpcMessage& config) = 0;
 
+        static constexpr int DEFAULT_COMMAND_PRIORITY = 50;
+
         virtual void execute(const std::string& command, OdinData::IpcMessage& reply)
         {
             reply.set_nack("Command not supported: " + command);
         }
-        virtual std::vector<std::string> requestCommands()
+        virtual std::vector<std::pair<std::string, int>> requestCommands()
         {
             return {};
         }

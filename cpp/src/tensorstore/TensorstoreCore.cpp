@@ -834,9 +834,12 @@ namespace FrameProcessor
 
     }
 
-    std::vector<std::string> TensorstoreCore::requestCommands()
+    std::vector<std::pair<std::string, int>> TensorstoreCore::requestCommands()
     {
-        return {"start_writing", "stop_writing"};
+        return {
+            {"start_writing", DEFAULT_COMMAND_PRIORITY},
+            {"stop_writing",  DEFAULT_COMMAND_PRIORITY}
+        };
     }
 
     void TensorstoreCore::execute(const std::string& command, OdinData::IpcMessage& reply)

@@ -32,10 +32,10 @@ namespace FrameProcessor
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
         void execute(const std::string& command, OdinData::IpcMessage& reply) override;
-        std::vector<std::string> requestCommands() override;
+        std::vector<std::pair<std::string, int>> requestCommands() override;
 
     private:
-        void arm();
+        void start_capture();
 
         int proc_idx_;
         PacketProtocolDecoder* decoder_;

@@ -145,7 +145,12 @@ namespace FrameProcessor
   {
     if (core_manager_ != nullptr)
     {
-      return core_manager_->requestCommands();
+      std::vector<std::string> commands;
+      for (auto& [cmd, priority]: core_manager_->requestCommands())
+      {
+        commands.push_back(cmd);
+      }
+      return commands;
     }
     return {};
   }

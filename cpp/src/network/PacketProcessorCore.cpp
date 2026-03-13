@@ -641,16 +641,16 @@ namespace FrameProcessor
 
     }
 
-    std::vector<std::string> PacketProcessorCore::requestCommands()
+    std::vector<std::pair<std::string, int>> PacketProcessorCore::requestCommands()
     {
-        return {"arm"};
+        return {{"start_capture", DEFAULT_COMMAND_PRIORITY + 1}};
     }
 
     void PacketProcessorCore::execute(const std::string& command, OdinData::IpcMessage& reply)
     {
-        if (command == "arm")
+        if (command == "start_capture")
         {
-            arm();
+            start_capture();
         }
         else
         {
@@ -658,10 +658,10 @@ namespace FrameProcessor
         }
     }
 
-    void PacketProcessorCore::arm()
+    void PacketProcessorCore::start_capture()
     {
         first_frame_number_ = -1;
-        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " arm: first_frame_number_ reset to -1");
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " start_capture: first_frame_number_ reset to -1");
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketProcessorCore, "PacketProcessorCore");

@@ -594,13 +594,32 @@ class DecoderModeTab(QWidget):
 
         self._build_buttons()
 
-    def _build_buttons(self):
-        for mode, config in self._mode_configs.items():
+    def _build_buttons(self, available: list[str] | None = None):
+        # Clear existing buttons
+        for btn in self._buttons.values():
+            btn.deleteLater()
+        self._buttons.clear()
+        # Remove the old stretch
+        while self._btn_layout.count():
+            item = self._btn_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        modes = available if available is not None else list(self._mode_configs.keys())
+        for mode in modes:
+            config = self._mode_configs.get(mode, {})
             btn = QPushButton(mode)
             btn.clicked.connect(lambda checked, m=mode, c=config: self.mode_change_requested.emit(m, c))
             self._btn_layout.addWidget(btn)
             self._buttons[mode] = btn
         self._btn_layout.addStretch()
+        # Re-apply current highlight
+        if self._current_mode:
+            self.set_current_mode(self._current_mode)
+
+    def set_available_modes(self, modes: list[str]):
+        """Rebuild buttons to show only modes reported by odin-data."""
+        self._build_buttons(available=modes)
 
     def set_current_mode(self, mode: str):
         self._current_mode = mode
@@ -1136,7 +1155,9 @@ class MainWindow(QMainWindow):
         self._hdf_tab.stop_requested.connect(self._stop_acquisition)
 
         self._dpdk_tab = PluginCommandsTab()
-        self._dpdk_tab.command_requested.connect(self._send_execute)
+        self._dpdk_tab.command_requested.connect(
+            lambda plugin, cmd: self._send_execute(cmd, plugin=plugin)
+        )
 
         self._mode_tab = DecoderModeTab()
         self._mode_tab.mode_change_requested.connect(self._change_mode)
@@ -1243,9 +1264,14 @@ class MainWindow(QMainWindow):
                     self._hdf_tab.update_hdf_status(params[key])
                     break
             if self._main_plugin and self._main_plugin in params:
-                mode = params[self._main_plugin].get("mode")
+                plugin_status = params[self._main_plugin]
+                mode = plugin_status.get("mode")
                 if mode:
                     self._mode_tab.set_current_mode(mode)
+                available = (plugin_status.get("available_modes")
+                             or plugin_status.get("modes"))
+                if available and isinstance(available, list):
+                    self._mode_tab.set_available_modes(available)
 
         elif tag == TAG_CONFIG:
             self._status_tab.update_config(params)

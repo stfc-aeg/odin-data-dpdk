@@ -817,9 +817,12 @@ namespace FrameProcessor
 
     }
 
-    std::vector<std::string> PacketRxCore::requestCommands()
+    std::vector<std::pair<std::string, int>> PacketRxCore::requestCommands()
     {
-        return {"start_capture", "stop_capture"};
+        return {
+            {"start_capture", DEFAULT_COMMAND_PRIORITY},
+            {"stop_capture",  DEFAULT_COMMAND_PRIORITY}
+        };
     }
 
     void PacketRxCore::execute(const std::string& command, OdinData::IpcMessage& reply)
