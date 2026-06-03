@@ -92,7 +92,7 @@ namespace FrameProcessor
         blosc_compcode_to_compname(1, &p_compressor_name);
 
         // Generic frame variables
-        struct SuperFrameHeader *current_frame_buffer_, *compressed_frame_;
+        struct SuperFrameHeader *current_frame_buffer_, *compressed_frame_ = nullptr;
         dimensions_t dims(2);
         int compressed_size = 0;
 
@@ -119,6 +119,13 @@ namespace FrameProcessor
         {
             rte_ring_dequeue(clear_frames_ring_, (void**) &compressed_frame_);
         }
+
+        LOG4CXX_INFO(logger_, "frame dims: " << dims[0] << "x" << dims[1] 
+            << " bit_depth: " << (int)decoder_->get_frame_bit_depth()
+            << " frame_size: " << frame_size
+            << " dest_data_size: " << dest_data_size
+            << " buffer_size: " << shared_buf_->get_buffer_size());
+
 
         //While loop to continuously dequeue frame objects
         while (likely(run_lcore_))

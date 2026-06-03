@@ -34,7 +34,8 @@
 #define DEFAULT_INTERVAL            1000
 #define DEFAULT_STARTING_FRAME      0
 #define DEFAULT_FRAMES              1000
-#define DEFAULT_PACKETS_PER_FRAME   250
+#define DEFAULT_PACKETS_PER_FRAME   2
+#define DEFAULT_PIXEL_DATA_LEN      6400   /* bytes of pixel data per packet (after 64B mercury hdr) */
 #define DEFAULT_DEST_IP             "10.100.0.6"
 #define DEFAULT_DEST_MAC            "08:c0:eb:f8:28:7c"
 #define DEFAULT_DEST_PORT           1234
@@ -51,6 +52,13 @@ typedef enum {
     RR_MODE_PACKET = 1,   /* packets split by contiguous range across NICs */
 } rr_mode_t;
 
+typedef enum {
+    PATTERN_INCR_PACKET = 0,  /* 0..N-1 within each packet (default) */
+    PATTERN_INCR_FRAME  = 1,  /* continues across all packets in a frame */
+    PATTERN_STATIC      = 2,  /* fixed fill value */
+    PATTERN_RANDOM      = 3,  /* random values */
+} pattern_t;
+
 /* Per-NIC network addressing */
 typedef struct {
     char     pcie_addr[32];   /* PCIe address, e.g. "0000:2a:00.0" */
@@ -62,7 +70,7 @@ typedef struct {
 } nic_config_t;
 
 /* Mercury detector packet header */
-struct mercury_hdr {
+struct __rte_packed_begin mercury_hdr {
     rte_be64_t frame_number;
     rte_be64_t padding[6];
     rte_be32_t packet_number;
@@ -70,12 +78,13 @@ struct mercury_hdr {
     uint8_t    _unused_1;
     uint8_t    padding_bytes;
     uint8_t    readout_lane;
-} __rte_packed;
+} __rte_packed_end;
 
 /* Global configuration */
 struct {
     uint64_t    frames;
     uint64_t    packets_per_frame;
+    uint64_t    pixel_data_len;    /* bytes of pixel data per packet (after 64B mercury hdr) */
     uint64_t    interval;
     uint64_t    starting_frame_number;
     uint16_t    destination_port;
@@ -85,6 +94,9 @@ struct {
 
     uint32_t    num_nics;
     rr_mode_t   rr_mode;
+    bool        bit_depth_12;
+    pattern_t   pattern;
+    uint16_t    fill_value;
     char        nic_config_path[256];
     nic_config_t nics[MAX_NICS];
 } config;
@@ -105,6 +117,8 @@ static void print_help(void)
     printf("  --start_frame N    Starting frame number (default: %d)\n", DEFAULT_STARTING_FRAME);
     printf("  --frames N         Number of frames to send (default: %d)\n", DEFAULT_FRAMES);
     printf("  --packets N        Packets per frame (default: %d)\n", DEFAULT_PACKETS_PER_FRAME);
+    printf("  --pixel_bytes N    Pixel data bytes per packet, after the 64B mercury header\n");
+    printf("                     (default: %d; UDP payload = 64 + N bytes)\n", DEFAULT_PIXEL_DATA_LEN);
     printf("  --dst_port N       UDP destination port (default: %d)\n", DEFAULT_DEST_PORT);
     printf("  --src_port N       UDP source port (default: %d)\n", DEFAULT_SRC_PORT);
     printf("  --drop_packet N    Probability 0-100 to drop a packet (default: 0)\n");
@@ -116,6 +130,13 @@ static void print_help(void)
     printf("                     Round-robin mode:\n");
     printf("                       frame  - whole frames rotate across NICs (default)\n");
     printf("                       packet - packet ranges split across NICs per frame\n");
+    printf("  --12bit            Pack pixel payload as 12-bit values (2 pixels per 3 bytes)\n");
+    printf("  --pattern MODE     Pixel fill pattern (default: incr_packet):\n");
+    printf("                       incr_packet - 0..N-1 within each packet\n");
+    printf("                       incr_frame  - incrementing across all packets in a frame\n");
+    printf("                       static      - all pixels set to --fill_value\n");
+    printf("                       random      - random pixel values\n");
+    printf("  --fill_value N     Pixel value used with --pattern static (default: 0)\n");
     printf("\n");
     printf("Single-NIC fallback options (used when --nic_config is not provided):\n");
     printf("  --dest_ip ADDR     Destination IP (default: %s)\n", DEFAULT_DEST_IP);
@@ -223,7 +244,6 @@ static int load_nic_config(const char *path)
 static const struct rte_eth_conf port_conf_default = {
     .rxmode = {
         .max_lro_pkt_size = JUMBO_FRAME_ELEMENT_SIZE,
-        .offloads = RTE_ETH_TX_OFFLOAD_IPV4_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM,
     },
 };
 
@@ -245,6 +265,13 @@ static int port_init(uint16_t port_id, struct rte_mempool *mbuf_pool)
 
     ret = rte_eth_dev_start(port_id);
     if (ret < 0) return ret;
+
+    ret = rte_eth_dev_set_mtu(port_id, 9000);
+    if (ret != 0)
+        printf("WARN: port %u could not set MTU to 9000: %s\n",
+               port_id, rte_strerror(-ret));
+    else
+        printf("Port %u MTU set to 9000\n", port_id);
 
     struct rte_ether_addr addr;
     ret = rte_eth_macaddr_get(port_id, &addr);
@@ -272,7 +299,11 @@ static void fill_packet_headers(struct rte_mbuf *pkt,
     const int l3 = sizeof(struct rte_ipv4_hdr);
     const int l4 = sizeof(struct rte_udp_hdr);
 
-    pkt->pkt_len  = l2 + l3 + l4 + sizeof(struct mercury_hdr) + data_len;
+    /* In 12-bit mode, 2 pixels pack into 3 bytes instead of 4, so the wire
+     * payload is 3/4 of the 16-bit data_len. */
+    uint64_t wire_len = config.bit_depth_12 ? (data_len / 2) * 3 / 2 : data_len;
+
+    pkt->pkt_len  = l2 + l3 + l4 + sizeof(struct mercury_hdr) + wire_len;
     pkt->data_len = pkt->pkt_len;
 
     struct rte_ether_hdr *eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
@@ -293,28 +324,55 @@ static void fill_packet_headers(struct rte_mbuf *pkt,
     ip->src_addr = addr_buf;
     ip->version_ihl     = RTE_IPV4_VHL_DEF;
     ip->type_of_service = 0;
-    ip->total_length    = 0;
+    ip->total_length    = rte_cpu_to_be_16((uint16_t)(l3 + l4 + 64 /* mercury_hdr */ + wire_len));
     ip->packet_id       = 0;
     ip->fragment_offset = 0;
     ip->time_to_live    = 128;
     ip->next_proto_id   = IPPROTO_UDP;
     ip->hdr_checksum    = 0;
+    ip->hdr_checksum    = rte_ipv4_cksum(ip);
 
     /* UDP */
     udp->dst_port  = rte_bswap16(config.destination_port);
     udp->src_port  = rte_bswap16(config.source_port);
-    udp->dgram_len = rte_bswap16((uint16_t)(l4 + sizeof(struct mercury_hdr) + data_len));
+    udp->dgram_len = rte_bswap16((uint16_t)(l4 + sizeof(struct mercury_hdr) + wire_len));
     udp->dgram_cksum = 0;
 
     /* Mercury header */
     memset(mhdr, 0, sizeof(*mhdr));
-    mhdr->frame_number  = rte_cpu_to_be_64(frame_number);
-    mhdr->packet_number = rte_bswap32(packet_number);
+    mhdr->frame_number  = frame_number;
+    mhdr->packet_number = packet_number;
 
-    /* Payload: incrementing uint16 test pattern */
-    uint16_t *payload = (uint16_t *)((char *)mhdr + sizeof(struct mercury_hdr));
-    for (uint64_t i = 0; i < data_len / 2; i++)
-        payload[i] = (uint16_t)((frame_number & 0xFFFF) + i);
+    /* Payload: fill according to selected pattern */
+    uint8_t *payload = (uint8_t *)((char *)mhdr + sizeof(struct mercury_hdr));
+    uint64_t num_pixels = data_len / 2;  /* number of 16-bit pixels that fit in the payload */
+
+    /* Build the 16-bit pixel array for this packet */
+    uint16_t pixels[num_pixels];
+    uint64_t frame_pixel_offset = packet_number * num_pixels;
+
+    for (uint64_t i = 0; i < num_pixels; i++) {
+        switch (config.pattern) {
+            case PATTERN_INCR_PACKET: pixels[i] = (uint16_t)i;                          break;
+            case PATTERN_INCR_FRAME:  pixels[i] = (uint16_t)(frame_pixel_offset + i);   break;
+            case PATTERN_STATIC:      pixels[i] = config.fill_value;                    break;
+            case PATTERN_RANDOM:      pixels[i] = (uint16_t)(rand() & 0xFFFF);          break;
+        }
+    }
+
+    if (config.bit_depth_12) {
+        /* Pack pairs of 12-bit pixel values into 3 bytes each.
+         * pixel A bits [11:4] -> byte0, A[3:0]|B[11:8] -> byte1, B[7:0] -> byte2 */
+        for (uint64_t i = 0; i < num_pixels; i += 2) {
+            uint16_t a = pixels[i]       & 0x0FFF;
+            uint16_t b = pixels[i + 1]   & 0x0FFF;
+            *payload++ = (uint8_t)((a & 0x0FF0) >> 4);
+            *payload++ = (uint8_t)(((a & 0x000F) << 4) | ((b & 0x0F00) >> 8));
+            *payload++ = (uint8_t)(b & 0x00FF);
+        }
+    } else {
+        memcpy(payload, pixels, num_pixels * sizeof(uint16_t));
+    }
 }
 
 /* Update only the frame_number field in a pre-built packet */
@@ -327,7 +385,7 @@ static void update_frame_number(struct rte_mbuf *pkt, uint64_t frame_number)
     struct rte_ether_hdr *eth  = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
     struct mercury_hdr   *mhdr = (struct mercury_hdr *)
         ((char *)eth + l2 + l3 + l4);
-    mhdr->frame_number = rte_cpu_to_be_64(frame_number);
+    mhdr->frame_number = frame_number;
 }
 
 /* -------------------------------------------------------------------------
@@ -364,6 +422,7 @@ int main(int argc, char **argv)
     /* --- Defaults -------------------------------------------------------- */
     config.frames               = DEFAULT_FRAMES;
     config.packets_per_frame    = DEFAULT_PACKETS_PER_FRAME;
+    config.pixel_data_len       = DEFAULT_PIXEL_DATA_LEN;
     config.interval             = DEFAULT_INTERVAL;
     config.starting_frame_number = DEFAULT_STARTING_FRAME;
     config.destination_port     = DEFAULT_DEST_PORT;
@@ -372,6 +431,9 @@ int main(int argc, char **argv)
     config.drop_frames          = 0;
     config.num_nics             = 1;
     config.rr_mode              = RR_MODE_FRAME;
+    config.bit_depth_12         = false;
+    config.pattern              = PATTERN_INCR_PACKET;
+    config.fill_value           = 0;
     config.nic_config_path[0]   = '\0';
 
     /* Single-NIC defaults (used if no --nic_config) */
@@ -386,6 +448,7 @@ int main(int argc, char **argv)
         {"start_frame",     required_argument, NULL, 's'},
         {"frames",          required_argument, NULL, 'f'},
         {"packets",         required_argument, NULL, 'k'},
+        {"pixel_bytes",     required_argument, NULL, 'z'},
         {"dest_ip",         required_argument, NULL, 'd'},
         {"dest_mac",        required_argument, NULL, 'm'},
         {"src_ip",          required_argument, NULL, 'x'},
@@ -398,6 +461,9 @@ int main(int argc, char **argv)
         {"num_nics",        required_argument, NULL, 'n'},
         {"nic_config",      required_argument, NULL, 'j'},
         {"mode",            required_argument, NULL, 'o'},
+        {"12bit",           no_argument,       NULL, 'q'},
+        {"pattern",         required_argument, NULL, 'P'},
+        {"fill_value",      required_argument, NULL, 'F'},
         {"help",            no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
@@ -409,6 +475,7 @@ int main(int argc, char **argv)
             case 's': config.starting_frame_number  = (uint64_t)atol(optarg); break;
             case 'f': config.frames                 = (uint64_t)atol(optarg); break;
             case 'k': config.packets_per_frame      = (uint64_t)atol(optarg); break;
+            case 'z': config.pixel_data_len         = (uint64_t)atol(optarg); break;
             case 'd': strncpy(config.nics[0].dest_ip,  optarg, sizeof(config.nics[0].dest_ip)  - 1); break;
             case 'm': strncpy(config.nics[0].dest_mac, optarg, sizeof(config.nics[0].dest_mac) - 1); break;
             case 'x': strncpy(config.nics[0].src_ip,   optarg, sizeof(config.nics[0].src_ip)   - 1); break;
@@ -431,6 +498,19 @@ int main(int argc, char **argv)
                     return -1;
                 }
                 break;
+            case 'q': config.bit_depth_12 = true; break;
+            case 'P':
+                if      (strcmp(optarg, "incr_packet") == 0) config.pattern = PATTERN_INCR_PACKET;
+                else if (strcmp(optarg, "incr_frame")  == 0) config.pattern = PATTERN_INCR_FRAME;
+                else if (strcmp(optarg, "static")       == 0) config.pattern = PATTERN_STATIC;
+                else if (strcmp(optarg, "random")       == 0) config.pattern = PATTERN_RANDOM;
+                else {
+                    fprintf(stderr, "ERROR: --pattern must be incr_packet, incr_frame, static, or random\n");
+                    rte_eal_cleanup();
+                    return -1;
+                }
+                break;
+            case 'F': config.fill_value = (uint16_t)atoi(optarg); break;
             case 'h':
                 print_help();
                 rte_eal_cleanup();
@@ -474,13 +554,29 @@ int main(int argc, char **argv)
     printf("Configuration:\n");
     printf("  frames:            %lu\n", config.frames);
     printf("  packets_per_frame: %lu\n", config.packets_per_frame);
+    printf("  pixel_bytes:       %lu  (UDP payload = %lu B)\n",
+           config.pixel_data_len, (uint64_t)64 + config.pixel_data_len);
     printf("  interval_us:       %lu\n", config.interval);
     printf("  starting_frame:    %lu\n", config.starting_frame_number);
     printf("  num_nics:          %u\n",  config.num_nics);
     printf("  rr_mode:           %s\n",  config.rr_mode == RR_MODE_FRAME ? "frame" : "packet");
+    printf("  bit_depth:         %s\n",  config.bit_depth_12 ? "12bit" : "16bit");
+    static const char *pattern_names[] = {"incr_packet", "incr_frame", "static", "random"};
+    printf("  pattern:           %s\n",  pattern_names[config.pattern]);
+    if (config.pattern == PATTERN_STATIC)
+        printf("  fill_value:        %u\n", config.fill_value);
 
     /* --- Memory pool ----------------------------------------------------- */
-    const uint64_t data_len = 8000;
+    const uint64_t data_len = config.pixel_data_len;
+    const uint64_t pkt_size = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) +
+                              sizeof(struct rte_udp_hdr) + 64 /* mercury_hdr */ + data_len;
+    if (pkt_size > JUMBO_FRAME_ELEMENT_SIZE) {
+        fprintf(stderr, "ERROR: packet size %lu B exceeds JUMBO_FRAME_ELEMENT_SIZE %u B. "
+                "Reduce --pixel_bytes or increase JUMBO_FRAME_ELEMENT_SIZE.\n",
+                pkt_size, JUMBO_FRAME_ELEMENT_SIZE);
+        rte_eal_cleanup();
+        return -1;
+    }
     uint32_t total_pkts = config.num_nics * FRAMES_PER_BUFFER * (uint32_t)config.packets_per_frame;
 
     struct rte_mempool *mbuf_pool = rte_pktmbuf_pool_create(
@@ -495,19 +591,24 @@ int main(int argc, char **argv)
         rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
 
     /* --- Port init (hotplug each NIC by PCIe address) -------------------- */
+    printf("\n--- Port initialisation (%u NIC(s)) ---\n", config.num_nics);
     for (uint32_t n = 0; n < config.num_nics; n++) {
         const char *pcie = config.nics[n].pcie_addr;
 
         if (pcie[0] == '\0') {
             /* No PCIe address: use port n directly (single-NIC fallback) */
+            printf("NIC %u: no pcie_addr, using DPDK port %u\n", n, n);
             config.nics[n].port_id = (uint16_t)n;
         } else {
+            printf("NIC %u: hotplugging PCIe %s ...\n", n, pcie);
             ret = rte_eal_hotplug_add("pci", pcie, "");
             if (ret < 0 && ret != -EEXIST) {
                 rte_exit(EXIT_FAILURE,
                          "Cannot hotplug NIC %u (PCIe %s): %s\n",
                          n, pcie, rte_strerror(-ret));
             }
+            if (ret == -EEXIST)
+                printf("NIC %u: PCIe %s already attached\n", n, pcie);
 
             uint16_t port_id;
             ret = rte_eth_dev_get_port_by_name(pcie, &port_id);
@@ -516,13 +617,19 @@ int main(int argc, char **argv)
                          "Cannot find port for NIC %u (PCIe %s)\n", n, pcie);
             }
             config.nics[n].port_id = port_id;
-            printf("NIC %u: PCIe %s → port %u\n", n, pcie, port_id);
+            printf("NIC %u: PCIe %s -> DPDK port %u\n", n, pcie, port_id);
         }
 
+        printf("NIC %u: initialising port %u ...\n", n, config.nics[n].port_id);
         if (port_init(config.nics[n].port_id, mbuf_pool) != 0)
             rte_exit(EXIT_FAILURE, "Cannot init port %u (NIC %u)\n",
                      config.nics[n].port_id, n);
+        printf("NIC %u: port %u ready  src=%s (%s)  dst=%s (%s)\n",
+               n, config.nics[n].port_id,
+               config.nics[n].src_ip,  config.nics[n].src_mac,
+               config.nics[n].dest_ip, config.nics[n].dest_mac);
     }
+    printf("--- All ports ready ---\n\n");
 
     /* --- Pre-build packet buffers ----------------------------------------
      * Layout: [FRAMES_PER_BUFFER][packets_per_frame]
@@ -550,6 +657,8 @@ int main(int argc, char **argv)
     }
 
     /* Fill initial frame numbers starting from config.starting_frame_number */
+    printf("Pre-building packet buffers (2 x %d frames x %lu packets) ...\n",
+           FRAMES_PER_BUFFER, ppf);
     uint64_t frame_counter = config.starting_frame_number;
     for (int fr = 0; fr < FRAMES_PER_BUFFER; fr++) {
         for (uint64_t pk = 0; pk < ppf; pk++) {
@@ -563,6 +672,9 @@ int main(int argc, char **argv)
         }
         frame_counter++;
     }
+    printf("Buffer 0 ready (frames %lu..%lu)\n",
+           config.starting_frame_number, frame_counter - 1);
+
     /* Pre-fill buffer 1 as well */
     for (int fr = 0; fr < FRAMES_PER_BUFFER; fr++) {
         for (uint64_t pk = 0; pk < ppf; pk++) {
@@ -577,22 +689,43 @@ int main(int argc, char **argv)
         frame_counter++;
     }
 
+    printf("Buffer 1 ready (frames %lu..%lu)\n",
+           config.starting_frame_number + FRAMES_PER_BUFFER, frame_counter - 1);
+
     printf("\nPress Enter to start sending packets...\n");
     getchar();
 
     /* --- Send loop ------------------------------------------------------- */
-    uint64_t ticks_per_sec   = rte_get_tsc_hz();
-    uint64_t last_tsc        = rte_get_tsc_cycles();
+    uint64_t ticks_per_sec     = rte_get_tsc_hz();
+    uint64_t last_tsc          = rte_get_tsc_cycles();
     uint64_t total_frames_sent = 0;
-    int cur_buf              = 0;
+    uint64_t total_pkts_sent   = 0;
+    uint64_t total_pkts_dropped = 0;
+    uint64_t tx_retries        = 0;
+    int cur_buf                = 0;
+    bool first_packet_sent     = false;
+
+#define TX_MAX_RETRIES 100000UL
+
+    printf("Starting send: %lu frames, %lu packets/frame, interval %lu us\n",
+           config.frames, ppf, config.interval);
 
     while (total_frames_sent < config.frames) {
         /* Send all frames in the current buffer */
         for (int fr = 0; fr < FRAMES_PER_BUFFER && total_frames_sent < config.frames; fr++) {
+
+            if (config.drop_frames > 0 && (rand() % 100) < (int)config.drop_frames) {
+                total_frames_sent++;
+                total_pkts_dropped += ppf;
+                continue;
+            }
+
             for (uint64_t pk = 0; pk < ppf; pk++) {
                 /* Drop logic */
-                if (config.drop_packets > 0 && (rand() % 100) < (int)config.drop_packets)
+                if (config.drop_packets > 0 && (rand() % 100) < (int)config.drop_packets) {
+                    total_pkts_dropped++;
                     continue;
+                }
 
                 uint16_t nic;
                 if (config.rr_mode == RR_MODE_FRAME)
@@ -600,15 +733,45 @@ int main(int argc, char **argv)
                 else
                     nic = nic_for_packet((uint32_t)pk);
 
+                uint64_t retries = 0;
                 int nb_tx;
                 do {
                     nb_tx = rte_eth_tx_burst(config.nics[nic].port_id, 0,
                                              &bufs[cur_buf][fr][pk], 1);
+                    if (nb_tx != 1) {
+                        retries++;
+                        tx_retries++;
+                        if (retries == 1000)
+                            printf("WARN: TX stalled on NIC %u (port %u), "
+                                   "frame %lu pkt %lu — retrying...\n",
+                                   nic, config.nics[nic].port_id,
+                                   total_frames_sent + config.starting_frame_number, pk);
+                        if (retries >= TX_MAX_RETRIES) {
+                            printf("ERROR: TX gave up after %lu retries on NIC %u (port %u), "
+                                   "frame %lu pkt %lu — aborting\n",
+                                   retries, nic, config.nics[nic].port_id,
+                                   total_frames_sent + config.starting_frame_number, pk);
+                            goto send_done;
+                        }
+                    }
                 } while (nb_tx != 1);
 
+                if (!first_packet_sent) {
+                    printf("First packet sent: frame %lu pkt 0 via NIC %u (port %u)\n",
+                           config.starting_frame_number, nic, config.nics[nic].port_id);
+                    first_packet_sent = true;
+                }
+
+                total_pkts_sent++;
                 rte_delay_us(config.interval);
             }
             total_frames_sent++;
+
+            /* Per-frame progress (first 5 frames, then every 1000) */
+            if (total_frames_sent <= 5 || total_frames_sent % 1000 == 0)
+                printf("  frame %lu/%lu sent  (pkts sent=%lu dropped=%lu retries=%lu)\n",
+                       total_frames_sent, config.frames,
+                       total_pkts_sent, total_pkts_dropped, tx_retries);
         }
 
         /* Refresh the buffer just finished with new frame numbers */
@@ -617,18 +780,25 @@ int main(int argc, char **argv)
                 update_frame_number(bufs[cur_buf][fr][pk], frame_counter);
             frame_counter++;
         }
+        printf("  [buf %d refreshed up to frame %lu]\n", cur_buf, frame_counter - 1);
 
         cur_buf = 1 - cur_buf;
-
-        if (total_frames_sent % 10000 == 0)
-            printf("Sent %lu / %lu frames\n", total_frames_sent, config.frames);
     }
 
+send_done:
+
     float elapsed = (float)(rte_get_tsc_cycles() - last_tsc) / ticks_per_sec;
-    printf("\nDone. Sent %lu frames in %.2f s (%.1f frames/s, %.2f Gbps)\n",
-           total_frames_sent, elapsed,
-           total_frames_sent / elapsed,
-           (float)(total_frames_sent * ppf * data_len * 8) / (elapsed * 1e9));
+    printf("\n--- Done ---\n");
+    printf("  Frames sent:    %lu / %lu\n", total_frames_sent, config.frames);
+    printf("  Packets sent:   %lu\n", total_pkts_sent);
+    printf("  Packets dropped:%lu\n", total_pkts_dropped);
+    printf("  TX retries:     %lu\n", tx_retries);
+    printf("  Elapsed:        %.2f s\n", elapsed);
+    if (elapsed > 0) {
+        printf("  Throughput:     %.1f frames/s  %.2f Gbps\n",
+               total_frames_sent / elapsed,
+               (double)(total_pkts_sent * data_len * 8) / (elapsed * 1e9));
+    }
 
     /* Cleanup */
     for (int b = 0; b < 2; b++) {

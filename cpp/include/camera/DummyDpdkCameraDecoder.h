@@ -119,12 +119,21 @@ public:
      */
     virtual const std::size_t get_frame_x_resolution(void) const
     {
-        return 4096; // OrcaQuest X resolution
+        return 2304; // OrcaQuest X resolution
     }
 
     virtual const std::size_t get_frame_y_resolution(void) const
     {
-        return 2304;  // OrcaQuest Y resolution
+        return 4096;  // OrcaQuest Y resolution
+    }
+
+        // Frame dimension methods
+    virtual std::vector<std::size_t> get_frame_dimensions(void) const override {
+        std::vector<std::size_t> dims;
+        dims.push_back(get_frame_x_resolution());
+        dims.push_back(get_frame_y_resolution());
+
+        return dims;
     }
 
     /**

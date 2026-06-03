@@ -286,7 +286,7 @@ namespace FrameProcessor
                             // and map a new buffer for it
                             current_frame_ = current_super_frame_number;
 
-                            LOG4CXX_INFO(logger_, "Starting histogram: " << current_frame_number);
+                            // LOG4CXX_INFO(logger_, "Starting histogram: " << current_frame_number);
 
                             if (unlikely(rte_ring_dequeue(clear_frames_ring_, (void **) &current_super_frame_buffer_)) != 0)
                             {
@@ -296,20 +296,20 @@ namespace FrameProcessor
                             }
                             else
                             {
-                                LOG4CXX_INFO(logger_, "Dequeued buffer at: " << (void*)current_super_frame_buffer_ 
-                                    << " frame_buffer_size: " << decoder_->get_frame_buffer_size()
-                                    << " ring_count: " << rte_ring_count(clear_frames_ring_));
+                                // LOG4CXX_INFO(logger_, "Dequeued buffer at: " << (void*)current_super_frame_buffer_ 
+                                //     << " frame_buffer_size: " << decoder_->get_frame_buffer_size()
+                                //     << " ring_count: " << rte_ring_count(clear_frames_ring_));
                                 
                                 frame_buffer_map_.insert(
                                     std::make_pair(current_super_frame_number, current_super_frame_buffer_)
                                 );
 
-                                LOG4CXX_INFO(logger_, "memset current_super_frame_buffer_ to zero buffer location " << (void*)current_super_frame_buffer_ << " size " << decoder_->get_frame_buffer_size());
+                                // LOG4CXX_INFO(logger_, "memset current_super_frame_buffer_ to zero buffer location " << (void*)current_super_frame_buffer_ << " size " << decoder_->get_frame_buffer_size());
 
                                 // Zero out the frame header to clear old data
                                 memset(current_super_frame_buffer_, 0, decoder_->get_frame_buffer_size());
 
-                                LOG4CXX_INFO(logger_, "Setting super frame number and start time");
+                                // LOG4CXX_INFO(logger_, "Setting super frame number and start time");
 
                                 // Set the frame number and start time in the header
                                 decoder_->set_super_frame_number(current_super_frame_buffer_, current_super_frame_number);
@@ -317,7 +317,7 @@ namespace FrameProcessor
                                     current_super_frame_buffer_, rte_get_tsc_cycles()
                                 );
 
-                                LOG4CXX_INFO(logger_, "Finish setting super frame number and start time");
+                                // LOG4CXX_INFO(logger_, "Finish setting super frame number and start time");
                             }
                         }
                     }
@@ -387,12 +387,12 @@ namespace FrameProcessor
                         // FrameBuilderCore to pick up. Check if the current frame is 'dropped' and
                         // don't enqueue if that is the case
 
-                        LOG4CXX_INFO(logger_, "Histogram complete: " << current_frame_number);
+                        // LOG4CXX_INFO(logger_, "Histogram complete: " << current_frame_number);
 
-                        LOG4CXX_INFO(logger_, "Core " << lcore_id_
-                                << " with " << decoder_->get_super_frame_frames_received(current_super_frame_buffer_) << " complete sub frames"
-                                << " with " << decoder_->get_packets_received(current_frame_header_) << " complete Packets"
-                                );
+                        // LOG4CXX_INFO(logger_, "Core " << lcore_id_
+                        //         << " with " << decoder_->get_super_frame_frames_received(current_super_frame_buffer_) << " complete sub frames"
+                        //         << " with " << decoder_->get_packets_received(current_frame_header_) << " complete Packets"
+                        //         );
 
                         if (likely(current_super_frame_buffer_ != dropped_frame_buffer_))
                         {
@@ -441,7 +441,7 @@ namespace FrameProcessor
             // appropriate
             uint64_t now = rte_get_tsc_cycles();
 
-            if (unlikely((now - last) >= (cycles_per_sec)))
+            if (unlikely((now - last) >= (cycles_per_sec))) // Update status every second
             {
                 // Update any monitoring variables every second
                 processed_frames_hz_ = frames_per_second - 1;

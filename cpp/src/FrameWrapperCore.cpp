@@ -141,21 +141,19 @@ namespace FrameProcessor
                 last_frame_ = frame_number;
 
 
-                decoder_->set_super_frame_image_size(current_super_frame_buffer_, frame_size);
-
                 // Create new frame metadata object
                 FrameMetaData frame_meta;
                 frame_meta.set_dataset_name(config_.dataset_name_);
                 frame_meta.set_frame_number(frame_number);
                 frame_meta.set_dimensions(dims);
                 frame_meta.set_data_type(decoder_->get_frame_bit_depth());
-                
+
                 LOG4CXX_DEBUG(logger_, "Created frame metadata:"
                     << " Dataset: " << config_.dataset_name_
                     << " Frame: " << frame_number
                     << " Data type: " << decoder_->get_frame_bit_depth());
 
-                // Get the image size, with this we can work out if the frame has been compressed
+                // Read the image size set by FrameCompressorCore to determine if compressed
                 uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);
 
                 if (frame_size != image_size)
@@ -174,7 +172,7 @@ namespace FrameProcessor
                                                     decoder_->get_frame_buffer_size(),
                                                     clear_frames_ring_, data_pointer_offset));
 
-                complete_frame->set_image_size(decoder_->get_super_frame_image_size(current_super_frame_buffer_));
+                complete_frame->set_image_size(image_size);
                 complete_frame->set_outer_chunk_size(decoder_->get_frame_outer_chunk_size());
                 frame_callback_(complete_frame);
 

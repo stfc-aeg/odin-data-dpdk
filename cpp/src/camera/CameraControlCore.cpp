@@ -62,7 +62,7 @@ namespace FrameProcessor
 
         // Bind the IPC channel
         // TODO: Move the address to a config param
-        Camera_Ctrl_Channel_.bind("tcp://0.0.0.0:9001");
+        Camera_Ctrl_Channel_.bind("tcp://127.0.0.1:9001");
 
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " Bound IPC channel to port 9001");
