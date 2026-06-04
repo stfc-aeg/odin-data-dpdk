@@ -45,8 +45,6 @@ namespace FrameProcessor
 
         LoggerPtr logger_;
 
-        
-        
         int64_t current_frame_;
         
         uint64_t total_packets_;
@@ -62,10 +60,7 @@ namespace FrameProcessor
         uint64_t maximum_us_on_frame_;
         uint8_t  core_usage_;
 
-
         uint64_t frame_buffer_size_;
-
-        
         int64_t first_frame_number_;
 
         bool debug_enabled_;

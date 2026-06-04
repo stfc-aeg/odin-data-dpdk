@@ -1,4 +1,4 @@
-#include "TensorstoreResizer.h"
+#include "tensorstore/TensorstoreResizer.h"
 #include <DebugLevelLogger.h>
 #include <rte_cycles.h>
 
@@ -31,8 +31,7 @@ uint64_t TensorstoreResizer::ExpandDataset(
     
     if (!resize_result.ok()) {
         LOG4CXX_ERROR(logger, "Failed to expand dataset: " << resize_result.status());
-        // Return current capacity unchanged to prevent invalid state
-        return current_capacity;
+        return current_capacity;  // preserve state on failure
     }
     
     store = *resize_result;
@@ -45,7 +44,6 @@ uint64_t TensorstoreResizer::ExpandDataset(
     return new_capacity;
 }
 
-// Shrinks the dataset to its actual size to remove empty spaces
 bool TensorstoreResizer::ShrinkDataset(
     tensorstore::TensorStore<>& store,
     uint64_t current_capacity,

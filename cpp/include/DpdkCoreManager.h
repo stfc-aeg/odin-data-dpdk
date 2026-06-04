@@ -53,8 +53,9 @@ namespace FrameProcessor
         static const std::string CONFIG_DPDK_EAL_PARAMS;
 
         static ssize_t dpdk_log_writer(void *, const char *data, size_t len);
-        int build_dpdk_eal_args(OdinData::IpcMessage& config, std::vector<char *>& eal_argv);
-        char* param_value(const rapidjson::Value& param);
+        int build_dpdk_eal_args(OdinData::IpcMessage& config,
+            std::vector<std::string>& eal_strings, std::vector<char*>& eal_argv);
+        std::string param_value(const rapidjson::Value& param);
 
         static int start_worker(void* worker_ptr);
 

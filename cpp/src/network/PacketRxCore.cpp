@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <sstream>
+#include <stdexcept>
 #include <cstring>
 #include "network/PacketRxCore.h"
 #include "DpdkUtils.h"
@@ -24,20 +25,20 @@ namespace FrameProcessor
         dropped_packets_(0),
         captured_packets_(0),
         total_packets_(0),
+        arp_replies_(0),
+        icmp_replies_(0),
         port_id_(UINT16_MAX),
         device_configured_(false),
         device_(nullptr)
     {
 
-        // Resolve configuration parameters for athis core from the config object passed as an
-        // argument, and the current port ID
         config_.resolve(dpdkWorkCoreReferences.core_config);
 
         LOG4CXX_INFO(logger_, "FP.PacketRxCore " << proc_idx_ << " Created with config:"
-            << " | core_name" << config_.core_name
+            << " | core_name: " << config_.core_name
             << " | num_cores: " << config_.num_cores
             << " | connect: " << config_.connect
-            << " | num_downsteam_cores: " << config_.num_downstream_cores
+            << " | num_downstream_cores: " << config_.num_downstream_cores
         );
 
 
@@ -72,18 +73,15 @@ namespace FrameProcessor
             LOG4CXX_ERROR(logger_, "Error getting MAC address for device on port " << port_id_
                 << " : " << rte_strerror(rc)
             );
-            // TODO - raise exception here?
         }
 
-        // DPDK does not implement an IP stack, so cannot resolve any existing IP address assigned
-        // by the kernel to the ethernet device. The IP address, which is also required to respond
-        // to ARP requests, must be provided from configuration
+        // DPDK does not implement an IP stack so cannot resolve any kernel-assigned IP address.
+        // The device IP must be supplied from config to allow ARP reply generation.
         if (inet_pton(AF_INET, instance_device_ip_.c_str(), &dev_ip_addr_) < 1)
         {
             LOG4CXX_ERROR(logger_, "Error resolving device IP address for port " << port_id_
-                << " from value" << instance_device_ip_
+                << " from value " << instance_device_ip_
             );
-            // TODO - raise exception here?
         }
 
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Ethernet device on port " << port_id_
@@ -110,10 +108,8 @@ namespace FrameProcessor
                 fwd_ring = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
                 if (fwd_ring == NULL)
                 {
-                    LOG4CXX_ERROR(logger_, "Error creating packet forward ring " << ring_name
-                        << " : " << rte_strerror(rte_errno)
-                    );
-                    // TODO - raise exception here?
+                    throw std::runtime_error("Failed to create packet forward ring " + ring_name
+                        + ": " + rte_strerror(rte_errno));
                 }
             }
             else
@@ -138,10 +134,8 @@ namespace FrameProcessor
             packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
             if (packet_release_ring_ == NULL)
             {
-                LOG4CXX_ERROR(logger_, "Error creating packet release ring " << ring_name
-                    << " : " << rte_strerror(rte_errno)
-                );
-                // TODO - raise exception here?
+                throw std::runtime_error("Failed to create packet release ring " + ring_name
+                    + ": " + rte_strerror(rte_errno));
             }
         }
         else
@@ -151,11 +145,9 @@ namespace FrameProcessor
             );
         }
 
-        // Check that at least one RX port has been defined
         if (config_.rx_ports_.size() == 0)
         {
             LOG4CXX_ERROR(logger_, "No RX ports defined");
-            // TODO - raise exception here?
         }
         else
         {
@@ -195,8 +187,6 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_ << " starting up");
 
-        
-
         struct rte_mbuf *pkt_bufs[config_.rx_burst_size_];
         struct rte_mbuf *pkt;
         struct rte_mbuf *release_pkt[config_.rx_burst_size_];
@@ -211,7 +201,6 @@ namespace FrameProcessor
         bool pkt_tx_reply = false;
         bool pkt_forwarded = false;
 
-        // check to see if a valid device has been configured
         if (!device_configured_ || !device_) {
             LOG4CXX_ERROR(logger_, "No device configured. Stopping RxCore.");
             return false;
@@ -255,6 +244,7 @@ namespace FrameProcessor
                         );
 
                         pkt_tx_reply = handle_arp_request(&pkt_ether_hdr, &pkt_arp_hdr);
+                        if (pkt_tx_reply) arp_replies_++;
                         break;
 
                     case RTE_ETHER_TYPE_IPV4:
@@ -274,6 +264,7 @@ namespace FrameProcessor
                                 pkt_tx_reply = handle_icmp_request(
                                     &pkt_ether_hdr, &pkt_ipv4_hdr, &pkt_icmp_hdr
                                 );
+                                if (pkt_tx_reply) icmp_replies_++;
                                 break;
 
                             case IPPROTO_UDP:
@@ -310,7 +301,6 @@ namespace FrameProcessor
                 if (pkt_tx_reply)
                 {
                     pkt_bufs[num_replies++] = pkt;
-                    dropped_packets_++;
                 }
                 else if (pkt_forwarded)
                 {
@@ -336,7 +326,6 @@ namespace FrameProcessor
                     uint32_t retry = 0;
                     while ((num_tx_pkts < num_replies) && (retry++ < config_.max_packet_tx_retries_))
                     {
-                        //rte_delay_us(1);
                         num_tx_pkts += rte_eth_tx_burst(
                             port_id_, config_.tx_queue_id_, &pkt_bufs[num_tx_pkts],
                             num_replies - num_tx_pkts
@@ -505,36 +494,16 @@ namespace FrameProcessor
 
         uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
 
-        // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-        //     << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
-        //     << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
-        //     << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
-        //     << " rx port: " << dst_port
-        // );
-
-        // If the destination port is in the list of allowed RX ports continue to process the
-        // packet
         if (std::find(config_.rx_ports_.begin(), config_.rx_ports_.end(), dst_port) !=
             config_.rx_ports_.end())
         {
-
-            // Get the protocol header from the start of the UDP payload and resolve the frame
-            // number
             PacketHeader* pkt_header =
                 (PacketHeader *)((uint8_t *)*pkt_udp_hdr + sizeof(struct rte_udp_hdr));
 
-
-            // check to see if rx_enable is true and if the packet should be discarded or
-            // forwarded
-            if(unlikely(rx_enable_ == false))
+            if (unlikely(rx_enable_ == false))
             {
                 return pkt_forwarded;
             }
-            
-            // This statement allows the code to reset the "starting" frame number in code
-            // When first_frame_number_ is set to -1 the next first packet of a frame will be use
-            // to create a variable to offset the frame number by, allow for frames to be
-            // distributed as it the first frame has a frame number of 0
 
             uint64_t packet_number = decoder_->get_packet_number(pkt_header);
             uint64_t frame_number = decoder_->get_frame_number(pkt_header);
@@ -571,21 +540,12 @@ namespace FrameProcessor
 
             uint64_t current_frame_number = frame_number - first_frame_number_;
 
-            // Check to see if the packet recieved is within the current aquisition
-            // if not then return this function and discard the packet
-
-            if(rx_frames_ != 0 && current_frame_number >= rx_frames_)
+            // Discard packets beyond the configured acquisition window
+            if (rx_frames_ != 0 && current_frame_number >= rx_frames_)
             {
                 return pkt_forwarded;
             }
 
-
-            // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-            //     << " protocol header: frame: " << current_frame_number
-            //     << " packet: " << decoder_->get_packet_number(pkt_header)
-            // );
-
-            // Queue the packet on the appropriate forwarding ring based on the frame number
             int rc = rte_ring_enqueue(
                 packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores], *pkt
             );
@@ -596,20 +556,20 @@ namespace FrameProcessor
                 uint32_t retry = 0;
                 while ((rc != 0) && (retry++ < config_.max_packet_queue_retries_))
                 {
-                    //rte_delay_us(1);
                     rc = rte_ring_enqueue(
                         packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores],
                         *pkt
                     );
                 }
-                LOG4CXX_INFO(logger_, "PacketRxCore failed to enqueue packet, ring full");
+                if (rc != 0)
+                {
+                    LOG4CXX_WARN(logger_, "PacketRxCore failed to enqueue packet after retries, ring full");
+                }
             }
-
 
             if (likely(rc == 0))
             {
                 pkt_forwarded = true;
-                // The packet was enqueued to a packet ring, increment the captured packet counter
             }
         }
 
@@ -683,6 +643,8 @@ namespace FrameProcessor
         status.set_param(status_path + "total_packets", total_packets_);
         status.set_param(status_path + "dropped_packets", dropped_packets_);
         status.set_param(status_path + "captured_packets", captured_packets_);
+        status.set_param(status_path + "arp_replies", arp_replies_);
+        status.set_param(status_path + "icmp_replies", icmp_replies_);
         status.set_param(status_path + "rx_enable", rx_enable_);
         status.set_param(status_path + "rx_frames", rx_frames_);
         status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
@@ -724,10 +686,8 @@ namespace FrameProcessor
             }
         }
 
-        // Memory pool monitoring - requires DpdkDevice::get_mbuf_pool() method
-        // TODO: Add getter method to DpdkDevice class: struct rte_mempool* get_mbuf_pool() const { return mbuf_pool_; }
+        // Lookup mbuf pool by its well-known name to report occupancy without requiring a DpdkDevice getter
         if (device_) {
-            // Try to lookup mbuf pool by name (if mbuf_pool_name_str function is available)
             std::string mbuf_pool_name = mbuf_pool_name_str(socket_id_);
             struct rte_mempool* mbuf_pool = rte_mempool_lookup(mbuf_pool_name.c_str());
 
@@ -788,20 +748,15 @@ namespace FrameProcessor
 
     void PacketRxCore::configure(OdinData::IpcMessage& config)
     {
-        // Update the config based from the passed IPCmessage
-
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
-
 
         if (config.has_param("rx_enable"))
         {
-            
             rx_enable_ = config.get_param("rx_enable", false);
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting rx_enable_ to: " <<  rx_enable_);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting rx_enable_ to: " << rx_enable_);
         }
 
-        // Only update the other config is rx_enable is currently false
-        // Whenever rx_enabled is false then make sure first_frame_number_ is ready for when it's turned on
+        // Reset the frame latch whenever capture is inactive so it is ready for the next acquisition
         if (!rx_enable_)
         {
             first_frame_number_ = -1;
@@ -811,10 +766,8 @@ namespace FrameProcessor
                 shared_first_frame_number_.store(-1, std::memory_order_release);
             }
             rx_frames_ = config.get_param("rx_frames", rx_frames_);
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reseting frame latch and setting rx_frames_ to: " <<  rx_frames_);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reset frame latch, rx_frames_ = " << rx_frames_);
         }
-
-
     }
 
     std::vector<std::pair<std::string, int>> PacketRxCore::requestCommands()

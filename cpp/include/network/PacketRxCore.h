@@ -30,7 +30,7 @@ namespace FrameProcessor
     public:
 
         PacketRxCore(
-            int proc_idx_, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
+            int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
         );
         ~PacketRxCore();
 
@@ -75,6 +75,8 @@ namespace FrameProcessor
         uint64_t total_packets_;
         uint64_t dropped_packets_;
         uint64_t captured_packets_;
+        uint64_t arp_replies_;
+        uint64_t icmp_replies_;
         uint16_t port_id_;
         bool device_configured_;
         PacketProtocolDecoder* decoder_;
@@ -83,7 +85,6 @@ namespace FrameProcessor
         uint64_t first_seen_frame_number_;
         uint64_t rx_frames_;
         bool rx_enable_;
-
 
         struct rte_ether_addr dev_eth_addr_;
         uint32_t dev_ip_addr_;

@@ -1,9 +1,8 @@
-#include "TensorstoreWriter.h"
+#include "tensorstore/TensorstoreWriter.h"
 #include <DebugLevelLogger.h>
 
 namespace FrameProcessor {
 
-// Explicit template instantiations for supported pixel types
 template tensorstore::WriteFutures TensorstoreWriter::AsyncWriteFrame<uint8_t>(
     tensorstore::TensorStore<>& store,
     void* raw_data,

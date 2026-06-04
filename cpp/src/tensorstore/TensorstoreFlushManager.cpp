@@ -1,5 +1,5 @@
-#include "TensorstoreFlushManager.h"
-#include "TensorstoreResizer.h"
+#include "tensorstore/TensorstoreFlushManager.h"
+#include "tensorstore/TensorstoreResizer.h"
 #include <DebugLevelLogger.h>
 
 namespace FrameProcessor {
@@ -19,12 +19,12 @@ FlushResult TensorstoreFlushManager::FlushPendingWrites(
         .dataset_shrunk = false
     };
 
-    if (!tensorstore_initialized || !store.has_value()) {
-        LOG4CXX_DEBUG_LEVEL(2, logger, "No active store to flush");
+    if (!tensorstore_initialized || !store.has_value())
+    {
         return result;
     }
 
-    // Shrink dataset to actual size once frames have finished writing
+    // Trim the dataset to the last written frame to remove unused capacity
     if (highest_frame_written > 0) {
         uint64_t final_size = highest_frame_written + 1;
         

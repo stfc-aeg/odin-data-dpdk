@@ -65,12 +65,9 @@ void HDF5ImageLoader::loadImagesFromHDF5(const std::string& filePath) {
     
     totalFrames_ = dims[0];
     
-	// Might be worth adding a method for upscaling/downscaling the images to fit the expected buffer
     if (dims[1] != height_ || dims[2] != width_) {
-        LOG4CXX_INFO(logger_, "Warning: Dataset dimensions (" << dims[2] << "x" << dims[1] 
-                  << ") do not match expected dimensions (" << width_ << "x" << height_ << ")" );
-        LOG4CXX_INFO(logger_, "Expected height: " << height_ << ", width: " << width_ );
-        LOG4CXX_INFO(logger_, "Dataset height: " << dims[1] << ", width: " << dims[2] );
+        LOG4CXX_ERROR(logger_, "Dataset dimensions (" << dims[2] << "x" << dims[1]
+                  << ") do not match expected dimensions (" << width_ << "x" << height_ << ")");
         H5Sclose(dataspace);
         throw std::runtime_error("Dataset dimensions do not match expected dimensions");
     }
@@ -262,9 +259,6 @@ void HDF5ImageLoader::drawText(const std::string& text, int x, int y, uint16_t v
         drawChar(text[i], x + i * charSpacing, y, value, scale);
     }
 }
-
-// TODO: This should be changed out for another method for writing text to the images
-
 
 const uint8_t HDF5ImageLoader::Font40_Table[] = {
 

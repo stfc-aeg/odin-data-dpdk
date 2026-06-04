@@ -6,7 +6,6 @@ namespace FrameProcessor
 {
     namespace Defaults
     {
-        // Place all default values here
         const unsigned int default_frame_timeout = 1000;
     }
 
@@ -31,9 +30,8 @@ namespace FrameProcessor
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                }        
+                }
             }
-
 
         private:
 
@@ -48,16 +46,12 @@ namespace FrameProcessor
 
             }
 
-            
             std::string core_name;
             std::string connect;
             std::string upstream_core;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
-            // Specfic config
-            unsigned int frame_timeout_;
-
-
+            unsigned int frame_timeout_;  //!< Incomplete frame timeout in milliseconds
 
             friend class PacketProcessorCore;
     };

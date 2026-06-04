@@ -1,5 +1,5 @@
 #include "camera/CameraStateMachine.h"
-#include "DpdkCamera.h"
+#include "camera/DpdkCamera.h"
 
 namespace sc = boost::statechart;
 
@@ -27,8 +27,6 @@ void CameraStateMachine::execute_command(const char* command)
 void CameraStateMachine::execute_command(std::string& command)
 {
     CommandType command_type = map_command_to_type(command);
-
-    std::cout << command << std::endl;
 
     if (command_type == CommandUnknown)
     {
