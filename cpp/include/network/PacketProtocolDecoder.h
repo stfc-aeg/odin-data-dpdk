@@ -3,6 +3,7 @@
 
 #include <string>
 #include "ProtocolDecoder.h"
+#include <rte_byteorder.h>
 
 struct PacketHeader { };
 
@@ -12,6 +13,7 @@ public:
 
     PacketProtocolDecoder(
         const std::size_t packets_per_frame, const std::size_t payload_size,
+        const std::size_t test_pattern,
         const unsigned int frames_per_super_frame = 1
     ) :
         ProtocolDecoder(payload_size, frames_per_super_frame),
@@ -46,8 +48,12 @@ public:
     virtual const uint64_t get_frame_number(PacketHeader* packet_hdr) const = 0;
     virtual const uint32_t get_packet_number(PacketHeader* packet_hdr) const = 0;
 
+    virtual bool set_packet_number(PacketHeader* packet_hdr, uint32_t packet_number) = 0;
+    virtual bool set_packet_frame_number(PacketHeader* packet_hdr, rte_be64_t frame_number) = 0;
+
     virtual const uint64_t get_image_size(RawFrameHeader* frame_hdr) const = 0;
     virtual void set_image_size(RawFrameHeader* frame_hdr, uint64_t image_size) const = 0;
+
 
     virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame) = 0;
     virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame) = 0;

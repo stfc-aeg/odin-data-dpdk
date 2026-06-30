@@ -258,6 +258,18 @@ public:
         return rte_bswap32((reinterpret_cast<X10GPacketHeader *>(packet_hdr))->packet_number);
     }
 
+    bool set_packet_number(PacketHeader* packet_hdr, uint32_t packet_number) {
+        X10GPacketHeader* x10g_hdr = reinterpret_cast<X10GPacketHeader*>(packet_hdr);
+        x10g_hdr->packet_number = packet_number;
+        return true;
+    }
+
+    bool set_packet_frame_number(PacketHeader* packet_hdr, rte_be64_t frame_number) {
+        X10GPacketHeader* x10g_hdr = reinterpret_cast<X10GPacketHeader*>(packet_hdr);
+        x10g_hdr->frame_number = frame_number;
+        return true;
+    }
+
     SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame)
     {
         return frame_hdr;

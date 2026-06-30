@@ -1,0 +1,80 @@
+[
+    {
+        "fr_setup": {
+            "fr_ready_cnxn": "tcp://0.0.0.0:6969",
+            "fr_release_cnxn": "tcp://0.0.0.0:6970"
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "DummyDpdk",
+                "name": "DummyDpdkPlugin",
+                "library": "./lib/libDummyDpdkPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "DummyDpdk",
+                "connection": "frame_receiver"
+            }
+        }
+    },
+    {
+        "DummyDpdk": {
+            "update_config": false,
+            "dpdk_process_rank": 0,
+            "num_secondary_processes": 0,
+            "shared_buffer_size": 17179869184,
+            "dpdk_eal": {
+                "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
+                "loglevel": "debug",
+                "proc-type": "Primary",
+                "file-prefix": "odin-data"
+            },
+            "worker_cores": {
+                "packet_generator": {
+                    "core_name": "PacketGeneratorCore",
+                    "num_cores": 1,
+
+                    "destination_port": 1234,
+                    "source_port": 2345,
+                    "source_ip_address": [
+                        "10.0.100.7",
+                        "10.0.101.7"
+                    ],
+                    "source_mac_address": [
+                        "9c:63:c0:db:bb:dc",
+                        "9c:63:c0:db:bb:dd"
+                    ],
+                    "destination_ip_address": [
+                        "10.0.100.6",
+                        "10.0.101.6"
+                    ],
+                    "destination_mac_address": [
+                        "58:a2:e1:c1:fe:e8",
+                        "58:a2:e1:c1:fe:e9"
+                    ],
+                    "device_addresses": [
+                        "0000:2a:00.0",
+                        "0000:2a:00.1"
+                    ],
+
+                    "test_pattern_mode": "numerical-packetnum"
+                },
+                "tx_core": {
+                    "core_name": "PacketTxCore",
+                    "num_cores": 1,
+
+                    "connect": "packet_generator",
+                    "num_devices": 2,
+                  
+                    "destination_port": 1234,
+                    "number_of_frames": 2000
+                }
+            }
+        }
+    }
+]

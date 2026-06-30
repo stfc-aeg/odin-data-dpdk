@@ -4,12 +4,12 @@
 
 namespace FrameProcessor
 {
+
     class PacketTxConfiguration : public OdinData::ParamContainer
     {
         public:
 
-            PacketTxConfiguration() :
-                ParamContainer()
+            PacketTxConfiguration()
             {
                 bind_params();
             }
@@ -17,7 +17,7 @@ namespace FrameProcessor
             void resolve(DpdkCoreConfiguration& core_config_)
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("frame_wrapper");
+                    core_config_.get_worker_core_config("tx_core");
 
                 if (value_ptr != nullptr)
                 {
@@ -33,8 +33,8 @@ namespace FrameProcessor
                 bind_param<std::string>(connect, "connect");
                 bind_param<std::string>(upstream_core, "upstream_core");
                 bind_param<unsigned int>(num_cores, "num_cores");
-                bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");              
-
+                bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
+                bind_param<unsigned int>(num_devices, "num_devices");
             }
 
             std::string core_name;
@@ -42,6 +42,7 @@ namespace FrameProcessor
             std::string upstream_core;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
+            unsigned int num_devices;
 
             friend class PacketTxCore;
     };

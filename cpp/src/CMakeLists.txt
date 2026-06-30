@@ -43,6 +43,7 @@ set(ODINDATA_DPDK_SOURCES
         network/PacketProcessorCore.cpp
         network/PacketRxCore.cpp
         network/PacketTxCore.cpp
+        network/PacketGeneratorCore.cpp
 )
 
 # Tensorstore related
