@@ -15,8 +15,9 @@ namespace FrameProcessor
         const std::vector<std::string> default_device_addresses = {"0"};
 
         //packet_gen_core
-        // const uint64_t default_number_of_frames = 2000;
-        const std::string default_test_pattern_mode = "numerical-incremental";
+        const std::string default_data_source = "generated";
+        const std::string default_pattern = "incrementing";
+        const std::string default_file_path = "/tmp/acq_1";
     }
 
     class PacketGeneratorConfiguration : public OdinData::ParamContainer
@@ -31,13 +32,11 @@ namespace FrameProcessor
                 source_mac_address(Defaults::default_source_mac_address),
                 destination_ip_address(Defaults::default_destination_ip_address),
                 destination_mac_address(Defaults::default_destination_mac_address),
-                // device_addresses(Defaults::default_device_addresses),
-
                 device_addresses_(Defaults::default_device_addresses),
                 
-                // number_of_frames(Defaults::default_number_of_frames),
-                test_pattern_mode(Defaults::default_test_pattern_mode)
-
+                data_source(Defaults::default_data_source),
+                pattern(Defaults:: default_pattern),
+                file_path(Defaults::default_file_path)
             {
                 bind_params();
             }
@@ -79,11 +78,11 @@ namespace FrameProcessor
                 bind_vector_param<std::string>(source_mac_address, "source_mac_address");
                 bind_vector_param<std::string>(destination_ip_address, "destination_ip_address");
                 bind_vector_param<std::string>(destination_mac_address, "destination_mac_address");
-                // bind_param<std::vector<std::string>>(device_addresses, "device_addresses");
                 bind_vector_param<std::string>(device_addresses_, "device_addresses");
 
-                // bind_param<uint64_t>(number_of_frames, "number_of_frames");
-                bind_param<std::string>(test_pattern_mode, "test_pattern_mode");
+                bind_param<std::string>(data_source, "data_source");
+                bind_param<std::string>(pattern, "pattern");
+                bind_param<std::string>(file_path, "file_path");
             }
 
             std::string core_name;
@@ -103,9 +102,9 @@ namespace FrameProcessor
             DpdkDeviceConfiguration dpdk_device_;
 
             //packet_gen_core
-            // uint64_t number_of_frames;
-            std::string test_pattern_mode;
-
+            std::string data_source;
+            std::string pattern;
+            std::string file_path;
 
             friend class PacketGeneratorCore;
     };

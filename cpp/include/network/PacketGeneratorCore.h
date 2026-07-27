@@ -15,9 +15,11 @@ using namespace log4cxx::helpers;
 #include <rte_ring.h>
 #include <blosc.h>
 #include <rte_byteorder.h>
+#include <memory>
 
 namespace FrameProcessor
 {
+    class DataSource;
 
     class PacketGeneratorCore : public DpdkWorkerCore
     {
@@ -40,6 +42,13 @@ namespace FrameProcessor
 
     private:
 
+        struct TxDeviceContext
+        {
+            uint16_t port_id;
+            DpdkDevice* device;
+            rte_ring* ring;
+        };
+
         bool add_device(const std::string& pci_address);
         int proc_idx_;
         PacketProtocolDecoder* decoder_;
@@ -48,28 +57,12 @@ namespace FrameProcessor
         LoggerPtr logger_;
         FrameCallback& frame_callback_;
 
-        // DpdkDevice* device_;
-        // uint16_t port_id_;
-        // bool packet_tx_ = false;
-
-        // std::vector<DpdkDevice*> devices_;
-        // std::unordered_map<uint16_t, rte_ring*> tx_rings_;
-        // std::vector<uint16_t> port_ids_;
-
-        struct TxDeviceContext
-        {
-            uint16_t port_id;
-            DpdkDevice* device;
-            rte_ring* ring;
-        };
-
         std::vector<TxDeviceContext> tx_devices_;
 
         struct rte_ring* frame_ready_ring_;
         struct rte_ring* clear_frames_ring_;
         struct rte_ring* upstream_ring_;
 
-        // bool device_configured_;
 
         bool packet_tx_;
 
@@ -77,6 +70,8 @@ namespace FrameProcessor
 
         std::string instance_pcie_device_;  //!< PCIe address for this instance's NIC
         std::string instance_device_ip_;    //!< IP address for this instance's NIC
+
+        std::unique_ptr<DataSource> data_source_;
     };
 }
 

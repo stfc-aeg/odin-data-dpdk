@@ -3,18 +3,14 @@
 #include <blosc.h>
 #include "DpdkSharedBufferFrame.h"
 #include </usr/lib/x86_64-linux-gnu/hdf5/serial/include/hdf5.h>
+#include "DataSource.h"
+#include "GeneratedDataSource.h"
+#include "HDF5DataSource.h"
 #include <thread>
 #include <chrono>
 
 namespace FrameProcessor
 {
-
-    enum class NumericalPattern {
-        Incrementing,
-        PacketNum,
-        Fixed,
-        Unknown
-    };
 
     PacketGeneratorCore::PacketGeneratorCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
@@ -29,6 +25,22 @@ namespace FrameProcessor
 
         // Get the configuration container for this worker
         config_.resolve(dpdkWorkCoreReferences.core_config);
+
+        if (config_.data_source == "generated")
+        {
+            data_source_ = std::make_unique<GeneratedDataSource>(decoder_, config_.pattern);
+        }
+        else if (config_.data_source == "hdf5")
+        {
+            data_source_ = std::make_unique<HDF5DataSource>(decoder_, config_.file_path);
+        }
+        else
+        {
+            throw std::runtime_error("Unknown data source.");
+        }
+
+        // Class loading - reference it as base class
+        // Base class must have all methods, doesn't care how it is specialised
 
         LOG4CXX_INFO(logger_, "FP.PacketGeneratorCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -111,57 +123,13 @@ namespace FrameProcessor
             rte_ring_dequeue(clear_frames_ring_, (void**) &data_array);
         };
 
+        data_source_->getData(data_array);
+
         uint64_t pixel_index = 0;
         uint64_t pixel_value = 0;
 
         uint32_t pixels_per_packet = frame_pixels / packets_per_frame;
         uint32_t bytes_per_packet  = pixels_per_packet * sizeof(uint16_t);
-
-        NumericalPattern pattern = NumericalPattern::Unknown;
-        LOG4CXX_INFO(logger_, "5");
-
-        if (config_.test_pattern_mode == "numerical-incrementing")
-            pattern = NumericalPattern::Incrementing;
-
-        else if (config_.test_pattern_mode == "numerical-packetnum")
-            pattern = NumericalPattern::PacketNum;
-
-        else if (config_.test_pattern_mode == "numerical-fixed")
-            pattern = NumericalPattern::Fixed;
-
-        while (pixel_index < frame_pixels) {
-            uint64_t value = 0;
-            pixel_value = pixel_index;
-
-            switch (pattern) {
-                case NumericalPattern::Incrementing: {
-                    uint64_t pos = pixel_index % 131072;
-
-                    value =
-                        static_cast<uint16_t>(
-                            (pos <= 65535) ? pos : (131071 - pos)
-                    );
-                    break;
-                }
-
-                case NumericalPattern::PacketNum: {
-                    value = std::trunc(pixel_value / pixels_per_packet);
-                    break;
-                }
-
-                case NumericalPattern::Fixed: {
-                    value = 84;
-                    break;
-                }
-
-                default: {
-                    value = 0;
-                    break;
-                }
-            }
-
-            data_array[pixel_index++] = value;
-        }
 
         int l2_len = sizeof(struct rte_ether_hdr);
         int l3_len = sizeof(struct rte_ipv4_hdr);
@@ -169,7 +137,6 @@ namespace FrameProcessor
 
         uint64_t data_len = (frame_pixels / packets_per_frame)  * sizeof(uint16_t); // pixels_per_packet
 
-        rte_be64_t frame_counter = 0;
         uint16_t total_packet_length = l2_len + l3_len + len_4 + data_len + 64; // xiDyn_HDR_SIZE;
         uint32_t temp_ip_buf;
         uint64_t frame_number = 0;
@@ -178,6 +145,7 @@ namespace FrameProcessor
         //     LOG4CXX_ERROR(logger_, "upstream_ring_ is NULL");
         //     return false;
         // }
+        int frame_counter = 0;
 
         // While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
@@ -188,11 +156,16 @@ namespace FrameProcessor
                 continue;
             }
 
+            data_source_->getData(data_array);
+
             for (uint32_t packet = 0; packet < packets_per_frame; packet++)
             {
                 // struct rte_mbuf* mbuf = rte_pktmbuf_alloc(device_->mbuf_pool());
 
-                uint32_t device_index = packet % tx_devices_.size();
+                // uint32_t device_index = packet % tx_devices_.size(); // split frames over rings
+                uint32_t device_index = frame_counter % tx_devices_.size(); // each frame on a different ring
+
+                
                 auto& tx_dev = tx_devices_[device_index];
 
                 struct rte_mbuf* mbuf = rte_pktmbuf_alloc(tx_dev.device->mbuf_pool());
@@ -310,6 +283,16 @@ namespace FrameProcessor
 
         std::string status_path = path + "/PacketGeneratorCore_" + std::to_string(proc_idx_) + "/";
 
+        status.set_param(status_path + "data_source", config_.data_source);
+
+        if (config_.data_source == "generated")
+        {
+            status.set_param(status_path + "pattern", config_.pattern);
+        }
+        else if (config_.data_source == "hdf5")
+        {
+            status.set_param(status_path + "file_path", config_.file_path);
+        }
     }
 
     bool PacketGeneratorCore::connect(void)
@@ -356,6 +339,14 @@ namespace FrameProcessor
         // Update the config based from the passed IPCmessage
 
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
+        if (config.has_param("data_source"))
+        {
+            config_.data_source = config.get_param("data_source", false);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting config_.data_source to: " <<  config_.data_source);
+        }        
+
+        // Look in PacketRxCore.cpp for example
 
     }
 
@@ -425,17 +416,9 @@ namespace FrameProcessor
 
         struct rte_eth_link link;
 
-        rte_eth_link_get_nowait(port_id, &link);
+        bool x = rte_eth_link_get_nowait(port_id, &link);
 
-        LOG4CXX_INFO(
-            logger_,
-            "Port "
-            << port_id
-            << " link "
-            << (link.link_status ? "UP" : "DOWN")
-            << " speed "
-            << link.link_speed
-        );
+        LOG4CXX_INFO(logger_, "Port " << port_id << " link " << (link.link_status ? "UP" : "DOWN") << " speed " << link.link_speed);
 
         std::string ring_name = "tx_port_" + std::to_string(port_id);
 
