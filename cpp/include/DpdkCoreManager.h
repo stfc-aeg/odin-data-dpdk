@@ -8,11 +8,11 @@
 #ifndef INCLUDE_DPDKCORE_MANAGER_H_
 #define INCLUDE_DPDKCORE_MANAGER_H_
 
-#include <boost/bimap.hpp>
 #include <vector>
 #include <string>
 #include <unistd.h>
 #include <map>
+#include <set>
 #include <iostream>
 #include <log4cxx/logger.h>
 using namespace log4cxx;
@@ -59,7 +59,10 @@ namespace FrameProcessor
 
         static int start_worker(void* worker_ptr);
 
-        boost::bimap<std::string, std::string> core_chain_order_;
+        // upstream config_key -> downstream config_key (one upstream can have multiple downstreams)
+        std::multimap<std::string, std::string> core_chain_order_;
+        // downstream config_key -> upstream config_key (reverse lookup)
+        std::map<std::string, std::string> downstream_to_upstream_;
 
         LoggerPtr logger_;
 
@@ -77,6 +80,8 @@ namespace FrameProcessor
         std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;
         std::vector<boost::shared_ptr<DpdkWorkerCore>> running_cores_;
 
+        // One shared buffer per stream; keyed by stream_id
+        std::map<std::string, DpdkSharedBuffer*> stream_shared_buffers_;
         std::vector<DpdkSharedBuffer *> shared_buffers_;
 
     };

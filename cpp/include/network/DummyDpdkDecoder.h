@@ -8,11 +8,25 @@
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include <boost/shared_ptr.hpp>
+#include <map>
+#include <string>
 #include "dpdk_version_compatibiliy.h"
 
-#define FRAME_OUTER_CHUNK_SIZE 1
-#define PACKETS_PER_FRAME 250
-#define PACKET_PAYLOAD_SIZE 8000
+// Mode enumeration — add new modes here as needed
+enum class DummyDpdkMode {
+    FRAME_1000x1000,   // 250 packets, 8000 byte payload, 1000x1000 uint16 frame
+    FRAME_512x512,     // 64 packets,  4096 byte payload, 512x512  uint16 frame
+    FRAME_256x256      // 16 packets,  2048 byte payload, 256x256  uint16 frame
+};
+
+struct DummyModeConfiguration {
+    std::size_t packets_per_frame;
+    std::size_t payload_size;
+    std::size_t frame_outer_chunk_size;
+    FrameProcessor::DataType bit_depth;
+    std::size_t x_resolution;
+    std::size_t y_resolution;
+};
 
 struct __rte_packed_begin X10GPacketHeader : PacketHeader
 {
@@ -38,35 +52,114 @@ struct __rte_packed_begin X10GRawFrameHeader : RawFrameHeader
     uint8_t packet_state[1];  // One for each packet in the frame
 } __rte_packed_end;
 
-namespace Defaults
-{
-    const std::size_t default_packets_per_frame = PACKETS_PER_FRAME;
-    const std::size_t default_payload_size = PACKET_PAYLOAD_SIZE;
-}
-
 class DummyDpdkDecoder : public PacketProtocolDecoder
 {
 
 public:
 
-    DummyDpdkDecoder() :
-        PacketProtocolDecoder(
-            Defaults::default_packets_per_frame, Defaults::default_payload_size,
-            FRAME_OUTER_CHUNK_SIZE
-        )
+    static const std::map<std::string, DummyDpdkMode>& get_mode_string_map()
     {
-        frame_bit_depth_ = FrameProcessor::DataType::raw_16bit;
-        frame_x_resolution_ = 1000;
-        frame_y_resolution_ = 1000;
+        static const std::map<std::string, DummyDpdkMode> mode_string_map = {
+            {"frame_1000x1000", DummyDpdkMode::FRAME_1000x1000},
+            {"frame_512x512",   DummyDpdkMode::FRAME_512x512},
+            {"frame_256x256",   DummyDpdkMode::FRAME_256x256}
+        };
+        return mode_string_map;
     }
 
-    virtual const std::size_t get_frame_header_size(void) const
+    DummyDpdkDecoder(DummyDpdkMode initial_mode = DummyDpdkMode::FRAME_1000x1000) :
+        PacketProtocolDecoder(
+            get_mode_configs().at(initial_mode).packets_per_frame,
+            get_mode_configs().at(initial_mode).payload_size,
+            get_mode_configs().at(initial_mode).frame_outer_chunk_size
+        ),
+        current_mode_(initial_mode)
+    {
+        configure_for_mode(initial_mode);
+    }
+
+    void set_mode(DummyDpdkMode new_mode)
+    {
+        if (new_mode != current_mode_)
+        {
+            current_mode_ = new_mode;
+            configure_for_mode(new_mode);
+        }
+    }
+
+    DummyDpdkMode get_mode() const { return current_mode_; }
+
+    std::string get_mode_string() const
+    {
+        for (const auto& kv : get_mode_string_map())
+        {
+            if (kv.second == current_mode_) return kv.first;
+        }
+        return "unknown";
+    }
+
+    // Resolve a mode string to its configuration, falling back to the current mode if empty
+    // or unrecognised. Const and stateless — safe to call from multiple threads.
+    const DummyModeConfiguration& resolve_mode(const std::string& mode) const
+    {
+        if (!mode.empty())
+        {
+            const auto& mode_map = get_mode_string_map();
+            auto it = mode_map.find(mode);
+            if (it != mode_map.end())
+                return get_mode_configs().at(it->second);
+            // Unknown mode string — log once (static flag avoids flooding)
+            static bool warned = false;
+            if (!warned) {
+                fprintf(stderr, "DummyDpdkDecoder: unknown mode '%s', falling back to current mode\n",
+                        mode.c_str());
+                warned = true;
+            }
+        }
+        return get_mode_configs().at(current_mode_);
+    }
+
+    virtual const std::size_t get_payload_size(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).payload_size;
+    }
+
+    virtual const std::size_t get_packets_per_frame(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).packets_per_frame;
+    }
+
+    virtual const uint64_t get_frame_outer_chunk_size(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).frame_outer_chunk_size;
+    }
+
+    virtual const FrameProcessor::DataType get_frame_bit_depth(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).bit_depth;
+    }
+
+    virtual const std::size_t get_frame_x_resolution(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).x_resolution;
+    }
+
+    virtual const std::size_t get_frame_y_resolution(const std::string& mode = "") const override
+    {
+        return resolve_mode(mode).y_resolution;
+    }
+
+    virtual std::vector<std::size_t> get_frame_dimensions(const std::string& mode = "") const override
+    {
+        const DummyModeConfiguration& cfg = resolve_mode(mode);
+        return {cfg.x_resolution, cfg.y_resolution};
+    }
+
+    virtual const std::size_t get_frame_header_size(const std::string& mode = "") const override
     {
         std::size_t packet_marker_size = sizeof(X10GRawFrameHeader().packet_state);
-        std::size_t packet_header_size = sizeof(X10GRawFrameHeader) +
-            (packet_marker_size * packets_per_frame_ - 1);
-
-        return packet_header_size;
+        std::size_t n_packets = resolve_mode(mode).packets_per_frame;
+        return sizeof(X10GRawFrameHeader) + (packet_marker_size * n_packets - 1);
     }
 
     virtual const std::size_t get_packet_header_size(void) const
@@ -175,11 +268,37 @@ public:
     )
     {
         rte_memcpy(reordered_frame->get_data_ptr(),
-                    reinterpret_cast<char *>(frame_hdr) + get_frame_header_size(),
-                    get_frame_data_size()
+                    reinterpret_cast<char *>(frame_hdr) + get_frame_header_size(get_mode_string()),
+                    get_frame_data_size(get_mode_string())
                 );
 
         return NULL;
+    }
+
+private:
+
+    DummyDpdkMode current_mode_;
+
+    static const std::map<DummyDpdkMode, DummyModeConfiguration>& get_mode_configs()
+    {
+        static const std::map<DummyDpdkMode, DummyModeConfiguration> mode_configs = {
+            //                                packets  payload  chunk  bit_depth                            x     y
+            {DummyDpdkMode::FRAME_1000x1000, {250,     8000,    10,     FrameProcessor::DataType::raw_16bit, 1000, 1000}},
+            {DummyDpdkMode::FRAME_512x512,   {64,      4096,    10,     FrameProcessor::DataType::raw_16bit, 512,  512}},
+            {DummyDpdkMode::FRAME_256x256,   {16,      2048,    10,     FrameProcessor::DataType::raw_16bit, 256,  256}}
+        };
+        return mode_configs;
+    }
+
+    void configure_for_mode(DummyDpdkMode mode)
+    {
+        const DummyModeConfiguration& cfg = get_mode_configs().at(mode);
+        packets_per_frame_      = cfg.packets_per_frame;
+        payload_size_           = cfg.payload_size;
+        frames_per_super_frame_ = cfg.frame_outer_chunk_size;
+        frame_bit_depth_        = cfg.bit_depth;
+        frame_x_resolution_     = cfg.x_resolution;
+        frame_y_resolution_     = cfg.y_resolution;
     }
 
 };

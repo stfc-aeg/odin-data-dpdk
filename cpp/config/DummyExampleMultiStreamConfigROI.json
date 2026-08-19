@@ -1,0 +1,221 @@
+[
+    {
+        "fr_setup": {
+            "fr_ready_cnxn": "tcp://0.0.0.0:6969",
+            "fr_release_cnxn": "tcp://0.0.0.0:6970"
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "DummyDpdk",
+                "name": "DummyDpdkPlugin",
+                "library": "./lib/libDummyDpdkPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "Liveview",
+                "name": "LiveViewPlugin",
+                "library": "./lib/libLiveViewPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "hdf",
+                "name": "FileWriterPlugin",
+                "library": "./lib/libHdf5Plugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "DummyDpdk",
+                "connection": "frame_receiver"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "hdf",
+                "connection": "DummyDpdk"
+            }
+        }
+    },
+    {
+        "DummyDpdk": {
+            "update_config": false,
+            "dpdk_process_rank": 0,
+            "num_secondary_processes": 0,
+            "shared_buffer_size": 53687091200,
+            "dpdk_eal": {
+                "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
+                "loglevel": "debug",
+                "proc-type": "Primary",
+                "file-prefix": "odin-data"
+            },
+            "worker_cores": {
+                "packet_rx": {
+                    "core_name": "PacketRxCore",
+                    "num_cores": 1,
+                    "pcie_device": ["0000:2d:00.0"],
+                    "device_ip": ["10.0.100.6"],
+                    "rx_burst_size": 128,
+                    "fwd_ring_size": 131072,
+                    "release_ring_size": 131072,
+                    "rx_queue_id": 0,
+                    "tx_queue_id": 0,
+                    "max_packet_tx_retries": 64,
+                    "max_packet_queue_retries": 64
+                },
+                "packet_processor": {
+                    "core_name": "PacketProcessorCore",
+                    "num_cores": 1,
+                    "connect": "packet_rx",
+                    "stream": "primary",
+                    "mode": "frame_1000x1000",
+                    "rx_ports": [1234],
+                    "frame_timeout": 1000
+                },
+                "packet_processor_aux": {
+                    "core_name": "PacketProcessorCore",
+                    "num_cores": 1,
+                    "connect": "packet_rx",
+                    "stream": "auxiliary",
+                    "mode": "frame_512x512",
+                    "rx_ports": [1235],
+                    "frame_timeout": 1000
+                },
+                "frame_builder": {
+                    "core_name": "FrameBuilderCore",
+                    "num_cores": 1,
+                    "connect": "packet_processor",
+                    "stream": "primary",
+                    "mode": "frame_1000x1000",
+                    "secondary_fanout": false
+                },
+                "frame_builder_aux": {
+                    "core_name": "FrameBuilderCore",
+                    "num_cores": 1,
+                    "connect": "packet_processor_aux",
+                    "stream": "auxiliary",
+                    "mode": "frame_512x512",
+                    "secondary_fanout": false
+                },
+                "region_of_interest": {
+                    "core_name": "RegionOfInterestCore",
+                    "num_cores": 1,
+                    "connect": "frame_builder",
+                    "stream": "primary",
+                    "mode": "frame_1000x1000",
+                    "roi_x0": 250,
+                    "roi_y0": 250,
+                    "roi_x1": 750,
+                    "roi_y1": 750
+                },
+                "region_of_interest_aux": {
+                    "core_name": "RegionOfInterestCore",
+                    "num_cores": 1,
+                    "connect": "frame_builder_aux",
+                    "stream": "auxiliary",
+                    "mode": "frame_512x512",
+                    "roi_x0": 128,
+                    "roi_y0": 128,
+                    "roi_x1": 384,
+                    "roi_y1": 384
+                },
+                "tensorstore": {
+                    "core_name": "TensorstoreCore",
+                    "num_cores": 1,
+                    "connect": "region_of_interest",
+                    "stream": "primary",
+                    "mode": "frame_1000x1000",
+                    "height": 500,
+                    "width": 500,
+                    "number_of_frames": 1000,
+                    "storage_driver": "zarr",
+                    "kvstore_driver": "file",
+                    "max_concurrent_writes": 64,
+                    "path": "/tmp/tensorstore/",
+                    "cache_bytes_limit": 10737418240,
+                    "csv_logging": false
+                },
+                "tensorstore_aux": {
+                    "core_name": "TensorstoreCore",
+                    "num_cores": 1,
+                    "connect": "region_of_interest_aux",
+                    "stream": "auxiliary",
+                    "mode": "frame_512x512",
+                    "height": 256,
+                    "width": 256,
+                    "number_of_frames": 1000,
+                    "storage_driver": "zarr",
+                    "kvstore_driver": "file",
+                    "max_concurrent_writes": 64,
+                    "path": "/tmp/tensorstore/",
+                    "cache_bytes_limit": 10737418240,
+                    "csv_logging": false
+                },
+                "frame_wrapper": {
+                    "core_name": "FrameWrapperCore",
+                    "dataset_name": "image",
+                    "num_cores": 1,
+                    "connect": "tensorstore",
+                    "stream": "primary",
+                    "mode": "frame_1000x1000"
+                },
+                "frame_wrapper_aux": {
+                    "core_name": "FrameWrapperCore",
+                    "dataset_name": "image_aux",
+                    "num_cores": 1,
+                    "connect": "tensorstore_aux",
+                    "stream": "auxiliary",
+                    "mode": "frame_512x512"
+                }
+            }
+        }
+    },
+    {
+        "hdf": {
+            "dataset": {
+                "image": {
+                    "datatype": "uint16",
+                    "dims": [500, 500],
+                    "chunks": [10, 500, 500],
+                    "compression": "none"
+                },
+                "image_aux": {
+                    "datatype": "uint16",
+                    "dims": [256, 256],
+                    "chunks": [10, 256, 256],
+                    "compression": "none"
+                }
+            },
+            "file": {
+                "path": "/tmp/"
+            },
+            "frames": 100,
+            "master_frame": "image",
+            "acquisition_id": "test_multistream",
+            "write": false,
+            "timeout_timer_period": 10000,
+            "process": {
+                "number": 1,
+                "rank": 0
+            }
+        }
+    },
+    {
+        "Liveview": {
+            "live_view_socket_addr": "tcp://0.0.0.0:5020",
+            "per_second": 1,
+            "dataset_name": "image_aux"
+        }
+    }
+]

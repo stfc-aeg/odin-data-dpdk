@@ -65,30 +65,37 @@ namespace FrameProcessor
         return ss.str();
     }
 
-    std::string ring_name_pkt_release(unsigned int socket_idx)
+    std::string ring_name_pkt_fwd(const std::string& downstream_config_key, unsigned int socket_idx, unsigned int core_idx)
     {
         std::stringstream ss;
+        ss << boost::format("%s_f%02u_%u") % downstream_config_key % core_idx % socket_idx;
+        return ss.str();
+    }
 
+    std::string ring_name_pkt_release(unsigned int socket_idx, const std::string& stream_id)
+    {
+        std::stringstream ss;
+        if (!stream_id.empty())
+            ss << stream_id << "_";
         ss << boost::format("packet_release_%u") % socket_idx;
-
         return ss.str();
     }
 
-    std::string ring_name_clear_frames(unsigned int socket_idx)
+    std::string ring_name_clear_frames(unsigned int socket_idx, const std::string& stream_id)
     {
         std::stringstream ss;
-
+        if (!stream_id.empty())
+            ss << stream_id << "_";
         ss << boost::format("clear_frames_%u") % socket_idx;
-
         return ss.str();
     }
 
-    std::string shared_mem_name_str(unsigned int socket_idx)
+    std::string shared_mem_name_str(unsigned int socket_idx, const std::string& stream_id)
     {
         std::stringstream ss;
-
+        if (!stream_id.empty())
+            ss << stream_id << "_";
         ss << boost::format("smb_%02u") % socket_idx;
-
         return ss.str();
     }
 

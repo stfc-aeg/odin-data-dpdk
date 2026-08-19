@@ -14,11 +14,18 @@ namespace FrameProcessor
         decoder_(dpdkWorkCoreReferences.decoder),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         logger_(Logger::getLogger("FP.CameraCaptureCore")),
-        camera_controller_(NULL)
-        
+        camera_controller_(NULL),
+        camera_property_update_(false),
+        in_capture_(false),
+        captured_frames_(0),
+        dropped_frames_(0),
+        captured_frames_hz_(0),
+        last_frame_(0),
+        idle_loops_(0)
+
     {
 
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "CameraCaptureCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -28,7 +35,7 @@ namespace FrameProcessor
         // Create downstream rings, or look them up if already created by a sibling core
         for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
         {
-            std::string downstream_ring_name = ring_name_str(config_.core_name, socket_id_, ring_idx);
+            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
             if (downstream_ring == NULL)
             {
@@ -49,7 +56,7 @@ namespace FrameProcessor
         }
 
         // Create the clear_frames ring (shared buffer pool), or look it up if already created
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
         {
@@ -62,9 +69,14 @@ namespace FrameProcessor
                 throw std::runtime_error("Failed to create clear_frames ring " + clear_frames_ring_name
                     + ": " + rte_strerror(rte_errno));
             }
-            for (int element = 0; element < shared_buf_->get_num_buffers(); element++)
+            else
             {
-                rte_ring_enqueue(clear_frames_ring_, shared_buf_->get_buffer_address(element));
+                // Populate the ring with hugepages memory locations to the SMB
+                for (int element = 0; element < shared_buf_->get_num_buffers(); element++)
+                {
+
+                    rte_ring_enqueue(clear_frames_ring_, shared_buf_->get_buffer_address(element));
+                }
             }
         }
     }
@@ -88,7 +100,12 @@ namespace FrameProcessor
         struct SuperFrameHeader *current_super_frame_buffer_;
         char* frame_src;
         uint64_t frame_size = decoder_->get_frame_bit_depth() * decoder_->get_frame_x_resolution() * decoder_->get_frame_y_resolution();
-        uint64_t dropped_frames = 0;
+
+        // Per-second rate accounting, matching the pattern used by the other worker cores
+        uint64_t frames_this_second = 0;
+        uint64_t idle_loops = 0;
+        uint64_t last = rte_get_tsc_cycles();
+        uint64_t cycles_per_sec = rte_get_tsc_hz();
 
         in_capture_ = false;
 
@@ -102,10 +119,24 @@ namespace FrameProcessor
 
         while (likely(run_lcore_))
         {
+            uint64_t now = rte_get_tsc_cycles();
+            if (unlikely((now - last) >= cycles_per_sec))
+            {
+                // Publish the monitoring counters once per second and reset the accumulators
+                captured_frames_hz_ = frames_this_second;
+                idle_loops_ = idle_loops;
+
+                frames_this_second = 0;
+                idle_loops = 0;
+                last = now;
+            }
+
             auto* cam = camera_controller_->camera_.get();
             bool capturing = cam->get_state_name() == "capturing";
             bool in_window = cam->camera_config_->num_frames_ == 0 ||
                              cam->camera_status_->frame_number_ <= cam->camera_config_->num_frames_;
+
+            in_capture_ = capturing && in_window;
 
             if (capturing && in_window)
             {
@@ -115,7 +146,7 @@ namespace FrameProcessor
                 {
                     if (unlikely(rte_ring_dequeue(clear_frames_ring_, (void **)&current_super_frame_buffer_)) != 0)
                     {
-                        dropped_frames++;
+                        dropped_frames_++;
                         LOG4CXX_DEBUG(logger_, "Dropping frame " << cam->camera_status_->frame_number_ << " — no buffer available");
                     }
                     else
@@ -133,7 +164,12 @@ namespace FrameProcessor
                                 config_.num_downstream_cores
                             ], current_super_frame_buffer_
                         );
+
+                        captured_frames_++;
+                        frames_this_second++;
                     }
+
+                    last_frame_ = cam->camera_status_->frame_number_;
 
                     if (cam->camera_status_->frame_number_ % 1000 == 0)
                     {
@@ -142,8 +178,17 @@ namespace FrameProcessor
 
                     cam->camera_status_->frame_number_++;
                 }
+                else
+                {
+                    // Camera had no frame ready this iteration
+                    idle_loops++;
+                }
             }
-            in_capture_ = false;
+            else
+            {
+                // Not capturing, or the configured frame target has been reached
+                idle_loops++;
+            }
         }
         return true;
     }
@@ -164,7 +209,51 @@ namespace FrameProcessor
 
     void CameraCaptureCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        std::string status_path = path + "/CameraCaptureCore_" + std::to_string(proc_idx_) + "/";
+        // Scoped by config_key rather than the class name so that capture cores in different
+        // streams report under distinct keys instead of overwriting each other.
+        std::string core_key = config_.config_key.empty() ? config_.core_name : config_.config_key;
+        std::string status_path = path + "/" + core_key + "_" + std::to_string(proc_idx_) + "/";
+        std::string ring_status = status_path + "downstream_rings/";
+        std::string camera_status = status_path + "camera/";
+
+        status.set_param(status_path + "stream_id", config_.stream_id);
+        status.set_param(status_path + "lcore_id", (int)lcore_id_);
+        status.set_param(status_path + "running", run_lcore_);
+        status.set_param(status_path + "in_capture", in_capture_);
+
+        status.set_param(status_path + "frames_captured", captured_frames_);
+        status.set_param(status_path + "frames_captured_per_second", captured_frames_hz_);
+        status.set_param(status_path + "frames_dropped", dropped_frames_);
+        status.set_param(status_path + "last_frame_number", last_frame_);
+        status.set_param(status_path + "idle_loops", idle_loops_);
+
+        // Camera-side view of progress, so a stalled capture can be told apart from a stalled
+        // camera. The controller is only available once run() has started.
+        // Read through to the camera the same way run() does. CameraController declares
+        // camera_state_name()/get_frame_number()/get_frame_target() but never defines them, so
+        // using those accessors here would not link.
+        if (camera_controller_ != NULL && camera_controller_->camera_ != NULL)
+        {
+            auto* cam = camera_controller_->camera_.get();
+            status.set_param(camera_status + "state", cam->get_state_name());
+            status.set_param(camera_status + "frame_number", (uint64_t)cam->camera_status_->frame_number_);
+            status.set_param(camera_status + "frame_target", (uint64_t)cam->camera_config_->num_frames_);
+        }
+
+        // Free-buffer availability: a clear_frames count pinned at zero explains frames_dropped
+        if (clear_frames_ring_ != NULL)
+        {
+            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
+            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
+        }
+
+        // Downstream ring occupancy, showing whether consumers are keeping up
+        for (std::size_t ring_idx = 0; ring_idx < downstream_rings_.size(); ring_idx++)
+        {
+            std::string ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
+            status.set_param(ring_status + ring_name + "_count", rte_ring_count(downstream_rings_[ring_idx]));
+            status.set_param(ring_status + ring_name + "_size", rte_ring_get_size(downstream_rings_[ring_idx]));
+        }
     }
 
     bool CameraCaptureCore::connect(void)

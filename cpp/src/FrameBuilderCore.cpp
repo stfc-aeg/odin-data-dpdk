@@ -12,6 +12,7 @@ namespace FrameProcessor
         logger_(Logger::getLogger("FP.FrameBuilderCore")),
         proc_idx_(fb_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
+        mode_(dpdkWorkCoreReferences.decoder_mode),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         built_frames_(0),
         built_frames_hz_(0),
@@ -20,7 +21,7 @@ namespace FrameProcessor
         maximum_us_on_frame_(0),
         core_usage_(0)
     {
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "FP.FrameBuilderCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -33,7 +34,7 @@ namespace FrameProcessor
         // Create downstream rings, or look them up if already created by a sibling core
         for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
         {
-            std::string downstream_ring_name = ring_name_str(config_.core_name, socket_id_, ring_idx);
+            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
             if (downstream_ring == NULL)
             {
@@ -78,10 +79,10 @@ namespace FrameProcessor
         struct SuperFrameHeader *returned_frame_location_;
 
         dimensions_t dims(2);
-        dims[0] = decoder_->get_frame_x_resolution();
-        dims[1] = decoder_->get_frame_y_resolution();
-        std::size_t frame_size = dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth());
-        std::size_t payload_size = decoder_->get_payload_size();
+        dims[0] = decoder_->get_frame_x_resolution(mode_);
+        dims[1] = decoder_->get_frame_y_resolution(mode_);
+        std::size_t frame_size = dims[0] * dims[1] * get_size_from_enum(decoder_->get_frame_bit_depth(mode_));
+        std::size_t payload_size = decoder_->get_payload_size(mode_);
 
         uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
@@ -131,7 +132,7 @@ namespace FrameProcessor
 
                 // Zero out payload slots for any dropped packets to prevent stale data from
                 // a previous acquisition from leaking into this frame (memory is reused)
-                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size() -
+                uint32_t incomplete_frames = decoder_->get_frame_outer_chunk_size(mode_) -
                     decoder_->get_super_frame_frames_received(current_frame_buffer_);
 
                 if (incomplete_frames)
@@ -145,16 +146,16 @@ namespace FrameProcessor
                         uint32_t packets_cleared = 0;
 
                         uint32_t packets_dropped = decoder_->get_packets_dropped(
-                            decoder_->get_frame_header(current_frame_buffer_, frame_idx)
+                            decoder_->get_frame_header(current_frame_buffer_, frame_idx, mode_)
                         );
 
                         while (packets_cleared < packets_dropped)
                         {
-                            if (decoder_->get_packet_state(decoder_->get_frame_header(current_frame_buffer_, frame_idx), packet_idx) == 0)
+                            if (decoder_->get_packet_state(decoder_->get_frame_header(current_frame_buffer_, frame_idx, mode_), packet_idx) == 0)
                             {
                                 memset(
-                                    decoder_->get_image_data_start(current_frame_buffer_) +
-                                        (frame_idx * payload_size * decoder_->get_packets_per_frame()) +
+                                    decoder_->get_image_data_start(current_frame_buffer_, mode_) +
+                                        (frame_idx * payload_size * decoder_->get_packets_per_frame(mode_)) +
                                         (packet_idx * payload_size),
                                     0, payload_size
                                 );
@@ -170,8 +171,10 @@ namespace FrameProcessor
                     decoder_->reorder_frame(current_frame_buffer_, reordered_frame_location_);
 
                 decoder_->set_super_frame_image_size(
-                    returned_frame_location_, frame_size * decoder_->get_frame_outer_chunk_size()
+                    returned_frame_location_, frame_size * decoder_->get_frame_outer_chunk_size(mode_)
                 );
+                decoder_->set_super_frame_x_resolution(returned_frame_location_, dims[0]);
+                decoder_->set_super_frame_y_resolution(returned_frame_location_, dims[1]);
 
                 rte_ring_enqueue(
                     downstream_rings_[frame_number % config_.num_downstream_cores], returned_frame_location_
@@ -246,7 +249,7 @@ namespace FrameProcessor
             return false;
         }
 
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
         {

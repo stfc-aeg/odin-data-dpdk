@@ -44,7 +44,7 @@ public:
      * @brief Get the size of the frame header
      * @return Size in bytes of the frame header including packet state array
      */
-    virtual const std::size_t get_frame_header_size(void) const override
+    virtual const std::size_t get_frame_header_size(const std::string& mode = "") const override
     {
         std::size_t packet_marker_size = sizeof(DummyDpdkCameraFrameHeader().packet_state);
         std::size_t frame_header_size = sizeof(DummyDpdkCameraFrameHeader) +
@@ -117,29 +117,25 @@ public:
     /**
      * @brief Get frame dimensions for OrcaQuest camera
      */
-    virtual const std::size_t get_frame_x_resolution(void) const
+    virtual const std::size_t get_frame_x_resolution(const std::string& mode = "") const override
     {
         return 2304; // OrcaQuest X resolution
     }
 
-    virtual const std::size_t get_frame_y_resolution(void) const
+    virtual const std::size_t get_frame_y_resolution(const std::string& mode = "") const override
     {
         return 4096;  // OrcaQuest Y resolution
     }
 
-        // Frame dimension methods
-    virtual std::vector<std::size_t> get_frame_dimensions(void) const override {
+    virtual std::vector<std::size_t> get_frame_dimensions(const std::string& mode = "") const override
+    {
         std::vector<std::size_t> dims;
         dims.push_back(get_frame_x_resolution());
         dims.push_back(get_frame_y_resolution());
-
         return dims;
     }
 
-    /**
-     * @brief Get the data type/bit depth for OrcaQuest frames
-     */
-    virtual const FrameProcessor::DataType get_frame_bit_depth(void) const
+    virtual const FrameProcessor::DataType get_frame_bit_depth(const std::string& mode = "") const override
     {
         return FrameProcessor::raw_16bit;  // OrcaQuest uses 16-bit data
     }

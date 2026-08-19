@@ -1,5 +1,9 @@
 #include "camera/CameraController.h"
 
+// CameraController.h only forward declares CameraCaptureCore (the two headers include each other's
+// types), but get_buffer/discard_buffer call through to it, so the full definition is needed here.
+#include "camera/CameraCaptureCore.h"
+
 namespace FrameProcessor {
 
     CameraController::CameraControllerMap CameraController::instances_;
@@ -51,6 +55,47 @@ bool CameraController::execute_command(std::string& command)
 void CameraController::register_capture_core(CameraCaptureCore* capture_core)
 {
     capture_core_ = capture_core;
+
+    // Bind the buffer management functions into the camera now that a capture core owns the
+    // clear_frames ring. Cameras that write frame data directly into shared buffer memory call
+    // these rather than reaching for the ring themselves, which keeps the DPDK details out of the
+    // camera classes. Bound here rather than in the constructor because the capture core is not
+    // known until it registers.
+    if (camera_)
+    {
+        camera_->getBuffer = boost::bind(&CameraController::get_buffer, this);
+        camera_->discardBuffer = boost::bind(&CameraController::discard_buffer, this, boost::placeholders::_1);
+    }
+}
+
+void* CameraController::get_buffer()
+{
+    // No capture core means no clear_frames ring to draw from
+    if (capture_core_ == NULL)
+    {
+        LOG4CXX_ERROR(logger_, "Cannot get buffer: no capture core registered");
+        return nullptr;
+    }
+
+    // Returns nullptr when the pool is exhausted; the caller decides whether to drop the frame
+    return capture_core_->pop_empty_buffer();
+}
+
+void CameraController::discard_buffer(void* buffer)
+{
+    if (capture_core_ == NULL)
+    {
+        LOG4CXX_ERROR(logger_, "Cannot discard buffer: no capture core registered");
+        return;
+    }
+
+    if (buffer == NULL)
+    {
+        LOG4CXX_DEBUG(logger_, "Ignoring request to discard a null buffer");
+        return;
+    }
+
+    capture_core_->push_empty_buffer(buffer);
 }
 
 

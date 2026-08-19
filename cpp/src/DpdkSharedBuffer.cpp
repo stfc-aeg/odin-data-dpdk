@@ -6,7 +6,8 @@
 namespace FrameProcessor
 {
     DpdkSharedBuffer::DpdkSharedBuffer(
-        const std::size_t mem_size, const std::size_t buffer_size, const int socket_id
+        const std::size_t mem_size, const std::size_t buffer_size,
+        const int socket_id, const std::string& stream_id
     ):
         mem_size_(mem_size),
         buffer_size_(buffer_size),
@@ -21,7 +22,7 @@ namespace FrameProcessor
                 + ") exceeds mem_size (" + std::to_string(mem_size_) + "); zero buffers would be allocated");
         }
 
-        name_ = shared_mem_name_str(socket_id_);
+        name_ = shared_mem_name_str(socket_id_, stream_id);
         LOG4CXX_INFO(logger_, "Creating shared memory buffer " << name_
             << " size " << mem_size_
             << " socket " << socket_id_

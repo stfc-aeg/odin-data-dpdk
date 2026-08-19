@@ -19,6 +19,7 @@ namespace FrameProcessor
         DpdkWorkerCore(socket_id),
         proc_idx_(proc_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
+        mode_(dpdkWorkCoreReferences.decoder_mode),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         dropped_frames_(0),
         dropped_packets_(0),
@@ -38,7 +39,7 @@ namespace FrameProcessor
 
         // Resolve configuration parameters for this core from the config object passed as an
         // argument, and the current port ID
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         // Determine debug level for performance-critical logging
         debug_enabled_ = false;
@@ -46,17 +47,20 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "FP.PacketProcCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
+            << " | config_key: " << config_.config_key
             << " | num_cores: " << config_.num_cores
             << " | connect: " << config_.connect
             << " | upstream_core: " << config_.upstream_core
             << " | num_downstream_cores: " << config_.num_downstream_cores
+            << " | stream_id: " << config_.stream_id
+            << " | mode: " << config_.decoder_mode
         );
 
 
         // Create downstream rings, or look them up if already created by a sibling processing core
         for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
         {
-            std::string downstream_ring_name = ring_name_str(config_.core_name, socket_id_, ring_idx);
+            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
             if (downstream_ring == NULL)
             {
@@ -85,9 +89,11 @@ namespace FrameProcessor
             downstream_rings_.push_back(downstream_ring);
 
         }
+        LOG4CXX_INFO(logger_, "FP.PacketProcCore " << proc_idx_
+            << " downstream_rings_.size()=" << downstream_rings_.size());
 
         // Create the clear_frames ring (shared buffer pool), or look it up if already created
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
         {
@@ -136,40 +142,42 @@ namespace FrameProcessor
         lcore_id_ = lcore_id;
         run_lcore_ = true;
 
-        LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up");
-        
+        LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up"
+            << " fwd_ring=" << (packet_fwd_ring_ ? "OK" : "NULL")
+            << " release_ring=" << (packet_release_ring_ ? "OK" : "NULL")
+            << " clear_frames_ring=" << (clear_frames_ring_ ? "OK" : "NULL")
+            << " mode=" << mode_);
+
         std::unordered_map<uint64_t, SuperFrameHeader*> frame_buffer_map_;
 
-        uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
+        uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size(mode_);
 
         // Set up structs needed for the various layers of packets
         struct RawFrameHeader *current_frame_header_;
         struct SuperFrameHeader *current_super_frame_buffer_;
         struct SuperFrameHeader *dropped_frame_buffer_;
-        
+
         constexpr uint32_t MAX_BURST_SIZE = 128;
         struct rte_mbuf* pkt_burst[MAX_BURST_SIZE];
         struct rte_mbuf* pkt;
-        
+
         struct rte_ether_hdr *pkt_ether_hdr;
         struct rte_udp_hdr *pkt_udp_hdr;
         PacketHeader* pkt_header;
         uint8_t *pkt_payload;
-        
 
-        // Cache offsets for packet header and payload
+
+        // Cache geometry from the decoder for this core's mode
         const std::size_t super_frame_header_size = decoder_->get_super_frame_header_size();
-        const std::size_t frame_header_size = decoder_->get_frame_header_size();
-        const std::size_t udp_hdr_offset = sizeof(struct rte_ether_hdr) + 
+        const std::size_t frame_header_size = decoder_->get_frame_header_size(mode_);
+        const std::size_t udp_hdr_offset = sizeof(struct rte_ether_hdr) +
                                           sizeof(struct rte_ipv4_hdr);
         const std::size_t pkt_hdr_offset = udp_hdr_offset + sizeof(struct rte_udp_hdr);
         const std::size_t pkt_payload_offset = decoder_->get_packet_payload_offset();
-        
-        // Variable set from the decoder based on packet size
-        const std::size_t payload_size = decoder_->get_payload_size();
-        const std::size_t packets_per_frame = decoder_->get_packets_per_frame();
+        const std::size_t payload_size = decoder_->get_payload_size(mode_);
+        const std::size_t packets_per_frame = decoder_->get_packets_per_frame(mode_);
         uint64_t frame_timeout_cycles = convert_ms_to_cycles(config_.frame_timeout_);
-        uint64_t superframe_const = (decoder_->get_packets_per_frame() / frame_outer_chunk_size);
+        uint64_t superframe_const = (decoder_->get_packets_per_frame(mode_) / frame_outer_chunk_size);
 
         uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
@@ -181,18 +189,21 @@ namespace FrameProcessor
         uint64_t idle_loops = 0;
         uint64_t packets_per_second = 0;
 
-        // Scratch buffer used when the clear_frames pool is empty; frames written here are dropped
+        // Scratch buffer sized for this core's mode
         dropped_frame_buffer_ =
-            reinterpret_cast<SuperFrameHeader *>(rte_malloc(NULL, decoder_->get_frame_buffer_size(), 0));
+            reinterpret_cast<SuperFrameHeader *>(rte_malloc(NULL, decoder_->get_frame_buffer_size(mode_), 0));
+        LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " dropped_frame_buffer_="
+            << (dropped_frame_buffer_ ? "OK" : "NULL (rte_malloc FAILED)")
+            << " frame_buffer_size=" << decoder_->get_frame_buffer_size(mode_));
 
         while (likely(run_lcore_))
         {
-            rte_prefetch0(packet_fwd_ring_); 
-            
+            rte_prefetch0(packet_fwd_ring_);
+
             // Batch dequeue - get multiple packets from the forwarding ring
-            uint32_t nb_rx = rte_ring_dequeue_burst(packet_fwd_ring_, 
-                                                    (void **)pkt_burst, 
-                                                    MAX_BURST_SIZE, 
+            uint32_t nb_rx = rte_ring_dequeue_burst(packet_fwd_ring_,
+                                                    (void **)pkt_burst,
+                                                    MAX_BURST_SIZE,
                                                     NULL);
 
             // Process the burst of packets if any were dequeued
@@ -222,18 +233,33 @@ namespace FrameProcessor
                     // Get any frame/packet specific fields required for processing
                     uint16_t rx_port = rte_bswap16(pkt_udp_hdr->dst_port);
 
+                    // Packet size filter: drop before any buffer allocation if outside bounds
+                    if (config_.min_packet_size_ > 0 || config_.max_packet_size_ > 0)
+                    {
+                        uint32_t pkt_payload_len = rte_bswap16(pkt_udp_hdr->dgram_len)
+                                                   - sizeof(struct rte_udp_hdr);
+                        if ((config_.min_packet_size_ > 0 && pkt_payload_len < config_.min_packet_size_) ||
+                            (config_.max_packet_size_ > 0 && pkt_payload_len > config_.max_packet_size_))
+                        {
+                            if (rte_ring_enqueue(packet_release_ring_, pkt) != 0)
+                                rte_pktmbuf_free(pkt);
+                            dropped_packets_++;
+                            continue;
+                        }
+                    }
+
                     // Latch the first frame number on the first packet seen, offsetting by proc_idx_
                     // so that sibling processors each own a disjoint slice of the super-frame space
                     if (unlikely(first_frame_number_ == -1))
                     {
-                        first_frame_number_ = decoder_->get_frame_number(pkt_header) - (proc_idx_ * decoder_->get_frame_outer_chunk_size());
+                        first_frame_number_ = decoder_->get_frame_number(pkt_header) - (proc_idx_ * decoder_->get_frame_outer_chunk_size(mode_));
                     }
 
                     uint64_t current_frame_number = decoder_->get_frame_number(pkt_header) - first_frame_number_;
 
                     uint64_t current_super_frame_number = (current_frame_number / frame_outer_chunk_size);
 
-                    uint64_t current_frame_index = current_frame_number - (current_super_frame_number * decoder_->get_frame_outer_chunk_size());
+                    uint64_t current_frame_index = current_frame_number - (current_super_frame_number * decoder_->get_frame_outer_chunk_size(mode_));
 
 
                     uint32_t packet_offset = decoder_->get_packet_number(pkt_header) + ((current_frame_number % frame_outer_chunk_size) * superframe_const);
@@ -243,6 +269,7 @@ namespace FrameProcessor
                     // Check if the packet frame number matches the frame currently being captured
                     if (unlikely(current_frame_ != current_super_frame_number))
                     {
+
 
                         // If the packet frame number does not match the current frame, search the
                         // frame buffer map to see if it is currently being processed
@@ -261,7 +288,6 @@ namespace FrameProcessor
                             // and map a new buffer for it
                             current_frame_ = current_super_frame_number;
 
-                            // LOG4CXX_INFO(logger_, "Starting histogram: " << current_frame_number);
 
                             if (unlikely(rte_ring_dequeue(clear_frames_ring_, (void **) &current_super_frame_buffer_)) != 0)
                             {
@@ -276,7 +302,7 @@ namespace FrameProcessor
                                 );
 
                                 // Clear any residual data from a previous acquisition that used this buffer
-                                memset(current_super_frame_buffer_, 0, decoder_->get_frame_buffer_size());
+                                memset(current_super_frame_buffer_, 0, decoder_->get_frame_buffer_size(mode_));
 
                                 decoder_->set_super_frame_number(current_super_frame_buffer_, current_super_frame_number);
                                 decoder_->set_super_frame_start_time(
@@ -298,10 +324,10 @@ namespace FrameProcessor
 
                     uint64_t packet_memory_offset = (current_frame_index * payload_size * packets_per_frame) + (packet_number * payload_size);
 
-                    current_frame_header_ = decoder_->get_frame_header(current_super_frame_buffer_, current_frame_index);
+                    current_frame_header_ = decoder_->get_frame_header(current_super_frame_buffer_, current_frame_index, mode_);
 
                     rte_memcpy(
-                        decoder_->get_image_data_start(current_super_frame_buffer_) + (current_frame_index * payload_size * packets_per_frame) +
+                        decoder_->get_image_data_start(current_super_frame_buffer_, mode_) + (current_frame_index * payload_size * packets_per_frame) +
                         (packet_number * payload_size), pkt_payload, payload_size
                     );
 
@@ -317,20 +343,22 @@ namespace FrameProcessor
                     }
 
                     // All sub-frames complete: forward the super-frame to the downstream ring
-                    if (decoder_->get_super_frame_frames_received(current_super_frame_buffer_) == decoder_->get_frame_outer_chunk_size())
+                    if (decoder_->get_super_frame_frames_received(current_super_frame_buffer_) == decoder_->get_frame_outer_chunk_size(mode_))
                     {
                         if (likely(current_super_frame_buffer_ != dropped_frame_buffer_))
                         {
-                            rte_ring_enqueue(
-                                downstream_rings_[
-                                    (decoder_->get_super_frame_number(current_super_frame_buffer_) / frame_outer_chunk_size) %
-                                    config_.num_downstream_cores
-                                ], current_super_frame_buffer_
-                            );
-
-                            frame_buffer_map_.erase(current_frame_);
-                            processed_frames_++;
-                            frames_per_second++;
+                            if (likely(!downstream_rings_.empty()))
+                            {
+                                rte_ring_enqueue(
+                                    downstream_rings_[
+                                        (decoder_->get_super_frame_number(current_super_frame_buffer_) / frame_outer_chunk_size) %
+                                        downstream_rings_.size()
+                                    ], current_super_frame_buffer_
+                                );
+                                frame_buffer_map_.erase(current_frame_);
+                                processed_frames_++;
+                                frames_per_second++;
+                            }
                         }
                         current_frame_ = -1;
                     }
@@ -338,8 +366,10 @@ namespace FrameProcessor
                     packets_per_second++;
                 }
                 
-                // Batch enqueue all processed packets to be released
-                rte_ring_enqueue_bulk(packet_release_ring_, (void **)pkt_burst, nb_rx, NULL);
+                // Enqueue processed packets to the release ring; free any that don't fit
+                uint32_t nb_released = rte_ring_enqueue_burst(packet_release_ring_, (void **)pkt_burst, nb_rx, NULL);
+                if (unlikely(nb_released < nb_rx))
+                    rte_pktmbuf_free_bulk(pkt_burst + nb_released, nb_rx - nb_released);
 
                 // Calculate status for the batch
                 uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
@@ -393,20 +423,26 @@ namespace FrameProcessor
                     if (now - decoder_->get_super_frame_start_time(it->second) >= frame_timeout_cycles)
                     {
                         // set the frame metadata for dropped packets
-                        
-                        LOG4CXX_INFO(logger_, "Core " << lcore_id_
-                            << " dropping super frame " << decoder_->get_super_frame_number(it->second)
-                            << " with " << decoder_->get_super_frame_frames_received(it->second)
-                            << " complete sub frames"
+                        LOG4CXX_WARN(logger_, "Core " << lcore_id_
+                                << " Dropping super frame: "
+                                << decoder_->get_super_frame_number(it->second))
+                                ;
+                        // Forward the incomplete super-frame downstream
+                        if (likely(!downstream_rings_.empty()))
+                        {
+                            rte_ring_enqueue(
+                                downstream_rings_[
+                                    (decoder_->get_super_frame_number(it->second) / frame_outer_chunk_size) %
+                                    downstream_rings_.size()
+                                ], it->second
                             );
-
-                        // Forward the incomplete super-frame downstream; there is always space
-                        rte_ring_enqueue(
-                            downstream_rings_[
-                                (decoder_->get_super_frame_number(it->second) / frame_outer_chunk_size) %
-                                config_.num_downstream_cores
-                            ], it->second
-                        );
+                        }
+                        else
+                        {
+                            LOG4CXX_WARN(logger_, "Core " << lcore_id_
+                                << " has no downstream rings — discarding timed-out super frame "
+                                << decoder_->get_super_frame_number(it->second));
+                        }
 
                         incomplete_frames_++;
                         it = frame_buffer_map_.erase(it);
@@ -467,13 +503,14 @@ namespace FrameProcessor
         status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
         status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
 
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(packet_fwd_ring_));
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(packet_fwd_ring_));
+        status.set_param(ring_status + ring_name_str(config_.config_key, socket_id_, proc_idx_) + "_count", rte_ring_count(packet_fwd_ring_));
+        status.set_param(ring_status + ring_name_str(config_.config_key, socket_id_, proc_idx_) + "_size", rte_ring_get_size(packet_fwd_ring_));
     }
 
     bool PacketProcessorCore::connect(void)
     {
-        std::string upstream_ring_name = ring_name_str(config_.upstream_core, socket_id_, proc_idx_);
+        // PacketRxCore names forward rings with _fwd_ prefix + downstream config_key.
+        std::string upstream_ring_name = ring_name_pkt_fwd(config_.config_key, socket_id_, proc_idx_);
         struct rte_ring* upstream_ring = rte_ring_lookup(upstream_ring_name.c_str());
         if (upstream_ring == NULL)
         {
@@ -482,6 +519,8 @@ namespace FrameProcessor
         }
         packet_fwd_ring_ = upstream_ring;
 
+        // The packet_release ring is owned by PacketRxCore which is shared across streams,
+        // so it is always unscoped (no stream prefix).
         std::string packet_release_ring_name = ring_name_pkt_release(socket_id_);
         packet_release_ring_ = rte_ring_lookup(packet_release_ring_name.c_str());
         if (packet_release_ring_ == NULL)
@@ -499,11 +538,11 @@ namespace FrameProcessor
     {
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
 
-        if (config.get_param("proc_enable", false))
-        {
-            first_frame_number_ = -1;
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reset frame latch");
-        }
+        // if (config.get_param("proc_enable", false))
+        // {
+        //     first_frame_number_ = -1;
+        //     LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reset frame latch");
+        // }
 
     }
 

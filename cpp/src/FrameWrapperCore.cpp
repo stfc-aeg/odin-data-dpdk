@@ -12,6 +12,7 @@ namespace FrameProcessor
         logger_(Logger::getLogger("FP.FrameWrapperCore")),
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
+        mode_(dpdkWorkCoreReferences.decoder_mode),
         frame_callback_(dpdkWorkCoreReferences.frame_callback),
         processed_frames_(0),
         processed_frames_hz_(0),
@@ -21,7 +22,7 @@ namespace FrameProcessor
         core_usage_(0),
         last_frame_(-1)
     {
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "FP.FrameWrapperCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -51,23 +52,14 @@ namespace FrameProcessor
 
         struct SuperFrameHeader *current_super_frame_buffer_;
 
-        std::vector<std::size_t> decoder_dims = decoder_->get_frame_dimensions();
+        std::vector<std::size_t> decoder_dims = decoder_->get_frame_dimensions(mode_);
         dimensions_t dims(decoder_dims.size());
         for (size_t i = 0; i < decoder_dims.size(); i++)
         {
             dims[i] = decoder_dims[i];
         }
 
-        // Uncompressed size: product of all dimensions × bytes-per-sample × sub-frames
-        std::size_t frame_size = 1;
-        for (const auto& dim : decoder_dims)
-        {
-            frame_size *= dim;
-        }
-        frame_size *= decoder_->get_frame_outer_chunk_size() *
-            (decoder_->get_frame_bit_depth() == FrameProcessor::DataType::raw_32bit ? 4 : 2);
-
-        uint64_t data_pointer_offset = decoder_->get_image_data_offset();
+        uint64_t data_pointer_offset = decoder_->get_image_data_offset(mode_);
 
         uint64_t frames_per_second = 1;
         uint64_t last = rte_get_tsc_cycles();
@@ -111,26 +103,53 @@ namespace FrameProcessor
                 uint64_t frame_number = decoder_->get_super_frame_number(current_super_frame_buffer_);
                 last_frame_ = frame_number;
 
+                // Actual per-frame dimensions, which may differ from the decoder mode's native
+                // resolution if an upstream core (e.g. RegionOfInterestCore) has resized the frame
+                dimensions_t actual_dims(dims.size());
+                actual_dims[0] = decoder_->get_super_frame_y_resolution(current_super_frame_buffer_);
+                actual_dims[1] = decoder_->get_super_frame_x_resolution(current_super_frame_buffer_);
+                for (size_t i = 2; i < dims.size(); i++)
+                {
+                    actual_dims[i] = dims[i];
+                }
+
                 FrameMetaData frame_meta;
                 frame_meta.set_dataset_name(config_.dataset_name_);
                 frame_meta.set_frame_number(frame_number);
-                frame_meta.set_dimensions(dims);
-                frame_meta.set_data_type(decoder_->get_frame_bit_depth());
+                frame_meta.set_dimensions(actual_dims);
+                frame_meta.set_data_type(decoder_->get_frame_bit_depth(mode_));
 
-                // image_size differs from frame_size when FrameCompressorCore has compressed the frame
+                // Expected uncompressed size for this specific frame's actual dimensions, which may
+                // differ from the decoder mode's native resolution if the frame was resized upstream
+                std::size_t actual_frame_size = 1;
+                for (const auto& dim : actual_dims)
+                {
+                    actual_frame_size *= dim;
+                }
+                actual_frame_size *= decoder_->get_frame_outer_chunk_size(mode_) *
+                    (decoder_->get_frame_bit_depth(mode_) == FrameProcessor::DataType::raw_32bit ? 4 : 2);
+
+                // image_size differs from actual_frame_size when FrameCompressorCore has compressed the frame
                 uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);
-                frame_meta.set_compression_type(frame_size != image_size ? blosc : no_compression);
+                frame_meta.set_compression_type(actual_frame_size != image_size ? blosc : no_compression);
 
                 // Wrap the hugepages buffer in a shared Frame; the destructor returns it to clear_frames_ring_
                 boost::shared_ptr<Frame> complete_frame =
                     boost::shared_ptr<Frame>(new DpdkSharedBufferFrame(
                         frame_meta, current_super_frame_buffer_,
-                        decoder_->get_frame_buffer_size(),
+                        decoder_->get_frame_buffer_size(mode_),
                         clear_frames_ring_, data_pointer_offset
                     ));
 
+
+                // Check if the frame number if between 0 and 99, if not print the frame number as this and error
+                if (frame_number < 0 || frame_number > 99999999999)
+                {
+                    LOG4CXX_ERROR(logger_, "Wrapped frame: " << frame_number << " mode: " << mode_);
+                }
+
                 complete_frame->set_image_size(image_size);
-                complete_frame->set_outer_chunk_size(decoder_->get_frame_outer_chunk_size());
+                complete_frame->set_outer_chunk_size(decoder_->get_frame_outer_chunk_size(mode_));
                 frame_callback_(complete_frame);
 
                 uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
@@ -185,8 +204,8 @@ namespace FrameProcessor
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
 
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count", rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size", rte_ring_get_size(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
     }
 
     bool FrameWrapperCore::connect(void)
@@ -200,7 +219,7 @@ namespace FrameProcessor
         }
         upstream_ring_ = upstream_ring;
 
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
         {

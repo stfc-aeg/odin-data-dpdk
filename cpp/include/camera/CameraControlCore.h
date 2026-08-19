@@ -49,7 +49,17 @@ namespace FrameProcessor
 
         OdinData::IpcChannel Camera_Ctrl_Channel_;
 
-        
+        // Control channel request accounting, so status() can show whether the channel is being
+        // exercised and whether requests are being rejected.
+        uint64_t requests_received_;    //!< Total requests decoded from the control channel
+        uint64_t requests_failed_;      //!< Requests answered with a nack
+        uint64_t configure_requests_;   //!< MsgValCmdConfigure requests
+        uint64_t status_requests_;      //!< MsgValCmdStatus requests
+        uint64_t config_requests_;      //!< MsgValCmdRequestConfiguration requests
+        std::string last_error_;        //!< Reason the most recent failed request was rejected
+        std::string last_client_;       //!< Identity of the most recent requesting client
+        bool channel_bound_;            //!< Whether the ZMQ ROUTER socket has been bound
+
         CameraController* CameraController_;
 
         struct rte_ring* clear_frames_ring_;

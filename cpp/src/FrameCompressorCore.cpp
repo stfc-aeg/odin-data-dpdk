@@ -21,7 +21,7 @@ namespace FrameProcessor
         core_usage_(0),
         last_frame_(-1)
     {
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "FP.FrameCompressorCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -34,7 +34,7 @@ namespace FrameProcessor
         // Create downstream rings, or look them up if already created by a sibling core
         for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
         {
-            std::string downstream_ring_name = ring_name_str(config_.core_name, socket_id_, ring_idx);
+            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
             if (downstream_ring == NULL)
             {
@@ -207,8 +207,8 @@ namespace FrameProcessor
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
 
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count", rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size", rte_ring_get_size(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
     }
 
     bool FrameCompressorCore::connect(void)
@@ -222,7 +222,7 @@ namespace FrameProcessor
         }
         upstream_ring_ = upstream_ring;
 
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
         {

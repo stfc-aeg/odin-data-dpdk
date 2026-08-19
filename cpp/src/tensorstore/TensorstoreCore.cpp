@@ -35,6 +35,7 @@ namespace FrameProcessor
         DpdkWorkerCore(socket_id), 
         logger_(Logger::getLogger("FP.TensorstoreCore")),
         proc_idx_(fb_idx),
+        mode_(dpdkWorkCoreReferences.decoder_mode),
         decoder_(dpdkWorkCoreReferences.decoder),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         last_frame_(0),
@@ -54,20 +55,42 @@ namespace FrameProcessor
         run_start_time_(0),
         first_write_time_(0),
         first_write_recorded_(false),
-        frames_per_second_(0)
+        frames_per_second_(0),
+        dimension_mismatch_logged_(false)
     {
-        config_.resolve(dpdkWorkCoreReferences.core_config);
-        config_.height_ = decoder_->get_frame_y_resolution();
-        config_.width_  = decoder_->get_frame_x_resolution();
-        config_.bit_depth_ = decoder_->get_frame_bit_depth();
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
+
+        // An explicit height/width in the config block wins, so that a stream sitting downstream
+        // of a core which resizes frames (e.g. RegionOfInterestCore) can declare the post-resize
+        // dims. Where they are absent, fall back to the decoder mode's native resolution.
+        bool height_from_config = (config_.height_ != 0);
+        bool width_from_config  = (config_.width_ != 0);
+        if (config_.height_ == 0)
+        {
+            config_.height_ = decoder_->get_frame_y_resolution(mode_);
+        }
+        if (config_.width_ == 0)
+        {
+            config_.width_ = decoder_->get_frame_x_resolution(mode_);
+        }
+        config_.bit_depth_ = decoder_->get_frame_bit_depth(mode_);
 
         // enable_writing always starts false; set true by update_config to start an acquisition
         config_.enable_writing_ = false;
+
 
         LOG4CXX_INFO(logger_, "FP.TensorstoreCore " << proc_idx_ << " Created with config:"
             << " core_name = " << config_.core_name
             << " connect = " << config_.connect
             << " upstream_core = " << config_.upstream_core
+            << " config_key = " << config_.config_key
+            << " stream_id = " << config_.stream_id
+            << " mode = " << mode_
+            << " height = " << config_.height_
+            << " (from " << (height_from_config ? "config" : "decoder_mode") << ")"
+            << " width = " << config_.width_
+            << " (from " << (width_from_config ? "config" : "decoder_mode") << ")"
+            << " bit_depth = " << config_.bit_depth_
             << " num_cores = " << config_.num_cores
             << " num_downstream_cores = " << config_.num_downstream_cores
             << " storage_path = " << config_.storage_path_
@@ -78,7 +101,7 @@ namespace FrameProcessor
             << " data_copy_concurrency = " << config_.data_copy_concurrency_
             << " delete_existing = " << config_.delete_existing_
             << " enable_writing = " << config_.enable_writing_
-            << " path = " << config_.path_
+            << " path = " << streamScopedDatasetPath()
             << " csv_logging = " << config_.csv_logging_
             << " csv_path = " << csv_path_
         );
@@ -86,7 +109,7 @@ namespace FrameProcessor
         // Create downstream rings, or look them up if already created by a sibling core
         for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
         {
-            std::string downstream_ring_name = ring_name_str(config_.core_name, socket_id_, ring_idx);
+            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
             struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
 
             if (downstream_ring == NULL)
@@ -107,6 +130,112 @@ namespace FrameProcessor
 
             downstream_rings_.push_back(downstream_ring);
         }
+    }
+
+    std::string TensorstoreCore::streamScopedDatasetPath() const
+    {
+        // Derived on demand rather than written back into config_.path_, so that a configure()
+        // message setting "path" cannot silently drop the stream scoping, and so that repeated
+        // calls cannot append the stream twice.
+        if (config_.stream_id.empty())
+        {
+            return config_.path_;
+        }
+
+        std::string scoped = config_.path_;
+        if (!scoped.empty() && scoped.back() != '/')
+        {
+            scoped += '/';
+        }
+        scoped += config_.stream_id + "/";
+        return scoped;
+    }
+
+    std::string TensorstoreCore::streamScopedCsvPath() const
+    {
+        // Insert the stream before the extension, so that the per-acquisition timestamp
+        // insertion in handleReconfiguration still finds the extension and appends after it.
+        if (config_.stream_id.empty() || config_.csv_path_.empty())
+        {
+            return config_.csv_path_;
+        }
+
+        std::string csv = config_.csv_path_;
+        std::size_t dot_pos = csv.find_last_of('.');
+        std::size_t slash_pos = csv.find_last_of('/');
+        // Only treat the dot as an extension if it comes after the final path separator
+        if (dot_pos != std::string::npos &&
+            (slash_pos == std::string::npos || dot_pos > slash_pos))
+        {
+            csv.insert(dot_pos, "_" + config_.stream_id);
+        }
+        else
+        {
+            csv += "_" + config_.stream_id;
+        }
+        return csv;
+    }
+
+    std::string TensorstoreCore::datasetDestinationDescription() const
+    {
+        const std::string path = streamScopedDatasetPath();
+
+        if (config_.kvstore_driver_ == "s3")
+        {
+            // For s3 the path is a key prefix within the bucket, so name the bucket and endpoint
+            // as well; the prefix on its own tells the reader nothing about which store it is in.
+            std::string desc = "s3 bucket '" + config_.s3_bucket_ + "' key prefix '" + path + "'";
+            if (!config_.s3_endpoint_.empty())
+            {
+                desc += " at " + config_.s3_endpoint_;
+            }
+            return desc;
+        }
+
+        if (config_.kvstore_driver_ == "file")
+        {
+            return "local directory '" + path + "'";
+        }
+
+        return config_.kvstore_driver_ + " store '" + path + "'";
+    }
+
+    bool TensorstoreCore::frameDimensionsMatchDataset(
+        ::SuperFrameHeader* frame_buffer, uint64_t frame_number
+    )
+    {
+        uint64_t frame_height = decoder_->get_super_frame_y_resolution(frame_buffer);
+        uint64_t frame_width  = decoder_->get_super_frame_x_resolution(frame_buffer);
+
+        // Zero means no upstream core stamped the actual dimensions into the header, so there is
+        // nothing to check against - trust the configured dims.
+        if (frame_height == 0 || frame_width == 0)
+        {
+            return true;
+        }
+
+        if (frame_height == config_.height_ && frame_width == config_.width_)
+        {
+            return true;
+        }
+
+        if (!dimension_mismatch_logged_)
+        {
+            dimension_mismatch_logged_ = true;
+            LOG4CXX_ERROR(logger_, "Frame " << frame_number << " dimensions ("
+                << frame_width << "x" << frame_height << ") do not match the dataset dimensions ("
+                << config_.width_ << "x" << config_.height_ << ") for stream '"
+                << config_.stream_id << "' mode '" << mode_ << "'."
+                << " Writing it would corrupt the dataset, so this frame and any further"
+                << " mismatched frames this acquisition will be forwarded without being written."
+                << " Set \"height\" and \"width\" in the '" << config_.config_key
+                << "' config block to the dimensions actually produced upstream.");
+            last_error_message_ = "Frame dimensions " + std::to_string(frame_width) + "x"
+                + std::to_string(frame_height) + " do not match dataset "
+                + std::to_string(config_.width_) + "x" + std::to_string(config_.height_);
+        }
+
+        return false;
     }
 
     TensorstoreCore::~TensorstoreCore(void)
@@ -145,8 +274,8 @@ namespace FrameProcessor
                     tensorstore_initialized_,
                     highest_frame_written_,
                     current_dataset_capacity_,
-                    decoder_->get_frame_y_resolution(),
-                    decoder_->get_frame_x_resolution(),
+                    config_.height_,
+                    config_.width_,
                     logger_
                 );
                 
@@ -203,7 +332,7 @@ namespace FrameProcessor
                 else if (tensorstore_initialized_ && store_.has_value() &&
                     pending_writes_queue_.size() < config_.max_concurrent_writes_)
                 {
-                    const uint64_t frames_in_super_frame = decoder_->get_frame_outer_chunk_size();
+                    const uint64_t frames_in_super_frame = decoder_->get_frame_outer_chunk_size(mode_);
                     const uint64_t starting_frame_index = frame_number * frames_in_super_frame;
                     const uint64_t ending_frame_index = starting_frame_index + frames_in_super_frame - 1;
                     
@@ -225,13 +354,23 @@ namespace FrameProcessor
                         perf_monitor_.RecordFrameProcessing(cycles_spent);
                         perf_monitor_.FramesThisSecond()++;
                     }
+                    else if (!frameDimensionsMatchDataset(current_frame_buffer, frame_number))
+                    {
+                        // Geometry disagrees with the open dataset; forward rather than corrupt it
+                        forwardFrame(current_frame_buffer, frame_number);
+                        frames_forwarded_++;
+
+                        uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+                        perf_monitor_.RecordFrameProcessing(cycles_spent);
+                        perf_monitor_.FramesThisSecond()++;
+                    }
                     else
                     {
-                        
+
                         if (TensorstoreResizer::NeedsExpansion(ending_frame_index, current_dataset_capacity_)) {
-                            const tensorstore::Index height = decoder_->get_frame_y_resolution();
-                            const tensorstore::Index width = decoder_->get_frame_x_resolution();
-                            
+                            const tensorstore::Index height = config_.height_;
+                            const tensorstore::Index width = config_.width_;
+
                             current_dataset_capacity_ = TensorstoreResizer::ExpandDataset(
                                 *store_,
                                 current_dataset_capacity_,
@@ -246,9 +385,10 @@ namespace FrameProcessor
                             highest_frame_written_ = ending_frame_index;
                         }
 
-                        void* frame_ptr = static_cast<void*>(decoder_->get_image_data_start(current_frame_buffer));
-                        const tensorstore::Index height = decoder_->get_frame_y_resolution();
-                        const tensorstore::Index width = decoder_->get_frame_x_resolution();
+                        void* frame_ptr = static_cast<void*>(
+                            decoder_->get_image_data_start(current_frame_buffer, mode_));
+                        const tensorstore::Index height = config_.height_;
+                        const tensorstore::Index width = config_.width_;
 
                         tensorstore::WriteFutures write_future;
                         bool valid_pixel_type = true;
@@ -474,6 +614,7 @@ namespace FrameProcessor
         current_dataset_capacity_ = 0;
         first_write_recorded_ = false;
         last_error_message_  = "";
+        dimension_mismatch_logged_ = false;
 
         config_.enable_writing_ = true;
 
@@ -499,9 +640,14 @@ namespace FrameProcessor
             char timestamp[32];
             strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", localtime(&now));
 
-            std::string csv_filename = config_.csv_path_;
+            std::string csv_filename = streamScopedCsvPath();
             size_t dot_pos = csv_filename.find_last_of('.');
-            if (dot_pos != std::string::npos)
+            size_t slash_pos = csv_filename.find_last_of('/');
+            // Only treat the dot as an extension if it comes after the final path separator,
+            // otherwise a dot in a directory name (e.g. "/perf.d/ts") would have the timestamp
+            // spliced into the directory, producing a path that does not exist
+            if (dot_pos != std::string::npos &&
+                (slash_pos == std::string::npos || dot_pos > slash_pos))
             {
                 csv_filename.insert(dot_pos, "_" + std::string(timestamp) + "_" + config_.kvstore_driver_);
             }
@@ -515,13 +661,31 @@ namespace FrameProcessor
             LOG4CXX_INFO(logger_, "New CSV log file: " << csv_path_);
         }
 
-        // Create the new dataset
+        // Create the new dataset. A configure() message may have cleared the dims, so re-apply the
+        // decoder-mode fallback here as well as in the constructor.
+        if (config_.height_ == 0)
+        {
+            config_.height_ = decoder_->get_frame_y_resolution(mode_);
+        }
+        if (config_.width_ == 0)
+        {
+            config_.width_ = decoder_->get_frame_x_resolution(mode_);
+        }
+        config_.bit_depth_ = decoder_->get_frame_bit_depth(mode_);
+
         std::size_t height = config_.height_;
         std::size_t width  = config_.width_;
         std::size_t bit_depth = config_.bit_depth_;
 
-        LOG4CXX_INFO(logger_, "Creating new dataset with:"
-            << " path=" << config_.path_
+        // Resolved once here so the log, the dataset spec and any error message all refer to
+        // the same path
+        const std::string dataset_path = streamScopedDatasetPath();
+
+        LOG4CXX_INFO(logger_, "Creating new dataset in " << datasetDestinationDescription()
+            << " with:"
+            << " storage_driver=" << config_.storage_driver_
+            << " stream=" << config_.stream_id
+            << " mode=" << mode_
             << " width=" << width
             << " height=" << height
             << " bit_depth=" << bit_depth
@@ -556,7 +720,7 @@ namespace FrameProcessor
         ::nlohmann::json json_spec = FrameProcessor::GetJsonSpec(
             config_.storage_driver_, config_.kvstore_driver_, 
             config_.s3_bucket_, config_.s3_endpoint_,
-            data_type_, config_.path_, 
+            data_type_, dataset_path,
             initial_frames, height, width, config_.cache_bytes_limit_
         );
         
@@ -568,7 +732,7 @@ namespace FrameProcessor
                 error_msg,
                 config_.kvstore_driver_,
                 config_.s3_endpoint_,
-                config_.path_
+                dataset_path
             );
             LOG4CXX_ERROR(logger_, last_error_message_);
         } else {
@@ -580,8 +744,8 @@ namespace FrameProcessor
             write_errors_ = 0;
             last_error_message_ = "";
             first_write_recorded_ = false;
-            LOG4CXX_INFO(logger_, "Dataset created/opened successfully with initial capacity of " 
-                << initial_frames << " frames. Data will be written to: " << config_.path_);
+            LOG4CXX_INFO(logger_, "Dataset created/opened successfully with initial capacity of "
+                << initial_frames << " frames. Writing to " << datasetDestinationDescription());
         }
     }
 
@@ -642,7 +806,10 @@ namespace FrameProcessor
 
     void TensorstoreCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        std::string status_path = path + "/TensorstoreCore_" + std::to_string(proc_idx_) + "/";
+        // Scope by config key rather than class name so that cores of the same class in different
+        // streams report under distinct paths instead of overwriting each other
+        std::string core_label = config_.config_key.empty() ? "TensorstoreCore" : config_.config_key;
+        std::string status_path = path + "/" + core_label + "_" + std::to_string(proc_idx_) + "/";
         std::string ring_status = status_path + "upstream_rings/";
         std::string timing_status = status_path + "timing/";
         std::string ts_status = status_path + "tensorstore/";
@@ -659,11 +826,26 @@ namespace FrameProcessor
 
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_count" , rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_) + "_size" , rte_ring_get_size(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count" , rte_ring_count(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size" , rte_ring_get_size(clear_frames_ring_));
+
+        status.set_param(status_path + "stream_id", config_.stream_id);
+        status.set_param(status_path + "mode", mode_);
 
         status.set_param(ts_status + "initialized", tensorstore_initialized_);
-        status.set_param(ts_status + "storage_path", config_.path_);
+        status.set_param(ts_status + "storage_path", streamScopedDatasetPath());
+        // The backend the path is relative to; under s3 the path is a key prefix in the bucket
+        // rather than a local directory, which storage_path alone does not convey.
+        status.set_param(ts_status + "kvstore_driver", config_.kvstore_driver_);
+        status.set_param(ts_status + "storage_driver", config_.storage_driver_);
+        status.set_param(ts_status + "destination", datasetDestinationDescription());
+        if (config_.kvstore_driver_ == "s3")
+        {
+            status.set_param(ts_status + "s3_bucket", config_.s3_bucket_);
+            status.set_param(ts_status + "s3_endpoint", config_.s3_endpoint_);
+        }
+        status.set_param(ts_status + "height", config_.height_);
+        status.set_param(ts_status + "width", config_.width_);
         status.set_param(ts_status + "frames_written", frames_written_);
         status.set_param(ts_status + "write_errors", write_errors_);
         status.set_param(ts_status + "avg_write_time_us", avg_write_time_us_);
@@ -685,7 +867,7 @@ namespace FrameProcessor
         }
         upstream_ring_ = upstream_ring;
 
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
+        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
 
         if (clear_frames_ring_ == NULL)
@@ -718,6 +900,14 @@ namespace FrameProcessor
 
             if (config.has_param("number_of_frames"))
                 config_.number_of_frames_ = config.get_param<uint64_t>("number_of_frames");
+
+            // Dataset dims take effect on the next reconfiguration, since resizing an open
+            // dataset's frame geometry is not supported
+            if (config.has_param("height"))
+                config_.height_ = config.get_param<std::size_t>("height");
+
+            if (config.has_param("width"))
+                config_.width_ = config.get_param<std::size_t>("width");
 
             if (config.has_param("frames_per_second"))
                 frames_per_second_ = config.get_param<unsigned int>("frames_per_second");

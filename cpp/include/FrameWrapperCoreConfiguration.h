@@ -10,6 +10,8 @@ namespace FrameProcessor
 
             FrameWrapperConfiguration() :
                 ParamContainer(),
+                num_cores(0),
+                num_downstream_cores(0),
                 dataset_name_(Defaults::default_dataset_name),
                 blosc_clevel_(Defaults::default_blosc_clevel),
                 blosc_doshuffle_(Defaults::default_blosc_doshuffle),
@@ -20,15 +22,15 @@ namespace FrameProcessor
                 bind_params();
             }
 
-            void resolve(DpdkCoreConfiguration& core_config_)
+            void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "frame_wrapper")
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("frame_wrapper");
+                    core_config_.get_worker_core_config(config_key);
 
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                }        
+                }
             }
 
         private:
@@ -38,6 +40,9 @@ namespace FrameProcessor
                 bind_param<std::string>(core_name, "core_name");
                 bind_param<std::string>(connect, "connect");
                 bind_param<std::string>(upstream_core, "upstream_core");
+                bind_param<std::string>(config_key, "config_key");
+                bind_param<std::string>(stream_id, "stream_id");
+                bind_param<std::string>(decoder_mode, "mode");
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
 
@@ -46,14 +51,15 @@ namespace FrameProcessor
                 bind_param<unsigned int>(blosc_doshuffle_, "blosc_doshuffle");
                 bind_param<unsigned int>(blosc_compcode_, "blosc_compcode");
                 bind_param<unsigned int>(blosc_blocksize_, "blosc_blocksize");
-                bind_param<unsigned int>(blosc_num_threads_, "blosc_num_threads");    
-                
-
+                bind_param<unsigned int>(blosc_num_threads_, "blosc_num_threads");
             }
 
             std::string core_name;
             std::string connect;
             std::string upstream_core;
+            std::string config_key;
+            std::string stream_id;
+            std::string decoder_mode;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
 

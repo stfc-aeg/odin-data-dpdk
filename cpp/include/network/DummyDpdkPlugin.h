@@ -39,6 +39,8 @@ namespace FrameProcessor
 
     OdinData::IpcMessage config_;
 
+    std::string current_mode_;
+
   };
 
   REGISTER(FrameProcessorPlugin, DummyDpdkPlugin, "DummyDpdkPlugin");

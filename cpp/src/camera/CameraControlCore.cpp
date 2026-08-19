@@ -14,6 +14,12 @@ namespace FrameProcessor
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
         logger_(Logger::getLogger("FP.CameraControlCore")),
         Camera_Ctrl_Channel_(ZMQ_ROUTER), // don't know which type of IPC channel to create, this may need changing.
+        requests_received_(0),
+        requests_failed_(0),
+        configure_requests_(0),
+        status_requests_(0),
+        config_requests_(0),
+        channel_bound_(false),
         CameraController_(NULL)
     {
         config_.resolve(dpdkWorkCoreReferences.core_config);
@@ -51,6 +57,7 @@ namespace FrameProcessor
 
 
         Camera_Ctrl_Channel_.bind(config_.zmq_address_);
+        channel_bound_ = true;
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " Bound IPC channel to " << config_.zmq_address_);
 
         bool new_msg = false;
@@ -65,6 +72,9 @@ namespace FrameProcessor
                 // can be routed back correctly.
                 std::string client_identity;
                 std::string ctrl_req_encoded = Camera_Ctrl_Channel_.recv(&client_identity);
+
+                requests_received_++;
+                last_client_ = client_identity;
 
                 // Create a reply message
                 OdinData::IpcMessage ctrl_reply;
@@ -95,16 +105,19 @@ namespace FrameProcessor
                         {
                         case OdinData::IpcMessage::MsgValCmdConfigure:
                             LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ": Configure from " << client_identity);
+                            configure_requests_++;
                             CameraController_->configure(ctrl_req, ctrl_reply);
                             break;
 
                         case OdinData::IpcMessage::MsgValCmdRequestConfiguration:
                             LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ": RequestConfiguration from " << client_identity);
+                            config_requests_++;
                             CameraController_->request_configuration(std::string(""), ctrl_reply);
                             break;
 
                         case OdinData::IpcMessage::MsgValCmdStatus:
                             LOG4CXX_DEBUG(logger_, "Core " << lcore_id_ << ": Status from " << client_identity);
+                            status_requests_++;
                             CameraController_->get_status(std::string(""), ctrl_reply);
                             break;
 
@@ -131,6 +144,8 @@ namespace FrameProcessor
                 {
                     LOG4CXX_ERROR(logger_, "Error handling camera control request from " << client_identity << ": " << error_ss.str());
                     ctrl_reply.set_nack(error_ss.str());
+                    requests_failed_++;
+                    last_error_ = error_ss.str();
                 }
 
                 Camera_Ctrl_Channel_.send(ctrl_reply.encode(), 0, client_identity);
@@ -155,7 +170,42 @@ namespace FrameProcessor
 
     void CameraControlCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
+        // CameraControlCoreConfiguration has no config_key/stream_id binding, and the control core
+        // is a single instance driving the shared CameraController, so the class name is used here
+        // rather than the per-stream scoping applied to the capture core.
         std::string status_path = path + "/CameraControlCore_" + std::to_string(proc_idx_) + "/";
+        std::string control_status = status_path + "control_channel/";
+        std::string camera_status = status_path + "camera/";
+
+        status.set_param(status_path + "lcore_id", (int)lcore_id_);
+        status.set_param(status_path + "running", run_lcore_);
+
+        status.set_param(control_status + "zmq_address", config_.zmq_address_);
+        status.set_param(control_status + "bound", channel_bound_);
+        status.set_param(control_status + "requests_received", requests_received_);
+        status.set_param(control_status + "requests_failed", requests_failed_);
+        status.set_param(control_status + "configure_requests", configure_requests_);
+        status.set_param(control_status + "status_requests", status_requests_);
+        status.set_param(control_status + "request_configuration_requests", config_requests_);
+        status.set_param(control_status + "last_client", last_client_);
+        status.set_param(control_status + "last_error", last_error_);
+
+        // Camera state as owned by the controller this core drives. The camera's own status
+        // container is collected into a scratch message first: get_status() nacks the message it is
+        // given if the camera is missing, and nacking the shared plugin status reply here would
+        // discard every other core's status alongside it.
+        if (CameraController_ != NULL)
+        {
+            status.set_param(camera_status + "recording", CameraController_->get_recording());
+
+            OdinData::IpcMessage camera_reply;
+            if (CameraController_->get_status(camera_status, camera_reply))
+            {
+                // Merge the typed params across rather than embedding an encoded blob. get_status()
+                // already applied camera_status as the prefix, so the nesting is preserved.
+                status.update(camera_reply);
+            }
+        }
     }
 
     bool CameraControlCore::connect(void)

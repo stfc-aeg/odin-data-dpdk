@@ -71,6 +71,7 @@
             "worker_cores": {
                 "camera_capture": {
                     "core_name": "CameraCaptureCore",
+                    "stream": "primary",
                     "num_cores": 1
                 },
                 
@@ -79,6 +80,7 @@
                     "num_cores": 1,
                     "camera_config": {
                         "camera_name": "SimulatedDpdkCamera",
+                        "stream": "primary",
                         "camera_number": 1,
                         "image_timeout": 10.0,
                         "num_frames": 0,
@@ -91,17 +93,19 @@
                         "frames_per_second": 10,
                         "enable_text_overlay": true,
                         "enable_frame_number_overlay": true
-                    }
+                    },
+                    "zmq_address": "tcp://192.168.0.32:9001"
                 },
                 "tensorstore": {
                     "core_name": "TensorstoreCore",
                     "dataset_name": "dummy",
                     "num_cores": 1,
                     "connect": "camera_capture",
+                    "stream": "primary",
                     "number_of_frames": 1000,
                     "storage_driver": "zarr",
                     "kvstore_driver": "file",
-                    "s3_bucket": "tensorstore",
+                    "s3_bucket": "tensorstore-db",
                     "s3_endpoint": "http://10.0.100.6:9000",
                     "max_concurrent_writes": 64,
                     "path": "/data0/tensorstore/",
@@ -113,7 +117,8 @@
                     "core_name": "FrameWrapperCore",
                     "dataset_name": "dummy",
                     "num_cores": 1,
-                    "connect": "tensorstore"
+                    "connect": "tensorstore",
+                    "stream": "primary"
                 }
             }
         }

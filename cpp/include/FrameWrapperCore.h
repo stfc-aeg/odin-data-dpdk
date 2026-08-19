@@ -34,6 +34,7 @@ namespace FrameProcessor
     private:
         int proc_idx_;
         ProtocolDecoder* decoder_;
+        std::string mode_;
         FrameWrapperConfiguration config_;
 
         LoggerPtr logger_;

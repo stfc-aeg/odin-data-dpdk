@@ -93,11 +93,34 @@ namespace FrameProcessor
         // a new dataset with updated configuration
         void handleReconfiguration();
 
+        // Checks a frame's actual dimensions against the open dataset's dimensions. Returns true
+        // if the frame can be written. Frames stamped with dimensions that disagree with the
+        // dataset cannot be written without corrupting it, so they are forwarded instead.
+        bool frameDimensionsMatchDataset(::SuperFrameHeader* frame_buffer, uint64_t frame_number);
+
+        // The configured dataset/CSV paths scoped by stream_id, so that cores in different
+        // streams do not write over each other. Derived on each use rather than written back
+        // into config_, so a configure() message setting "path" cannot drop the scoping and
+        // repeated calls cannot double-append the stream.
+        std::string streamScopedDatasetPath() const;
+        std::string streamScopedCsvPath() const;
+
+        // A human-readable description of where data actually lands, for logs and status. The
+        // dataset path alone is ambiguous: under the s3 kvstore it is an object key prefix inside
+        // the bucket, not a local directory, so a bare "/data0/tensorstore/primary/" reads as a
+        // local write when it is really a remote one.
+        std::string datasetDestinationDescription() const;
+
         // Core configuration
         int proc_idx_;
         log4cxx::LoggerPtr logger_;
         TensorstoreCoreConfiguration config_;
         
+        // Decoder mode for this core's stream, passed to every geometry call on the decoder so
+        // that cores in different streams read their own resolution/bit depth rather than
+        // whichever mode the shared decoder instance happens to hold.
+        std::string mode_;
+
         // DPDK resources
         ProtocolDecoder* decoder_;
         DpdkSharedBuffer* shared_buf_;
@@ -114,6 +137,11 @@ namespace FrameProcessor
         uint64_t highest_frame_written_;
         std::string last_error_message_;
         bool flush_pending_writes;
+
+        // Latched once per acquisition so that a persistent geometry mismatch (e.g. an ROI core
+        // upstream cropping to dims the config does not declare) logs a single error rather than
+        // one per frame at full frame rate.
+        bool dimension_mismatch_logged_;
         
         // Write tracking
         std::unordered_map<uint64_t, PendingWrite> pending_writes_queue_;

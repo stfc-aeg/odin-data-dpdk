@@ -1,6 +1,7 @@
 #ifndef INCLUDE_CAMERA_PROTOCOL_DECODER_H_
 #define INCLUDE_CAMERA_PROTOCOL_DECODER_H_
 
+#include <string>
 #include "ProtocolDecoder.h"
 
 class CameraProtocolDecoder : public ProtocolDecoder
@@ -17,7 +18,7 @@ public:
 
     virtual ~CameraProtocolDecoder() { };
 
-    virtual const std::size_t get_frame_data_size(void) const
+    virtual const std::size_t get_frame_data_size(const std::string& mode = "") const override
     {
         return payload_size_;
     }

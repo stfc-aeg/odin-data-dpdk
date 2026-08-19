@@ -27,9 +27,10 @@ namespace FrameProcessor
 
     std::string mbuf_pool_name_str(unsigned int socket_idx);
     std::string ring_name_str(std::string UpStreamCore, unsigned int socket_idx, unsigned int core_idx=0);
-    std::string ring_name_pkt_release(unsigned int socket_idx);
-    std::string ring_name_clear_frames(unsigned int socket_idx);
-    std::string shared_mem_name_str(unsigned int socket_idx);
+    std::string ring_name_pkt_fwd(const std::string& downstream_config_key, unsigned int socket_idx, unsigned int core_idx=0);
+    std::string ring_name_pkt_release(unsigned int socket_idx, const std::string& stream_id="");
+    std::string ring_name_clear_frames(unsigned int socket_idx, const std::string& stream_id="");
+    std::string shared_mem_name_str(unsigned int socket_idx, const std::string& stream_id="");
 
     std::vector<uint16_t> tokenize_port_list(const std::string& port_list_str);
     std::string port_list_str(std::vector<uint16_t>& items);

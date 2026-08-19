@@ -39,6 +39,7 @@ namespace FrameProcessor
 
         int proc_idx_;
         PacketProtocolDecoder* decoder_;
+        std::string mode_;
         DpdkSharedBuffer* shared_buf_;
 
         PacketProcessorConfiguration config_;

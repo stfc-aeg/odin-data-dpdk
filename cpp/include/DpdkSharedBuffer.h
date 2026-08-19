@@ -22,7 +22,8 @@ namespace FrameProcessor
     public:
         DpdkSharedBuffer(
             const std::size_t mem_size, const std::size_t buffer_size,
-            const int socket_id=SOCKET_ID_ANY
+            const int socket_id=SOCKET_ID_ANY,
+            const std::string& stream_id=""
         );
         ~DpdkSharedBuffer();
         void* get_buffer_address(const unsigned int buffer) const;

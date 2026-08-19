@@ -1,6 +1,7 @@
 #ifndef INCLUDE_PACKET_PROTOCOL_DECODER_H_
 #define INCLUDE_PACKET_PROTOCOL_DECODER_H_
 
+#include <string>
 #include "ProtocolDecoder.h"
 
 struct PacketHeader { };
@@ -19,9 +20,9 @@ public:
 
     virtual ~PacketProtocolDecoder() { };
 
-    virtual const std::size_t get_frame_data_size(void) const
+    virtual const std::size_t get_frame_data_size(const std::string& mode = "") const
     {
-        return (packets_per_frame_ * payload_size_);
+        return (get_packets_per_frame(mode) * get_payload_size(mode));
     }
 
     virtual void set_packets_per_frame(std::size_t packets_per_frame)
@@ -29,7 +30,7 @@ public:
         packets_per_frame_ = packets_per_frame;
     }
 
-    virtual const std::size_t get_packets_per_frame(void) const
+    virtual const std::size_t get_packets_per_frame(const std::string& mode = "") const
     {
         return packets_per_frame_;
     }

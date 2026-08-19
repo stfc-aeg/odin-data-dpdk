@@ -45,10 +45,10 @@ namespace FrameProcessor
                 bind_params();
             }
 
-            void resolve(DpdkCoreConfiguration& core_config_)
+            void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "packet_rx")
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("packet_rx");
+                    core_config_.get_worker_core_config(config_key);
 
                 if (value_ptr != nullptr)
                 {
@@ -71,6 +71,9 @@ namespace FrameProcessor
             {
                 bind_param<std::string>(core_name, "core_name");
                 bind_param<std::string>(connect, "connect");
+                bind_param<std::string>(config_key, "config_key");
+                bind_param<std::string>(stream_id, "stream_id");
+                bind_param<std::string>(decoder_mode, "mode");
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
                 bind_vector_param<std::string>(device_ip_, "device_ip");
@@ -83,11 +86,13 @@ namespace FrameProcessor
                 bind_param<unsigned int>(max_packet_tx_retries_, "max_packet_tx_retries");
                 bind_param<unsigned int>(max_packet_queue_retries_, "max_packet_queue_retries");
                 bind_vector_param<std::string>(pcie_device_, "pcie_device");
-
             }
 
             std::string core_name;
             std::string connect;
+            std::string config_key;
+            std::string stream_id;
+            std::string decoder_mode;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
             std::vector<std::string> device_ip_;        //!< IP addresses of DPDK NIC devices (one per core)
