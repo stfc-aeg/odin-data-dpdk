@@ -1,4 +1,4 @@
-#include "TensorstoreErrorHandler.h"
+#include "tensorstore/TensorstoreErrorHandler.h"
 
 namespace FrameProcessor {
 
@@ -8,7 +8,6 @@ std::string TensorstoreErrorHandler::FormatDatasetCreationError(
     const std::string& s3_endpoint,
     const std::string& path)
 {
-    // Check for S3-specific errors
     if (kvstore_driver == "s3") {
         if (error_msg.find("invalid scheme") != std::string::npos) {
             return FormatS3ConnectionError(s3_endpoint, "invalid_scheme");
@@ -18,7 +17,6 @@ std::string TensorstoreErrorHandler::FormatDatasetCreationError(
         }
     }
 
-    // Check for schema mismatch errors
     if (error_msg.find("chunk_shape") != std::string::npos) {
         return FormatSchemaMismatchError(path, "chunk_shape");
     }

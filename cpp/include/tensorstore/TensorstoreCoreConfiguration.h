@@ -32,30 +32,38 @@ namespace FrameProcessor
                 s3_bucket_(Defaults::kDefaultS3Bucket),
                 s3_endpoint_(Defaults::kDefaultS3Endpoint),
                 cache_bytes_limit_(Defaults::kDefaultCacheBytesLimit),
-                number_of_frames_(Defaults::kDefaultNumberOfFrames)
+                number_of_frames_(Defaults::kDefaultNumberOfFrames),
+                // Zero means "not specified in config"; TensorstoreCore then falls back to the
+                // decoder mode's native resolution. An explicit height/width in the config block
+                // takes precedence, matching how the hdf plugin declares its dataset dims.
+                height_(0),
+                width_(0),
+                bit_depth_(0)
             {
                 bind_params();
             }
             
-            void resolve(DpdkCoreConfiguration &core_config_)
+            void resolve(DpdkCoreConfiguration &core_config_, const std::string& config_key = "tensorstore")
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("tensorstore");
+                    core_config_.get_worker_core_config(config_key);
 
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                    
                 }
             }
-            
-            
+
+
         private:
             virtual void bind_params(void)
             {
                 bind_param<std::string>(core_name, "core_name");
                 bind_param<std::string>(connect, "connect");
                 bind_param<std::string>(upstream_core, "upstream_core");
+                bind_param<std::string>(config_key, "config_key");
+                bind_param<std::string>(stream_id, "stream_id");
+                bind_param<std::string>(decoder_mode, "mode");
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
                 bind_param<std::string>(storage_path_, "storage_path");
@@ -82,9 +90,12 @@ namespace FrameProcessor
             std::string core_name;
             std::string connect;
             std::string upstream_core;
+            std::string config_key;
+            std::string stream_id;
+            std::string decoder_mode;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
-            
+
             // TensorStore specific config
             std::string storage_path_;
             unsigned int number_of_frames_;

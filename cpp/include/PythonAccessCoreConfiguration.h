@@ -14,15 +14,15 @@ namespace FrameProcessor
                 bind_params();
             }
 
-            void resolve(DpdkCoreConfiguration& core_config_)
+            void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "python_access")
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("python_access");
+                    core_config_.get_worker_core_config(config_key);
 
                 if (value_ptr != nullptr)
                 {
                     update(*value_ptr);
-                }        
+                }
             }
 
         private:
@@ -32,14 +32,19 @@ namespace FrameProcessor
                 bind_param<std::string>(core_name, "core_name");
                 bind_param<std::string>(connect, "connect");
                 bind_param<std::string>(upstream_core, "upstream_core");
+                bind_param<std::string>(config_key, "config_key");
+                bind_param<std::string>(stream_id, "stream_id");
+                bind_param<std::string>(decoder_mode, "mode");
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
-
             }
 
             std::string core_name;
             std::string connect;
             std::string upstream_core;
+            std::string config_key;
+            std::string stream_id;
+            std::string decoder_mode;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
 

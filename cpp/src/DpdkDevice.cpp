@@ -18,8 +18,9 @@ namespace FrameProcessor
 
         int rc;
 
-        // Get the NUMA socket ID for this device port is connected to
-        socket_id_ = 0;// = rte_eth_dev_socket_id(port_id_);
+        // rte_eth_dev_socket_id() returns -1 for virtual/vdev ports; fall back to socket 0
+        int socket_id = rte_eth_dev_socket_id(port_id_);
+        socket_id_ = (socket_id < 0) ? 0 : static_cast<uint8_t>(socket_id);
 
         // Get the PCI device name
         char dev_name[RTE_DEV_NAME_MAX_LEN];
@@ -60,17 +61,8 @@ namespace FrameProcessor
             << " socket: " << socket_id_
         );
 
-        if (!init_mbuf_pool())
-        {
-            // TODO - this is fatal so should raise an exception
-            return;
-        }
-
-        if (!init_port())
-        {
-            // TODO - this is fatal so should raise an exception
-            return;
-        }
+        if (!init_mbuf_pool()) return;
+        if (!init_port()) return;
 
     }
 
@@ -114,7 +106,6 @@ namespace FrameProcessor
     {
         int rc = 0;
 
-        // Get the device info
         struct rte_eth_dev_info dev_info;
         rc = rte_eth_dev_info_get(port_id_, &dev_info);
         if (rc != 0)
@@ -122,11 +113,8 @@ namespace FrameProcessor
             LOG4CXX_ERROR(logger_, "Error getting ethernet device info for port " << port_id_
                  << " : " << rte_strerror(rc)
             );
-
-            // TODO - this is fatal so should raise an exception
         }
 
-        // Intialise default port configuration
         struct rte_eth_conf port_conf = {
             .rxmode = {
                 .mtu = mtu_,
@@ -171,7 +159,6 @@ namespace FrameProcessor
             return false;
         }
 
-        // Set up a RX queue for the device - TODO - confirm queue_id and why rxconf is null
         uint16_t rx_queue_id = 0;
         rc = rte_eth_rx_queue_setup(
             port_id_, rx_queue_id, rx_num_desc_, socket_id_, NULL, mbuf_pool_
@@ -184,7 +171,6 @@ namespace FrameProcessor
             return false;
         }
 
-        // Set up a TX queue for the device
         uint16_t tx_queue_id = 0;
         struct rte_eth_txconf txconf = dev_info.default_txconf;
         txconf.offloads = port_conf.txmode.offloads;
@@ -207,7 +193,6 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "Starting ethernet device on port " << port_id_);
 
-        // Start the device
         rc = rte_eth_dev_start(port_id_);
         if (rc != 0)
         {
@@ -217,7 +202,6 @@ namespace FrameProcessor
             return false;
         }
 
-        // Enable promiscuous mode for the device
         rc = rte_eth_promiscuous_enable(port_id_);
         if (rc != 0)
         {

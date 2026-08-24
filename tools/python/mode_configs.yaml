@@ -1,0 +1,160 @@
+# Per-mode HDF plugin configuration for decoder mode selection.
+# Each top-level key is the mode name sent to the main plugin.
+# The 'hdf' block under each mode is merged into the configure message.
+
+histogram_128:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 128]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+histogram_256:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 256]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+histogram_512:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 512]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+histogram_1024:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 1024]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+histogram_2048:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 2048]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+histogram_4096:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint32
+        dims: [80, 80, 4096]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+raw_12bit:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint16
+        dims: [80, 80]
+        chunks: [1000, 80, 80]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+unpacked_12_16bit:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint16
+        dims: [80, 80]
+        chunks: [1000, 80, 80]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+
+raw_16bit:
+  hdf:
+    dataset:
+      dummy:
+        datatype: uint16
+        dims: [80, 80]
+        chunks: [1000, 80, 80]
+        compression: none
+    file:
+      path: /tmp/
+    frames: 0
+    acquisition_id: test_1
+    write: false
+    timeout_timer_period: 10000
+    process:
+      number: 1
+      rank: 0
+

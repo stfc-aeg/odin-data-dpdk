@@ -1,5 +1,5 @@
 #include "camera/CameraStateMachine.h"
-#include "DpdkCamera.h"
+#include "camera/DpdkCamera.h"
 
 namespace sc = boost::statechart;
 
@@ -27,8 +27,6 @@ void CameraStateMachine::execute_command(const char* command)
 void CameraStateMachine::execute_command(std::string& command)
 {
     CommandType command_type = map_command_to_type(command);
-
-    std::cout << command << std::endl;
 
     if (command_type == CommandUnknown)
     {
@@ -71,9 +69,13 @@ void CameraStateMachine::execute_command(CameraStateMachine::CommandType command
 
 void CameraStateMachine::unconsumed_event(const sc::event_base& event)
 {
+    // Called synchronously by boost::statechart from inside process_event(), which
+    // execute_command() invokes while already holding state_transition_mutex_. Using
+    // current_state_name() here would try to re-lock that same non-recursive mutex and deadlock,
+    // so the state is read via the unlocked helper instead.
     std::stringstream ss;
     ss << event.custom_dynamic_type_ptr<char>() << " is not valid in "
-        << current_state_name() << " state";
+        << map_state_to_name(current_state_locked()) << " state";
 
     throw(std::runtime_error(ss.str()));
 }
@@ -116,6 +118,17 @@ std::string CameraStateMachine::current_state_name(void)
 }
 
 CameraStateMachine::StateType CameraStateMachine::current_state(void)
+{
+    // state_cast() walks the boost::statechart internal state tree, which execute_command()
+    // mutates via process_event() while holding this same mutex. Without this lock, a reader on
+    // another thread (e.g. CameraCaptureCore's run loop, polling get_state_name() every iteration)
+    // can observe the machine mid-transition and state_cast<IStateInfo&>() throws std::bad_cast,
+    // which is unhandled here and aborts the process.
+    std::lock_guard<std::mutex> transition_lock(state_transition_mutex_);
+    return current_state_locked();
+}
+
+CameraStateMachine::StateType CameraStateMachine::current_state_locked(void)
 {
     return state_cast<const IStateInfo&>().state_type();
 }

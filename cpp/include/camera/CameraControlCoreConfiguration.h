@@ -6,7 +6,7 @@ namespace FrameProcessor
 {
     namespace Defaults
     {
-        // Place all default values here
+        const std::string CAMERA_CONTROL_ZMQ_ADDRESS = "tcp://127.0.0.1:9001";
     }
 
 
@@ -16,7 +16,8 @@ namespace FrameProcessor
         public:
 
             CameraControlCoreConfiguration() :
-                ParamContainer()
+                ParamContainer(),
+                zmq_address_(Defaults::CAMERA_CONTROL_ZMQ_ADDRESS)
             {
                 bind_params();
             }
@@ -44,6 +45,7 @@ namespace FrameProcessor
                 bind_param<unsigned int>(frame_timeout_, "frame_timeout");
                 bind_param<double>(exposure_time_, "exposure_time");
                 bind_param<double>(frame_rate_, "frame_rate");
+                bind_param<std::string>(zmq_address_, "zmq_address");
             }
 
             
@@ -52,10 +54,10 @@ namespace FrameProcessor
             std::string upstream_core;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
-            // Specfic config
             unsigned int frame_timeout_;
             double exposure_time_;        //!< Exposure time in seconds
             double frame_rate_;           //!< Frame rate in Hertz
+            std::string zmq_address_;     //!< ZMQ ROUTER bind address for the camera control IPC channel
 
 
 

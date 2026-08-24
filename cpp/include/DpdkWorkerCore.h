@@ -1,6 +1,9 @@
 #ifndef INCLUDE_DPDKWORKERCORE_H_
 #define INCLUDE_DPDKWORKERCORE_H_
 
+#include <string>
+#include <vector>
+
 #include <boost/function.hpp>
 #include <boost/bind/bind.hpp>
 
@@ -39,6 +42,17 @@ namespace FrameProcessor
         virtual void status(OdinData::IpcMessage& status, const std::string& path) = 0;
         virtual bool connect(void) = 0;
         virtual void configure(OdinData::IpcMessage& config) = 0;
+
+        static constexpr int DEFAULT_COMMAND_PRIORITY = 50;
+
+        virtual void execute(const std::string& command, OdinData::IpcMessage& reply)
+        {
+            reply.set_nack("Command not supported: " + command);
+        }
+        virtual std::vector<std::pair<std::string, int>> requestCommands()
+        {
+            return {};
+        }
 
         inline unsigned int lcore_id(void) const { return lcore_id_; }
         inline unsigned int socket_id(void) const { return socket_id_; }

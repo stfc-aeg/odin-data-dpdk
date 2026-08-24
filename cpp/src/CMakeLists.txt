@@ -28,6 +28,7 @@ set(ODINDATA_DPDK_SOURCES
         FrameCompressorCore.cpp
         FrameWrapperCore.cpp
         PythonAccessCore.cpp
+        RegionOfInterestCore.cpp
         
         # Camera-related
         camera/CameraCaptureCore.cpp

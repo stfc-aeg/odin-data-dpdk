@@ -1,12 +1,23 @@
 #include <algorithm>
 #include <sstream>
+#include <stdexcept>
 #include <cstring>
+#include <cstdint>
 #include "network/PacketRxCore.h"
 #include "DpdkUtils.h"
 #include "dpdk_version_compatibiliy.h"
 
+// Offset added to the detected first frame number before latching, giving other
+// RxCores time to pick up the shared latch before that frame is due. E.g. if the
+// first frame seen is 16 and this is 5, the latch (and all cores' starting frame)
+// is set to 21; proc_idx_==0 discards frames 16-20 rather than processing them.
+#define FRAME_LATCH_OFFSET 1000
+
 namespace FrameProcessor
 {
+    // Static definition: proc_idx_==0 sets this latch, all other RxCores adopt it
+    std::atomic<int64_t> PacketRxCore::shared_first_frame_number_(-1);
+
     PacketRxCore::PacketRxCore(
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
@@ -14,34 +25,55 @@ namespace FrameProcessor
         proc_idx_(proc_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         logger_(Logger::getLogger("FP.PacketRxCore")),
-        first_frame_number_(-1),
-        rx_enable_(false),
-        rx_frames_(0),
-        first_seen_frame_number_(-1),
         dropped_packets_(0),
         captured_packets_(0),
         total_packets_(0),
+        arp_replies_(0),
+        icmp_replies_(0),
         port_id_(UINT16_MAX),
         device_configured_(false),
-        device_(nullptr)
+        device_(nullptr),
+        mean_burst_us_(0),
+        max_burst_us_(0),
+        max_burst_us_all_time_(0),
+        mean_pkts_per_burst_(0),
+        max_pkts_per_burst_(0),
+        estimated_pps_(0),
+        max_estimated_pps_(0),
+        latch_pending_(true)
     {
 
-        // Resolve configuration parameters for athis core from the config object passed as an
-        // argument, and the current port ID
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "FP.PacketRxCore " << proc_idx_ << " Created with config:"
-            << " | core_name" << config_.core_name
+            << " | core_name: " << config_.core_name
             << " | num_cores: " << config_.num_cores
             << " | connect: " << config_.connect
-            << " | num_downsteam_cores: " << config_.num_downstream_cores
+            << " | num_downstream_cores: " << config_.num_downstream_cores
         );
 
 
+        // Select per-instance PCIe device and IP from the config vectors using proc_idx_.
+        // num_cores must match the length of pcie_device and device_ip arrays in config.
+        if (proc_idx_ < (int)config_.pcie_device_.size()) {
+            instance_pcie_device_ = config_.pcie_device_[proc_idx_];
+        } else {
+            LOG4CXX_ERROR(logger_, "PacketRxCore " << proc_idx_ << ": pcie_device array has "
+                << config_.pcie_device_.size() << " entries but num_cores is " << config_.num_cores
+                << ". Add a pcie_device entry for each core. This core will not receive packets.");
+        }
+        if (proc_idx_ < (int)config_.device_ip_.size()) {
+            instance_device_ip_ = config_.device_ip_[proc_idx_];
+        } else {
+            LOG4CXX_ERROR(logger_, "PacketRxCore " << proc_idx_ << ": device_ip array has "
+                << config_.device_ip_.size() << " entries but num_cores is " << config_.num_cores
+                << ". Add a device_ip entry for each core. This core will not receive packets.");
+        }
+
         // Add devices provided in the configuration
-        if (!config_.pcie_device_.empty()) {
-            if (!add_device(config_.pcie_device_)) {
-                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << config_.pcie_device_);
+        if (!instance_pcie_device_.empty()) {
+            if (!add_device(instance_pcie_device_)) {
+                LOG4CXX_ERROR(logger_, "Failed to add device specified in initial configuration: " << instance_pcie_device_);
             }
         }
 
@@ -52,18 +84,15 @@ namespace FrameProcessor
             LOG4CXX_ERROR(logger_, "Error getting MAC address for device on port " << port_id_
                 << " : " << rte_strerror(rc)
             );
-            // TODO - raise exception here?
         }
 
-        // DPDK does not implement an IP stack, so cannot resolve any existing IP address assigned
-        // by the kernel to the ethernet device. The IP address, which is also required to respond
-        // to ARP requests, must be provided from configuration
-        if (inet_pton(AF_INET, config_.device_ip_.c_str(), &dev_ip_addr_) < 1)
+        // DPDK does not implement an IP stack so cannot resolve any kernel-assigned IP address.
+        // The device IP must be supplied from config to allow ARP reply generation.
+        if (inet_pton(AF_INET, instance_device_ip_.c_str(), &dev_ip_addr_) < 1)
         {
             LOG4CXX_ERROR(logger_, "Error resolving device IP address for port " << port_id_
-                << " from value" << config_.device_ip_
+                << " from value " << instance_device_ip_
             );
-            // TODO - raise exception here?
         }
 
         LOG4CXX_DEBUG_LEVEL(2, logger_, "Ethernet device on port " << port_id_
@@ -74,48 +103,151 @@ namespace FrameProcessor
         unsigned int ring_size;
         std::string ring_name;
 
-        // Create packet forwarding rings for each of the packet processing cores with the ring
-        // size rounded up to the next power of two
+        // Build per-stream branches from the downstream_branches array injected by DpdkCoreManager.
+        // Each branch owns its own set of forward rings and per-stream gating state.
+        // Multiple PacketRxCore instances share these rings (MP/MC safe), so only the first
+        // instance creates them; subsequent instances look them up.
         ring_size = nearest_power_two(config_.fwd_ring_size_);
-        for (int core_idx = 0; core_idx < config_.num_downstream_cores; core_idx++)
         {
-            ring_name = ring_name_str(config_.core_name, socket_id_, core_idx);
-            LOG4CXX_INFO(logger_, "Creating packet forward ring name "
-                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
-            );
-            struct rte_ring *fwd_ring = rte_ring_create(
-                ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ  
-            );
-            if (fwd_ring == NULL)
+            const OdinData::ParamContainer::Value* rx_cfg =
+                dpdkWorkCoreReferences.core_config.get_worker_core_config(config_.config_key);
+
+            if (rx_cfg && rx_cfg->HasMember("downstream_branches") &&
+                (*rx_cfg)["downstream_branches"].IsArray())
             {
-                LOG4CXX_ERROR(logger_, "Error creating packet forward ring " << ring_name
-                    << " : " << rte_strerror(rte_errno)
-                );
-                // TODO - raise exception here?
+                for (auto& branch_val : (*rx_cfg)["downstream_branches"].GetArray())
+                {
+                    StreamBranch branch;
+                    if (branch_val.HasMember("config_key") && branch_val["config_key"].IsString())
+                        branch.config_key = branch_val["config_key"].GetString();
+                    if (branch_val.HasMember("stream_id") && branch_val["stream_id"].IsString())
+                        branch.stream_id = branch_val["stream_id"].GetString();
+                    if (branch_val.HasMember("decoder_mode") && branch_val["decoder_mode"].IsString())
+                        branch.decoder_mode = branch_val["decoder_mode"].GetString();
+                    if (branch_val.HasMember("num_cores") && branch_val["num_cores"].IsInt())
+                        branch.num_cores = branch_val["num_cores"].GetUint();
+                    if (branch_val.HasMember("rx_ports") && branch_val["rx_ports"].IsArray())
+                    {
+                        for (auto& p : branch_val["rx_ports"].GetArray())
+                            branch.rx_ports.push_back(static_cast<uint16_t>(p.GetInt()));
+                    }
+                    branch.frame_outer_chunk_size =
+                        decoder_->get_frame_outer_chunk_size(branch.decoder_mode);
+
+                    for (unsigned int core_idx = 0; core_idx < branch.num_cores; core_idx++)
+                    {
+                        ring_name = ring_name_pkt_fwd(branch.config_key, socket_id_, core_idx);
+                        struct rte_ring* fwd_ring = rte_ring_lookup(ring_name.c_str());
+                        if (fwd_ring == NULL)
+                        {
+                            LOG4CXX_INFO(logger_, "Creating packet forward ring " << ring_name
+                                << " size " << ring_size << " numa " << socket_id_);
+                            fwd_ring = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+                            if (fwd_ring == NULL)
+                                throw std::runtime_error("Failed to create forward ring "
+                                    + ring_name + ": " + rte_strerror(rte_errno));
+                        }
+                        else
+                        {
+                            LOG4CXX_DEBUG_LEVEL(2, logger_, "Forward ring " << ring_name << " reusing");
+                        }
+                        branch.fwd_rings.push_back(fwd_ring);
+                    }
+
+                    LOG4CXX_INFO(logger_, "Branch '" << branch.config_key
+                        << "' stream='" << branch.stream_id
+                        << "' num_cores=" << branch.num_cores
+                        << " rx_ports=[" << [&](){
+                            std::ostringstream ps;
+                            for (size_t i = 0; i < branch.rx_ports.size(); i++) {
+                                if (i) ps << ","; ps << branch.rx_ports[i];
+                            } return ps.str(); }() << "]");
+
+                    size_t branch_idx = branches_.size();
+                    for (uint16_t port : branch.rx_ports)
+                        port_to_branch_.emplace_back(port, branch_idx);
+
+                    branches_.push_back(std::move(branch));
+                }
             }
-            packet_forward_rings_.push_back(fwd_ring);
+
+            // Fallback for single-stream configs with no downstream_branches: build one branch
+            // from the flat num_downstream_cores and packet_rx's own rx_ports list.
+            if (branches_.empty())
+            {
+                LOG4CXX_INFO(logger_, "No downstream_branches found; building single branch from "
+                    "num_downstream_cores=" << config_.num_downstream_cores);
+                StreamBranch branch;
+                branch.config_key = config_.config_key;
+                branch.stream_id  = "";
+                branch.num_cores  = config_.num_downstream_cores;
+                branch.rx_ports   = config_.rx_ports_;
+                branch.frame_outer_chunk_size =
+                    decoder_->get_frame_outer_chunk_size(branch.decoder_mode);
+
+                for (unsigned int core_idx = 0; core_idx < branch.num_cores; core_idx++)
+                {
+                    ring_name = ring_name_pkt_fwd(branch.config_key, socket_id_, core_idx);
+                    struct rte_ring* fwd_ring = rte_ring_lookup(ring_name.c_str());
+                    if (fwd_ring == NULL)
+                    {
+                        fwd_ring = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+                        if (fwd_ring == NULL)
+                            throw std::runtime_error("Failed to create forward ring "
+                                + ring_name + ": " + rte_strerror(rte_errno));
+                    }
+                    branch.fwd_rings.push_back(fwd_ring);
+                }
+
+                size_t branch_idx = branches_.size();
+                for (uint16_t port : branch.rx_ports)
+                    port_to_branch_.emplace_back(port, branch_idx);
+
+                branches_.push_back(std::move(branch));
+            }
         }
 
-        // Create the packet release ring with the ring size rounded up to the next power of two
+        LOG4CXX_INFO(logger_, "PacketRxCore " << proc_idx_ << " built " << branches_.size()
+            << " stream branch(es), " << port_to_branch_.size() << " port mapping(s):");
+        for (const auto& b : branches_)
+        {
+            std::ostringstream ps;
+            for (size_t i = 0; i < b.rx_ports.size(); i++) { if (i) ps << ","; ps << b.rx_ports[i]; }
+            LOG4CXX_INFO(logger_, "  branch '" << b.config_key << "' stream='" << b.stream_id
+                << "' mode='" << b.decoder_mode
+                << "' num_cores=" << b.num_cores
+                << " rings=" << b.fwd_rings.size()
+                << " ports=[" << ps.str() << "]");
+        }
+
+        // Create or look up the packet release ring. Multiple PacketRxCore instances share this
+        // ring; only the first instance creates it, subsequent instances look it up.
+        // Packet release ring is shared across all streams; always unscoped.
         ring_name = ring_name_pkt_release(socket_id_);
         ring_size = nearest_power_two(config_.release_ring_size_);
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
-            << ring_name << " of size " << ring_size << " numa node: " << socket_id_
-        );
-        packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+        packet_release_ring_ = rte_ring_lookup(ring_name.c_str());
         if (packet_release_ring_ == NULL)
         {
-            LOG4CXX_ERROR(logger_, "Error creating packet release ring " << ring_name
-                << " : " << rte_strerror(rte_errno)
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Creating packet release ring name "
+                << ring_name << " of size " << ring_size << " numa node: " << socket_id_
             );
-            // TODO - raise exception here?
+            packet_release_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, 0);
+            if (packet_release_ring_ == NULL)
+            {
+                throw std::runtime_error("Failed to create packet release ring " + ring_name
+                    + ": " + rte_strerror(rte_errno));
+            }
+        }
+        else
+        {
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Packet release ring " << ring_name
+                << " already exists, reusing"
+            );
         }
 
-        // Check that at least one RX port has been defined
         if (config_.rx_ports_.size() == 0)
         {
             LOG4CXX_ERROR(logger_, "No RX ports defined");
-            // TODO - raise exception here?
         }
         else
         {
@@ -135,16 +267,13 @@ namespace FrameProcessor
         // Stop the core polling loop so the run method terminates
         stop();
 
-        // Free the packet forwarding rings
-        for (auto& fwd_ring: packet_forward_rings_)
-        {
-            rte_ring_free(fwd_ring);
-        }
-        packet_forward_rings_.clear();
-        std::vector<struct rte_ring *>(packet_forward_rings_).swap(packet_forward_rings_);
-
-        // Free the packet release ring
-        rte_ring_free(packet_release_ring_);
+        // Clear branch ring references. Rings are shared across multiple PacketRxCore instances
+        // so we do not free them here — DPDK EAL teardown handles cleanup on process exit.
+        for (auto& branch : branches_)
+            branch.fwd_rings.clear();
+        branches_.clear();
+        port_to_branch_.clear();
+        packet_release_ring_ = nullptr;
 
         if (device_) {
             remove_device();
@@ -158,8 +287,6 @@ namespace FrameProcessor
         run_lcore_ = true;
 
         LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_ << " starting up");
-
-        
 
         struct rte_mbuf *pkt_bufs[config_.rx_burst_size_];
         struct rte_mbuf *pkt;
@@ -175,17 +302,86 @@ namespace FrameProcessor
         bool pkt_tx_reply = false;
         bool pkt_forwarded = false;
 
-        // check to see if a valid device has been configured
         if (!device_configured_ || !device_) {
             LOG4CXX_ERROR(logger_, "No device configured. Stopping RxCore.");
             return false;
         }
 
+        LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_
+            << " entering rx loop: port_id=" << port_id_
+            << " rx_queue_id=" << config_.rx_queue_id_
+            << " rx_burst_size=" << config_.rx_burst_size_
+            << " branches=" << branches_.size());
+
+        // Drain any packets that arrived between rte_eth_dev_start() (called on the main
+        // lcore during construction) and now. These pre-queued packets are freed rather
+        // than forwarded since the processor cores aren't ready yet.
+        if (proc_idx_ == 0)
+        {
+            uint32_t drained = 0;
+            struct rte_mbuf *drain_bufs[128];
+            uint16_t n;
+            while ((n = rte_eth_rx_burst(port_id_, config_.rx_queue_id_, drain_bufs, 128)) > 0)
+            {
+                rte_pktmbuf_free_bulk(drain_bufs, n);
+                drained += n;
+            }
+            if (drained > 0)
+                LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_
+                    << " drained " << drained << " pre-queued packets before polling loop");
+        }
+
+        // Confirm mbuf pool is healthy before entering the loop
+        {
+            std::string pool_name = mbuf_pool_name_str(socket_id_);
+            struct rte_mempool* pool = rte_mempool_lookup(pool_name.c_str());
+            if (pool)
+                LOG4CXX_INFO(logger_, "mbuf pool '" << pool_name
+                    << "' avail=" << rte_mempool_avail_count(pool)
+                    << " in_use=" << rte_mempool_in_use_count(pool));
+            else
+                LOG4CXX_ERROR(logger_, "mbuf pool '" << pool_name << "' NOT FOUND");
+        }
+
+        // Per-burst processing timing (see mean_burst_us_ etc. in the header for why: a
+        // Python-side status poll every 500ms-5s can miss a brief burst that maxed out
+        // processing time entirely, since it only ever samples whatever counters look like
+        // at poll time). Aggregated every second, same convention as FrameWrapperCore::run().
+        uint64_t timing_last = rte_get_tsc_cycles();
+        uint64_t cycles_per_sec = rte_get_tsc_hz();
+        uint64_t bursts_this_second = 0;
+        uint64_t pkts_this_second = 0;
+        uint64_t cycles_this_second = 0;
+        uint64_t max_burst_cycles_this_second = 0;
+        uint16_t max_pkts_this_second = 0;
+
         while (likely(run_lcore_))
         {
+            // Follower cores adopt the shared latch as soon as the leader (proc_idx_==0) sets it,
+            // without waiting for the next packet to arrive. Apply to all branches that haven't
+            // yet latched. Skipped once every branch has latched (latch_pending_ false), so this
+            // doesn't walk branches_ on every poll for the whole steady-state of a capture.
+            if (unlikely(proc_idx_ != 0 && latch_pending_.load(std::memory_order_acquire)))
+            {
+                int64_t shared_latch = shared_first_frame_number_.load(std::memory_order_acquire);
+                if (shared_latch != -1)
+                {
+                    for (auto& branch : branches_)
+                    {
+                        if (branch.first_frame_number == -1)
+                            branch.first_frame_number = shared_latch;
+                    }
+                    // All previously-unlatched branches were just latched above, so there is
+                    // nothing left pending until the next start_capture()/configure() reset.
+                    latch_pending_.store(false, std::memory_order_release);
+                }
+            }
+
             uint16_t num_rx_pkts = rte_eth_rx_burst(
                 port_id_, config_.rx_queue_id_, pkt_bufs, config_.rx_burst_size_
             );
+
+            uint64_t burst_start_cycles = num_rx_pkts > 0 ? rte_get_tsc_cycles() : 0;
 
             for (uint16_t idx = 0; idx < num_rx_pkts; idx++)
             {
@@ -208,6 +404,7 @@ namespace FrameProcessor
                         );
 
                         pkt_tx_reply = handle_arp_request(&pkt_ether_hdr, &pkt_arp_hdr);
+                        if (pkt_tx_reply) arp_replies_++;
                         break;
 
                     case RTE_ETHER_TYPE_IPV4:
@@ -227,6 +424,7 @@ namespace FrameProcessor
                                 pkt_tx_reply = handle_icmp_request(
                                     &pkt_ether_hdr, &pkt_ipv4_hdr, &pkt_icmp_hdr
                                 );
+                                if (pkt_tx_reply) icmp_replies_++;
                                 break;
 
                             case IPPROTO_UDP:
@@ -263,7 +461,6 @@ namespace FrameProcessor
                 if (pkt_tx_reply)
                 {
                     pkt_bufs[num_replies++] = pkt;
-                    dropped_packets_++;
                 }
                 else if (pkt_forwarded)
                 {
@@ -277,6 +474,48 @@ namespace FrameProcessor
                 }
             } // for (uint16_t idx = 0; idx < num_rx_pkts; idx++)
 
+            if (num_rx_pkts > 0)
+            {
+                uint64_t burst_cycles = rte_get_tsc_cycles() - burst_start_cycles;
+                bursts_this_second++;
+                pkts_this_second += num_rx_pkts;
+                cycles_this_second += burst_cycles;
+                if (burst_cycles > max_burst_cycles_this_second)
+                    max_burst_cycles_this_second = burst_cycles;
+                if (num_rx_pkts > max_pkts_this_second)
+                    max_pkts_this_second = num_rx_pkts;
+            }
+
+            uint64_t timing_now = rte_get_tsc_cycles();
+            if (unlikely((timing_now - timing_last) >= cycles_per_sec))
+            {
+                if (bursts_this_second > 0)
+                {
+                    mean_burst_us_ = (cycles_this_second * 1000000) / (bursts_this_second * cycles_per_sec);
+                    max_burst_us_ = (max_burst_cycles_this_second * 1000000) / cycles_per_sec;
+                    mean_pkts_per_burst_ = pkts_this_second / bursts_this_second;
+                    max_pkts_per_burst_ = max_pkts_this_second;
+                    // Sustained throughput capacity this second, derived from mean burst
+                    // processing time rather than the fastest burst, so this reflects
+                    // realistic steady-state performance rather than a best-case ceiling.
+                    estimated_pps_ = mean_burst_us_ > 0
+                        ? (mean_pkts_per_burst_ * 1000000) / mean_burst_us_
+                        : 0;
+
+                    if (max_burst_us_ > max_burst_us_all_time_)
+                        max_burst_us_all_time_ = max_burst_us_;
+                    if (estimated_pps_ > max_estimated_pps_)
+                        max_estimated_pps_ = estimated_pps_;
+                }
+
+                bursts_this_second = 0;
+                pkts_this_second = 0;
+                cycles_this_second = 0;
+                max_burst_cycles_this_second = 0;
+                max_pkts_this_second = 0;
+                timing_last = timing_now;
+            }
+
             // If any replies have been generated, queue them for TX
             if (num_replies > 0)
             {
@@ -289,7 +528,6 @@ namespace FrameProcessor
                     uint32_t retry = 0;
                     while ((num_tx_pkts < num_replies) && (retry++ < config_.max_packet_tx_retries_))
                     {
-                        //rte_delay_us(1);
                         num_tx_pkts += rte_eth_tx_burst(
                             port_id_, config_.tx_queue_id_, &pkt_bufs[num_tx_pkts],
                             num_replies - num_tx_pkts
@@ -452,107 +690,121 @@ namespace FrameProcessor
     {
         bool pkt_forwarded = false;
 
-
-        // Get the destination port from the UDP packet
         uint16_t dst_port = rte_bswap16((*pkt_udp_hdr)->dst_port);
 
-        uint64_t frame_outer_chunk_size = decoder_->get_frame_outer_chunk_size();
-
-        // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-        //     << " src: " << mac_addr_str((*pkt_ether_hdr)->src_addr)
-        //     << " dst: " << mac_addr_str((*pkt_ether_hdr)->dst_addr)
-        //     << " len: " << rte_bswap16((*pkt_udp_hdr)->dgram_len)
-        //     << " rx port: " << dst_port
-        // );
-
-        // If the destination port is in the list of allowed RX ports continue to process the
-        // packet
-        if (std::find(config_.rx_ports_.begin(), config_.rx_ports_.end(), dst_port) !=
-            config_.rx_ports_.end())
+        // Route the packet to the branch that owns this destination port. Linear scan over a
+        // small vector: real configs have only a handful of branches/ports per RX core, so this
+        // beats unordered_map's hashing/bucket overhead here.
+        size_t branch_idx = SIZE_MAX;
+        for (const auto& mapping : port_to_branch_)
         {
-
-            // Get the protocol header from the start of the UDP payload and resolve the frame
-            // number
-            PacketHeader* pkt_header =
-                (PacketHeader *)((uint8_t *)*pkt_udp_hdr + sizeof(struct rte_udp_hdr));
-
-
-            // check to see if rx_enable is true and if the packet should be discarded or
-            // forwarded
-            if(unlikely(rx_enable_ == false))
+            if (mapping.first == dst_port)
             {
-                return pkt_forwarded;
+                branch_idx = mapping.second;
+                break;
             }
-            
-            // This statement allows the code to reset the "starting" frame number in code
-            // When first_frame_number_ is set to -1 the next first packet of a frame will be use
-            // to create a variable to offset the frame number by, allow for frames to be
-            // distributed as it the first frame has a frame number of 0
+        }
+        if (unlikely(branch_idx == SIZE_MAX))
+        {
+            return pkt_forwarded;  // port not mapped to any stream
+        }
 
-            uint64_t packet_number = decoder_->get_packet_number(pkt_header);
-            uint64_t frame_number = decoder_->get_frame_number(pkt_header);
+        StreamBranch& branch = branches_[branch_idx];
 
-            if(unlikely(first_frame_number_ == -1))
+        if (unlikely(!branch.rx_enable))
+        {
+            return pkt_forwarded;
+        }
+
+        PacketHeader* pkt_header =
+            (PacketHeader *)((uint8_t *)*pkt_udp_hdr + sizeof(struct rte_udp_hdr));
+
+        uint64_t packet_number = decoder_->get_packet_number(pkt_header);
+        uint64_t frame_number  = decoder_->get_frame_number(pkt_header);
+
+        // Per-stream frame latch: proc_idx_==0 leads; followers adopt via the shared atomic.
+        // The shared latch is stream-agnostic because PacketRxCore is shared across streams
+        // and the latch only synchronises instances of the same core, not streams.
+        if (unlikely(branch.first_frame_number == -1))
+        {
+            if (proc_idx_ == 0)
             {
-
-                // Check if this is the first packet of a frame or the first seen packet of a new frame
-
-                if (packet_number == 0 || frame_number > first_seen_frame_number_)
+                if (packet_number == 0 || frame_number > branch.first_seen_frame_number)
                 {
-                    first_frame_number_ = frame_number;
-                    // LOG4CXX_INFO(logger_, "Frame latch updated to: " << first_frame_number_);
+                    branch.first_frame_number =
+                        static_cast<int64_t>(frame_number) + FRAME_LATCH_OFFSET;
+                    shared_first_frame_number_.store(
+                        branch.first_frame_number, std::memory_order_release);
+                    // LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                    //     << " [" << branch.stream_id << "] Frame latch set to: "
+                    //     << branch.first_frame_number);
                 }
                 else
                 {
-                    first_seen_frame_number_ = frame_number;
-                    // If the packet recieved is not the start of the frame, then it is sent
-                    // back  to the main fast loop to be discarded
+                    branch.first_seen_frame_number = frame_number;
+                    return pkt_forwarded;
+                }
+
+                // The offset pushes the latch beyond the frame that triggered it, so
+                // that frame (and any before the latch) must be discarded here rather
+                // than falling through to the unsigned subtraction below, which would
+                // otherwise underflow.
+                if (frame_number < static_cast<uint64_t>(branch.first_frame_number))
+                {
                     return pkt_forwarded;
                 }
             }
-
-            uint64_t current_frame_number = frame_number - first_frame_number_;
-
-            // Check to see if the packet recieved is within the current aquisition
-            // if not then return this function and discard the packet
-
-            if(rx_frames_ != 0 && current_frame_number >= rx_frames_)
+            else
             {
-                return pkt_forwarded;
-            }
-
-
-            // LOG4CXX_DEBUG_LEVEL(3, logger_, "RX UDP: " << lcore_id_
-            //     << " protocol header: frame: " << current_frame_number
-            //     << " packet: " << decoder_->get_packet_number(pkt_header)
-            // );
-
-            // Queue the packet on the appropriate forwarding ring based on the frame number
-            int rc = rte_ring_enqueue(
-                packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores], *pkt
-            );
-
-            // If the queueing failed, attempt to retry
-            if (unlikely(rc != 0))
-            {
-                uint32_t retry = 0;
-                while ((rc != 0) && (retry++ < config_.max_packet_queue_retries_))
+                int64_t shared_latch = shared_first_frame_number_.load(std::memory_order_acquire);
+                if (shared_latch == -1)
                 {
-                    //rte_delay_us(1);
-                    rc = rte_ring_enqueue(
-                        packet_forward_rings_[(current_frame_number / frame_outer_chunk_size) % config_.num_downstream_cores],
-                        *pkt
-                    );
+                    return pkt_forwarded;
                 }
-                LOG4CXX_INFO(logger_, "PacketRxCore failed to enqueue packet, ring full");
+                branch.first_frame_number = shared_latch;
+                // LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                //     << " [" << branch.stream_id << "] Adopted frame latch: "
+                //     << branch.first_frame_number);
             }
+        }
 
+        uint64_t current_frame_number =
+            frame_number - static_cast<uint64_t>(branch.first_frame_number);
 
-            if (likely(rc == 0))
+        // Discard packets beyond this stream's acquisition window
+        if (branch.rx_frames != 0 && current_frame_number >= branch.rx_frames)
+        {
+            return pkt_forwarded;
+        }
+
+        if (unlikely(branch.num_cores == 0 || branch.fwd_rings.empty()))
+        {
+            LOG4CXX_WARN(logger_, "PacketRxCore [" << branch.stream_id
+                << "] has no forward rings, dropping packet");
+            return pkt_forwarded;
+        }
+
+        size_t ring_idx =
+            (current_frame_number / branch.frame_outer_chunk_size) % branch.num_cores;
+
+        int rc = rte_ring_enqueue(branch.fwd_rings[ring_idx], *pkt);
+
+        if (unlikely(rc != 0))
+        {
+            // Don't retry: the downstream core is backed up regardless of how many times we
+            // immediately re-try the same full ring, and spinning here only steals cycles from
+            // packet reception. Log the drop, but rate-limited - under sustained backpressure
+            // this can otherwise fire on every packet, turning a downstream slowdown into an
+            // RX-core stall from logging alone.
+            if ((branch.ring_full_drops++ % 10000) == 0)
             {
-                pkt_forwarded = true;
-                // The packet was enqueued to a packet ring, increment the captured packet counter
+                LOG4CXX_WARN(logger_, "PacketRxCore [" << branch.stream_id
+                    << "] ring full, dropped " << branch.ring_full_drops << " packet(s) so far");
             }
+        }
+        else
+        {
+            pkt_forwarded = true;
         }
 
         return pkt_forwarded;
@@ -602,15 +854,15 @@ namespace FrameProcessor
             device_ = nullptr;
         }
 
-        int ret = rte_eal_hotplug_remove("pci", config_.pcie_device_.c_str());
+        int ret = rte_eal_hotplug_remove("pci", instance_pcie_device_.c_str());
         if (ret < 0) {
-            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << config_.pcie_device_);
+            LOG4CXX_ERROR(logger_, "Failed to hot unplug device: " << instance_pcie_device_);
             return false;
         }
 
         device_configured_ = false;
         port_id_ = UINT16_MAX;
-        LOG4CXX_INFO(logger_, "Successfully removed device: " << config_.pcie_device_);
+        LOG4CXX_INFO(logger_, "Successfully removed device: " << instance_pcie_device_);
         return true;
     }
 
@@ -621,14 +873,34 @@ namespace FrameProcessor
 
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
 
-        // Original status parameters
         status.set_param(status_path + "total_packets", total_packets_);
         status.set_param(status_path + "dropped_packets", dropped_packets_);
         status.set_param(status_path + "captured_packets", captured_packets_);
-        status.set_param(status_path + "rx_enable", rx_enable_);
-        status.set_param(status_path + "rx_frames", rx_frames_);
-        status.set_param(status_path + "first_seen_frame_number", first_seen_frame_number_);
-        status.set_param(status_path + "first_frame_number", first_frame_number_);
+        status.set_param(status_path + "arp_replies", arp_replies_);
+        status.set_param(status_path + "icmp_replies", icmp_replies_);
+
+        // Per-burst processing timing - see mean_burst_us_ etc. in the header for why these
+        // are tracked natively rather than relying on the Python side sampling fast enough.
+        status.set_param(status_path + "mean_burst_us", mean_burst_us_);
+        status.set_param(status_path + "max_burst_us", max_burst_us_);
+        status.set_param(status_path + "max_burst_us_all_time", max_burst_us_all_time_);
+        status.set_param(status_path + "mean_pkts_per_burst", mean_pkts_per_burst_);
+        status.set_param(status_path + "max_pkts_per_burst", max_pkts_per_burst_);
+        status.set_param(status_path + "estimated_pps", estimated_pps_);
+        status.set_param(status_path + "max_estimated_pps", max_estimated_pps_);
+
+        // Per-stream branch state
+        for (const auto& branch : branches_)
+        {
+            const std::string bpath = status_path + "stream_" + branch.stream_id + "/";
+            status.set_param(bpath + "config_key",          branch.config_key);
+            status.set_param(bpath + "rx_enable",           branch.rx_enable);
+            status.set_param(bpath + "rx_frames",           branch.rx_frames);
+            status.set_param(bpath + "first_frame_number",  branch.first_frame_number);
+            status.set_param(bpath + "first_seen_frame_number", branch.first_seen_frame_number);
+            status.set_param(bpath + "num_cores",           (uint64_t)branch.num_cores);
+            status.set_param(bpath + "ring_full_drops",     branch.ring_full_drops);
+        }
 
         // RX Queue packet count
         if (device_configured_ && port_id_ != UINT16_MAX) {
@@ -666,10 +938,8 @@ namespace FrameProcessor
             }
         }
 
-        // Memory pool monitoring - requires DpdkDevice::get_mbuf_pool() method
-        // TODO: Add getter method to DpdkDevice class: struct rte_mempool* get_mbuf_pool() const { return mbuf_pool_; }
+        // Lookup mbuf pool by its well-known name to report occupancy without requiring a DpdkDevice getter
         if (device_) {
-            // Try to lookup mbuf pool by name (if mbuf_pool_name_str function is available)
             std::string mbuf_pool_name = mbuf_pool_name_str(socket_id_);
             struct rte_mempool* mbuf_pool = rte_mempool_lookup(mbuf_pool_name.c_str());
 
@@ -699,24 +969,29 @@ namespace FrameProcessor
             status.set_param(status_path + "release_ring_utilization_pct", release_utilization_pct);
         }
 
-        // Forward rings monitoring
-        for (size_t i = 0; i < packet_forward_rings_.size(); ++i) {
-            if (packet_forward_rings_[i]) {
-                std::string fwd_ring_path = status_path + "forward_ring_" + std::to_string(i) + "_";
-                uint64_t fwd_ring_count = (uint64_t)rte_ring_count(packet_forward_rings_[i]);
-                uint64_t fwd_ring_free = (uint64_t)rte_ring_free_count(packet_forward_rings_[i]);
-                uint64_t fwd_ring_size = (uint64_t)rte_ring_get_size(packet_forward_rings_[i]);
-
-                status.set_param(fwd_ring_path + "count", fwd_ring_count);
-                status.set_param(fwd_ring_path + "free", fwd_ring_free);
-                status.set_param(fwd_ring_path + "size", fwd_ring_size);
-                uint64_t fwd_utilization_pct = fwd_ring_size > 0 ? (fwd_ring_count * 100) / fwd_ring_size : 0;
-                status.set_param(fwd_ring_path + "utilization_pct", fwd_utilization_pct);
+        // Per-branch forward ring monitoring
+        for (const auto& branch : branches_)
+        {
+            const std::string bpath = status_path + "stream_" + branch.stream_id + "/";
+            for (size_t i = 0; i < branch.fwd_rings.size(); ++i)
+            {
+                if (branch.fwd_rings[i])
+                {
+                    std::string rpath = bpath + "forward_ring_" + std::to_string(i) + "_";
+                    uint64_t cnt  = (uint64_t)rte_ring_count(branch.fwd_rings[i]);
+                    uint64_t free = (uint64_t)rte_ring_free_count(branch.fwd_rings[i]);
+                    uint64_t sz   = (uint64_t)rte_ring_get_size(branch.fwd_rings[i]);
+                    status.set_param(rpath + "count", cnt);
+                    status.set_param(rpath + "free",  free);
+                    status.set_param(rpath + "size",  sz);
+                    status.set_param(rpath + "utilization_pct",
+                        sz > 0 ? (cnt * 100) / sz : (uint64_t)0);
+                }
             }
         }
 
         // Additional performance metrics
-        status.set_param(status_path + "num_downstream_cores", (uint64_t)config_.num_downstream_cores);
+        status.set_param(status_path + "num_branches", (uint64_t)branches_.size());
         status.set_param(status_path + "rx_burst_size", (uint64_t)config_.rx_burst_size_);
         status.set_param(status_path + "max_packet_queue_retries", (uint64_t)config_.max_packet_queue_retries_);
     }
@@ -730,29 +1005,113 @@ namespace FrameProcessor
 
     void PacketRxCore::configure(OdinData::IpcMessage& config)
     {
-        // Update the config based from the passed IPCmessage
-
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
 
-
-        if (config.has_param("rx_enable"))
+        // Config applies to every branch; each stream tracks its own frame counters and latch
+        // state independently, so there is no need to address them separately.
+        for (auto& branch : branches_)
         {
-            
-            rx_enable_ = config.get_param("rx_enable", false);
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting rx_enable_ to: " <<  rx_enable_);
+            if (config.has_param("rx_enable"))
+            {
+                branch.rx_enable = config.get_param("rx_enable", false);
+                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                    << " [" << branch.stream_id << "] rx_enable=" << branch.rx_enable);
+            }
+
+            // Reset the frame latch whenever capture is going inactive
+            if (!branch.rx_enable)
+            {
+                branch.first_frame_number      = -1;
+                branch.first_seen_frame_number = 0;
+                latch_pending_.store(true, std::memory_order_release);
+                if (proc_idx_ == 0)
+                    shared_first_frame_number_.store(-1, std::memory_order_release);
+                branch.rx_frames = config.get_param("rx_frames", branch.rx_frames);
+                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                    << " [" << branch.stream_id << "] Reset latch, rx_frames=" << branch.rx_frames);
+            }
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> PacketRxCore::requestCommands()
+    {
+        return {
+            {"start_capture", DEFAULT_COMMAND_PRIORITY},
+            {"stop_capture",  DEFAULT_COMMAND_PRIORITY}
+        };
+    }
+
+    void PacketRxCore::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        if (command == "start_capture")
+        {
+            start_capture(reply);
+        }
+        else if (command == "stop_capture")
+        {
+            stop_capture(reply);
+        }
+        else
+        {
+            reply.set_nack("PacketRxCore: unknown command: " + command);
+        }
+    }
+
+    void PacketRxCore::start_capture(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " Called start_capture");
+
+        bool already_running = false;
+        for (auto& branch : branches_)
+        {
+            if (branch.rx_enable) { already_running = true; break; }
+        }
+        if (already_running)
+        {
+            reply.set_nack("PacketRxCore: capture already running");
+            return;
         }
 
-        // Only update the other config is rx_enable is currently false
-        // Whenever rx_enabled is false then make sure first_frame_number_ is ready for when it's turned on
-        if (!rx_enable_)
-        {   
-            first_frame_number_ = -1;
-            first_seen_frame_number_ = -1;
-            rx_frames_ = config.get_param("rx_frames", rx_frames_);
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Reseting frame latch and setting rx_frames_ to: " <<  rx_frames_);
+        if (proc_idx_ == 0)
+            shared_first_frame_number_.store(-1, std::memory_order_release);
+
+        for (auto& branch : branches_)
+        {
+            branch.first_frame_number      = -1;
+            branch.first_seen_frame_number = 0;
+            branch.rx_enable               = true;
+            latch_pending_.store(true, std::memory_order_release);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " [" << branch.stream_id << "] start_capture");
+        }
+    }
+
+    void PacketRxCore::stop_capture(OdinData::IpcMessage& reply)
+    {
+        bool already_stopped = true;
+        for (auto& branch : branches_)
+        {
+            if (branch.rx_enable) { already_stopped = false; break; }
+        }
+        if (already_stopped)
+        {
+            reply.set_nack("PacketRxCore: capture already stopped");
+            return;
         }
 
+        if (proc_idx_ == 0)
+            shared_first_frame_number_.store(-1, std::memory_order_release);
 
+        for (auto& branch : branches_)
+        {
+            branch.rx_enable               = false;
+            branch.first_frame_number      = -1;
+            branch.first_seen_frame_number = 0;
+            latch_pending_.store(true, std::memory_order_release);
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " [" << branch.stream_id << "] stop_capture");
+        }
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketRxCore, "PacketRxCore");

@@ -1,4 +1,4 @@
-#include "TensorstoreJsonSpec.h"
+#include "tensorstore/TensorstoreJsonSpec.h"
 
 namespace FrameProcessor {
 
@@ -14,9 +14,8 @@ namespace FrameProcessor {
     std::size_t width,
     uint64_t cache_bytes_limit)
 {
-    // Builds kvstore specification based on driver type
     ::nlohmann::json kvstore_spec;
-    
+
     if (kvstore_driver == "s3") {
         kvstore_spec = {
             {"driver", "s3"},
@@ -50,7 +49,6 @@ namespace FrameProcessor {
         } else if (data_type == "uint64") {
             zarr_dtype = "<u8";
         } else {
-            // Fallback for unknown types
             zarr_dtype = data_type;
         }
         

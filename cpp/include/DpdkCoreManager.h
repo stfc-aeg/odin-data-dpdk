@@ -8,11 +8,11 @@
 #ifndef INCLUDE_DPDKCORE_MANAGER_H_
 #define INCLUDE_DPDKCORE_MANAGER_H_
 
-#include <boost/bimap.hpp>
 #include <vector>
 #include <string>
 #include <unistd.h>
 #include <map>
+#include <set>
 #include <iostream>
 #include <log4cxx/logger.h>
 using namespace log4cxx;
@@ -43,6 +43,8 @@ namespace FrameProcessor
         bool start(void);
         void stop(void);
         void configure(OdinData::IpcMessage& config);
+        void execute(const std::string& command, OdinData::IpcMessage& reply);
+        std::vector<std::pair<std::string, int>> requestCommands();
 
     private:
 
@@ -51,12 +53,16 @@ namespace FrameProcessor
         static const std::string CONFIG_DPDK_EAL_PARAMS;
 
         static ssize_t dpdk_log_writer(void *, const char *data, size_t len);
-        int build_dpdk_eal_args(OdinData::IpcMessage& config, std::vector<char *>& eal_argv);
-        char* param_value(const rapidjson::Value& param);
+        int build_dpdk_eal_args(OdinData::IpcMessage& config,
+            std::vector<std::string>& eal_strings, std::vector<char*>& eal_argv);
+        std::string param_value(const rapidjson::Value& param);
 
         static int start_worker(void* worker_ptr);
 
-        boost::bimap<std::string, std::string> core_chain_order_;
+        // upstream config_key -> downstream config_key (one upstream can have multiple downstreams)
+        std::multimap<std::string, std::string> core_chain_order_;
+        // downstream config_key -> upstream config_key (reverse lookup)
+        std::map<std::string, std::string> downstream_to_upstream_;
 
         LoggerPtr logger_;
 
@@ -74,6 +80,8 @@ namespace FrameProcessor
         std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;
         std::vector<boost::shared_ptr<DpdkWorkerCore>> running_cores_;
 
+        // One shared buffer per stream; keyed by stream_id
+        std::map<std::string, DpdkSharedBuffer*> stream_shared_buffers_;
         std::vector<DpdkSharedBuffer *> shared_buffers_;
 
     };

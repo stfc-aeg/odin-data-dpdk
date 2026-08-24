@@ -17,6 +17,9 @@ namespace FrameProcessor
     {
         DpdkCoreConfiguration core_config;
         ProtocolDecoder* decoder;
+        std::string decoder_mode;   // mode string passed to decoder calls by this core's stream
+        std::string stream_id;      // stream name, used to scope ring and buffer names
+        std::string config_key;     // JSON worker_cores key for this core (e.g. "packet_processor_aux")
         FrameCallback& frame_callback;
         DpdkSharedBuffer* shared_buf;
 

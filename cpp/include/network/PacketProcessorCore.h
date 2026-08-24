@@ -31,19 +31,21 @@ namespace FrameProcessor
         void status(OdinData::IpcMessage& status, const std::string& path);
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
+        void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+        std::vector<std::pair<std::string, int>> requestCommands() override;
 
     private:
+        void start_capture();
 
         int proc_idx_;
         PacketProtocolDecoder* decoder_;
+        std::string mode_;
         DpdkSharedBuffer* shared_buf_;
 
         PacketProcessorConfiguration config_;
 
         LoggerPtr logger_;
 
-        
-        
         int64_t current_frame_;
         
         uint64_t total_packets_;
@@ -59,10 +61,7 @@ namespace FrameProcessor
         uint64_t maximum_us_on_frame_;
         uint8_t  core_usage_;
 
-
         uint64_t frame_buffer_size_;
-
-        
         int64_t first_frame_number_;
 
         bool debug_enabled_;

@@ -85,6 +85,11 @@ namespace FrameProcessor {
         // Returns the current state type
         StateType current_state(void);
 
+        // Returns the current state type without acquiring state_transition_mutex_. Only safe to
+        // call from a context that already holds the mutex (execute_command()'s call chain via
+        // unconsumed_event()); everyone else must use current_state().
+        StateType current_state_locked(void);
+
         // Initialises the command type map
         void init_command_type_map(void);
 

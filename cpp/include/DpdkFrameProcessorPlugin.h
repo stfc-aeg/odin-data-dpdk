@@ -49,6 +49,8 @@ namespace FrameProcessor
     virtual void requestConfiguration(OdinData::IpcMessage& reply);
     virtual void status(OdinData::IpcMessage& status);
     virtual bool reset_statistics(void);
+    virtual void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+    virtual std::vector<std::string> requestCommands() override;
 
     virtual void process_frame(boost::shared_ptr<Frame> frame) = 0;
 

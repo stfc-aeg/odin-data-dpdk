@@ -88,9 +88,42 @@ namespace FrameProcessor
         
     // Allow access to classes that are derived from this class
     protected:
-        // Bound buffer management functions
+        // Bound buffer management functions. These are bound by CameraController once a capture
+        // core has registered with it; before that they are empty. Derived cameras should call
+        // get_buffer()/discard_buffer() below rather than invoking these directly, since calling
+        // an unbound boost::function throws bad_function_call.
         boost::function<void*()> getBuffer;
         boost::function<void(void*)> discardBuffer;
+
+        //! Whether buffer management functions have been bound by the controller
+        bool buffer_functions_bound() const
+        {
+            return !getBuffer.empty() && !discardBuffer.empty();
+        }
+
+        //! Acquire an empty shared-memory buffer to write frame data into.
+        //! Returns nullptr if the functions are unbound or the buffer pool is exhausted, so
+        //! callers must always check before writing.
+        void* get_buffer()
+        {
+            if (getBuffer.empty())
+            {
+                LOG4CXX_ERROR(logger_, "Cannot get buffer: buffer management functions not bound");
+                return nullptr;
+            }
+            return getBuffer();
+        }
+
+        //! Return a buffer to the free pool without sending it downstream
+        void discard_buffer(void* buffer)
+        {
+            if (discardBuffer.empty())
+            {
+                LOG4CXX_ERROR(logger_, "Cannot discard buffer: buffer management functions not bound");
+                return;
+            }
+            discardBuffer(buffer);
+        }
 
         // Configuration and status containers
         std::unique_ptr<DpdkCameraConfiguration> camera_config_;

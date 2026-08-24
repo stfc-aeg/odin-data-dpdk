@@ -1,4 +1,4 @@
-#include "TensorstoreCSVLogger.h"
+#include "tensorstore/TensorstoreCSVLogger.h"
 #include <DebugLevelLogger.h>
 #include <rte_cycles.h>
 
@@ -23,18 +23,17 @@ bool TensorstoreCSVLogger::Open(const std::string& filename, log4cxx::LoggerPtr 
 {
     path_ = filename;
     
-    // Check if file exists before opening
     std::ifstream check_file(path_);
     bool file_exists = check_file.good();
     check_file.close();
-    
-    // Use append mode to support concurrent writes from multiple cores
+
+    // Append mode: multiple cores may write to the same file
     file_.open(path_, std::ios::out | std::ios::app);
-    
+
     if (file_.is_open()) {
         enabled_ = true;
-        
-        // Avoids duplicate headers when multiple cores write to same file
+
+        // Only write the header row when creating a new file
         if (!file_exists) {
             file_ << "timestamp_seconds,frame_number,num_frames,write_time_us,"
                   << "success,cumulative_frames,avg_write_time_us,core_id,frames_per_second\n";
@@ -65,12 +64,10 @@ void TensorstoreCSVLogger::LogWrite(
         return;
     }
     
-    // Calculate timestamp in seconds since first write
     uint64_t current_cycles = rte_get_tsc_cycles();
-    double elapsed_seconds = static_cast<double>(current_cycles - first_write_time) / 
-                            static_cast<double>(tsc_hz);
-    
-    // Write data row
+    double elapsed_seconds = static_cast<double>(current_cycles - first_write_time) /
+                             static_cast<double>(tsc_hz);
+
     file_ << elapsed_seconds << ","
           << frame_number << ","
           << num_frames << ","

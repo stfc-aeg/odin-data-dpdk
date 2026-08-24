@@ -1,4 +1,4 @@
-#include "TensorstoreDataset.h"
+#include "tensorstore/TensorstoreDataset.h"
 #include <DebugLevelLogger.h>
 
 using namespace log4cxx;
@@ -14,7 +14,6 @@ tensorstore::Result<tensorstore::TensorStore<>> CreateDataset(
     auto context = tensorstore::Context::Default();
     
     try {
-        // create|open allows reusing existing datasets or creating new ones.
         auto store_result = tensorstore::Open(
             json_spec,
             context,
