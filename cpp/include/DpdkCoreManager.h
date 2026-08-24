@@ -44,6 +44,7 @@ namespace FrameProcessor
         void stop(void);
         void configure(OdinData::IpcMessage& config);
         void execute(const std::string& command, OdinData::IpcMessage& reply);
+        void requestConfiguration(OdinData::IpcMessage& reply);
         std::vector<std::pair<std::string, int>> requestCommands();
 
     private:

@@ -4,8 +4,8 @@
 namespace FrameProcessor
 {
 
-DataSource::DataSource(PacketProtocolDecoder* decoder) :
-    decoder_(decoder)
+DataSource::DataSource(PacketProtocolDecoder* decoder, FrameProcessor::DataType data_type):
+    decoder_(decoder), data_type_(data_type)
 {
     frame_width_ = decoder_->get_frame_x_resolution();
     frame_height_ = decoder_->get_frame_y_resolution();

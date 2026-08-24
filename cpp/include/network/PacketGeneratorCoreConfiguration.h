@@ -18,6 +18,10 @@ namespace FrameProcessor
         const std::string default_data_source = "generated";
         const std::string default_pattern = "incrementing";
         const std::string default_file_path = "/tmp/acq_1";
+        const std::string default_h5_dataset_name = "/dummy";
+        const bool default_reorder_frame = false;
+
+        const uint16_t default_packet_drop = 0;
     }
 
     class PacketGeneratorConfiguration : public OdinData::ParamContainer
@@ -36,7 +40,11 @@ namespace FrameProcessor
                 
                 data_source(Defaults::default_data_source),
                 pattern(Defaults:: default_pattern),
-                file_path(Defaults::default_file_path)
+                file_path(Defaults::default_file_path),
+                dataset_name(Defaults::default_h5_dataset_name),
+                reorder_frame(Defaults::default_reorder_frame),
+
+                packet_drop(Defaults::default_packet_drop)
             {
                 bind_params();
             }
@@ -83,6 +91,10 @@ namespace FrameProcessor
                 bind_param<std::string>(data_source, "data_source");
                 bind_param<std::string>(pattern, "pattern");
                 bind_param<std::string>(file_path, "file_path");
+                bind_param<std::string>(dataset_name, "dataset_name");
+                bind_param<bool>(reorder_frame, "reorder_frame");
+
+                bind_param<uint16_t>(packet_drop, "packet_drop");
             }
 
             std::string core_name;
@@ -105,6 +117,10 @@ namespace FrameProcessor
             std::string data_source;
             std::string pattern;
             std::string file_path;
+            std::string dataset_name;
+            bool reorder_frame;
+
+            uint16_t packet_drop;
 
             friend class PacketGeneratorCore;
     };

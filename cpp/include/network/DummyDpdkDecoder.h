@@ -270,6 +270,11 @@ public:
         return true;
     }
 
+    void prepare_frame(uint16_t* raw_frame, uint16_t* prepared_frame)
+    {
+        return;
+    }
+
     SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame)
     {
         return frame_hdr;

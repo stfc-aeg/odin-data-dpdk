@@ -3,6 +3,7 @@
 
 #include "DataSource.h"
 #include <string>
+#include <rapidjson/document.h>
 
 namespace FrameProcessor
 {
@@ -13,9 +14,9 @@ public:
 
     GeneratedDataSource(
         PacketProtocolDecoder* decoder,
-        const std::string& pattern);
+        const rapidjson::Value& data_source_config);
 
-    void getData(uint16_t* destination) override;
+    void getData(void* destination) override;
 
 private:
 
@@ -27,6 +28,7 @@ private:
     };
 
     Pattern pattern_;
+    uint64_t max_value_;
 };
 
 }

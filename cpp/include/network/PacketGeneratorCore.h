@@ -38,6 +38,7 @@ namespace FrameProcessor
         void execute(const std::string& command, OdinData::IpcMessage& reply);
         void start_tx(void);
         void stop_tx(void);
+        void requestConfiguration(OdinData::IpcMessage& reply);
         std::vector<std::string> requestCommands();
 
     private:
@@ -71,7 +72,7 @@ namespace FrameProcessor
         std::string instance_pcie_device_;  //!< PCIe address for this instance's NIC
         std::string instance_device_ip_;    //!< IP address for this instance's NIC
 
-        std::unique_ptr<DataSource> data_source_;
+        boost::shared_ptr<DataSource> data_source_;
     };
 }
 

@@ -42,6 +42,7 @@ namespace FrameProcessor
         virtual void status(OdinData::IpcMessage& status, const std::string& path) = 0;
         virtual bool connect(void) = 0;
         virtual void configure(OdinData::IpcMessage& config) = 0;
+        virtual void requestConfiguration(OdinData::IpcMessage& reply) = 0;
 
         static constexpr int DEFAULT_COMMAND_PRIORITY = 50;
 

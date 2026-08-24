@@ -18,6 +18,7 @@ endif()
 
 set(ODINDATA_DPDK_SOURCES
         # Core DPDK files
+        DataSource.cpp
         DpdkCoreManager.cpp
         DpdkDevice.cpp
         DpdkFrameProcessorPlugin.cpp
@@ -27,6 +28,8 @@ set(ODINDATA_DPDK_SOURCES
         FrameBuilderCore.cpp
         FrameCompressorCore.cpp
         FrameWrapperCore.cpp
+        GeneratedDataSource.cpp
+        HDF5DataSource.cpp
         PythonAccessCore.cpp
         RegionOfInterestCore.cpp
         

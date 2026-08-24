@@ -3,6 +3,7 @@
 
 #include "DataSource.h"
 #include <hdf5.h>
+#include <rapidjson/document.h>
 #include <string>
 
 namespace FrameProcessor
@@ -14,12 +15,11 @@ public:
 
     HDF5DataSource(
         PacketProtocolDecoder* decoder,
-        const std::string& file_path
-    );
+        const rapidjson::Value& data_source_config);
 
     ~HDF5DataSource() override;
 
-    void getData(uint16_t* destination) override;
+    void getData(void* destination) override;
 
 private:
 
