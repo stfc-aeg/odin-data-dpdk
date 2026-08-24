@@ -39,7 +39,7 @@ namespace FrameProcessor
         void start_tx(void);
         void stop_tx(void);
         void requestConfiguration(OdinData::IpcMessage& reply);
-        std::vector<std::string> requestCommands();
+        std::vector<std::pair<std::string, int>> requestCommands() override;
 
     private:
 

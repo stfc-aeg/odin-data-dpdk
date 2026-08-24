@@ -386,9 +386,12 @@ namespace FrameProcessor
 
     }
 
-    std::vector<std::string> PacketGeneratorCore::requestCommands()
+    std::vector<std::pair<std::string, int>> PacketGeneratorCore::requestCommands()
     {
-        return {"start_tx", "stop_tx"};
+        return {
+            {"start_tx", DEFAULT_COMMAND_PRIORITY},
+            {"stop_tx", DEFAULT_COMMAND_PRIORITY}
+        };
     }
 
     void PacketGeneratorCore::execute(const std::string& command, OdinData::IpcMessage& reply)

@@ -270,7 +270,7 @@ public:
         return true;
     }
 
-    void prepare_frame(uint16_t* raw_frame, uint16_t* prepared_frame)
+    void prepare_frame(void* raw_frame, void* prepared_frame) override
     {
         return;
     }
