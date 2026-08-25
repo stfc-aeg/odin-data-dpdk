@@ -270,6 +270,10 @@ public:
         return true;
     }
 
+    bool needs_reordering() const override {
+        return false;
+    }
+
     void prepare_frame(void* raw_frame, void* prepared_frame) override
     {
         return;

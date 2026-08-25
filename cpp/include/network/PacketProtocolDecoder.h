@@ -54,6 +54,7 @@ public:
     virtual const uint64_t get_image_size(RawFrameHeader* frame_hdr) const = 0;
     virtual void set_image_size(RawFrameHeader* frame_hdr, uint64_t image_size) const = 0;
 
+    virtual bool needs_reordering() const = 0;
     virtual void prepare_frame(void* raw_frame, void* prepared_frame) = 0;
 
     virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame) = 0;

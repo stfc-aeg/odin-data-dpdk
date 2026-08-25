@@ -207,7 +207,7 @@ namespace FrameProcessor
             data_source_->getData(raw_frame);
 
             // Encode the data through the decoder method
-            if (false) //(config_.reorder_frame)
+            if (decoder_->needs_reordering()) //(config_.reorder_frame)
             {
                 decoder_->prepare_frame(raw_frame, prepared_frame);
                 std::swap(raw_frame, prepared_frame);
