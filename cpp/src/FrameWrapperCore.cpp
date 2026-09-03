@@ -127,7 +127,9 @@ namespace FrameProcessor
                     actual_frame_size *= dim;
                 }
                 actual_frame_size *= decoder_->get_frame_outer_chunk_size(mode_) *
-                    (decoder_->get_frame_bit_depth(mode_) == FrameProcessor::DataType::raw_32bit ? 4 : 2);
+                    (decoder_->get_frame_bit_depth(mode_) == FrameProcessor::DataType::raw_64bit ? 8 :
+                    decoder_->get_frame_bit_depth(mode_) == FrameProcessor::DataType::raw_32bit ? 4 :
+                    decoder_->get_frame_bit_depth(mode_) == FrameProcessor::DataType::raw_16bit ? 2 : 1);
 
                 // image_size differs from actual_frame_size when FrameCompressorCore has compressed the frame
                 uint64_t image_size = decoder_->get_super_frame_image_size(current_super_frame_buffer_);

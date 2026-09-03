@@ -169,11 +169,17 @@ namespace FrameProcessor
         const FrameProcessor::DataType frame_data_type = decoder_->get_frame_bit_depth();
         const size_t bytes_per_pixel = get_bytes_per_pixel(frame_data_type);
 
-        // Initialise pointer to raw frame data
+        // Initialise pointer to raw and prepared frame data
         void *raw_frame = nullptr;
         while (raw_frame == nullptr)
         {
             rte_ring_dequeue(clear_frames_ring_, &raw_frame);
+        };
+
+        void *prepared_frame = nullptr;
+        while (prepared_frame == nullptr)
+        {
+            rte_ring_dequeue(clear_frames_ring_, &prepared_frame);
         };
 
         // Calculate pixels and bytes in each packet
@@ -187,11 +193,10 @@ namespace FrameProcessor
         uint64_t data_len = bytes_per_packet;
 
         // Allocate memory for frame data based on above calculations
-        uint16_t total_packet_length = l2_len + l3_len + len_4 + data_len + 64; // xiDyn_HDR_SIZE;
+        uint16_t total_packet_length = l2_len + l3_len + len_4 + data_len + decoder_->get_packet_header_size(); // xiDyn_HDR_SIZE;
         uint32_t temp_ip_buf;
         uint64_t frame_number = 0;
-
-        void *prepared_frame = new uint8_t[frame_pixels * bytes_per_pixel];
+        uint32_t device_index;
 
         // While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
@@ -207,21 +212,21 @@ namespace FrameProcessor
             data_source_->getData(raw_frame);
 
             // Encode the data through the decoder method
-            if (decoder_->needs_reordering()) //(config_.reorder_frame)
-            {
-                decoder_->prepare_frame(raw_frame, prepared_frame);
-                std::swap(raw_frame, prepared_frame);
-            }
+            decoder_->prepare_frame(raw_frame, prepared_frame);
 
             for (uint32_t packet = 0; packet < packets_per_frame; packet++)
             {
                 // Randomly drop packets based on configuration
                 bool drop_packet = (rte_rand() % 1000) < config_.packet_drop;
                 if (!drop_packet)
-                    {
+                {                       
                     // Decide which ring to use depending on round robin every frame or packet
-                    // uint32_t device_index = packet % tx_devices_.size(); // split frames over rings
-                    uint32_t device_index = frame_number % tx_devices_.size(); // each frame on a different ring
+                    if (config_.round_robin_mode == "packet")
+                    {
+                        device_index = packet % tx_devices_.size(); // split frames over rings
+                    } else {
+                        device_index = frame_number % tx_devices_.size(); // each frame on a different ring
+                    }
                     
                     // Select relevant device and allocate memory for packet
                     auto& tx_dev = tx_devices_[device_index];
@@ -275,7 +280,7 @@ namespace FrameProcessor
                     ip_hdr->version_ihl = RTE_IPV4_VHL_DEF;
 
                     // Copy the packet data into the packet
-                    rte_memcpy(packet_data, static_cast<uint8_t*>(raw_frame) + (static_cast<size_t>(packet) * bytes_per_packet), bytes_per_packet);
+                    rte_memcpy(packet_data, static_cast<uint8_t*>(prepared_frame) + (static_cast<size_t>(packet) * bytes_per_packet), bytes_per_packet);
 
                     // Enqueues the completed packet onto the transmit ring
                     while (
@@ -342,11 +347,9 @@ namespace FrameProcessor
             }
         }
 
-        std::string ring_name = ring_name_str( config_.core_name, socket_id_, proc_idx_);
+        std::string ring_name = ring_name_str(config_.config_key, socket_id_, proc_idx_);
 
         upstream_ring_ = rte_ring_lookup(ring_name.c_str());
-
-        //Should not create ring here
 
         if (upstream_ring_ == NULL)
         {

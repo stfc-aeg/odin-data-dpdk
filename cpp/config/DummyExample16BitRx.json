@@ -1,0 +1,166 @@
+[
+    {
+        "fr_setup": {
+            "fr_ready_cnxn": "tcp://0.0.0.0:6969",
+            "fr_release_cnxn": "tcp://0.0.0.0:6970"
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "DummyDpdk",
+                "name": "DummyDpdkPlugin",
+                "library": "./lib/libDummyDpdkPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "Liveview",
+                "name": "LiveViewPlugin",
+                "library": "./lib/libLiveViewPlugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "load": {
+                "index": "hdf",
+                "name": "FileWriterPlugin",
+                "library": "./lib/libHdf5Plugin.so"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "DummyDpdk",
+                "connection": "frame_receiver"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "Liveview",
+                "connection": "DummyDpdk"
+            }
+        }
+    },
+    {
+        "plugin": {
+            "connect": {
+                "index": "hdf",
+                "connection": "Liveview"
+            }
+        }
+    },
+    {
+        "DummyDpdk": {
+            "mode": "test_16bit",
+            "update_config": false,
+            "dpdk_process_rank": 0,
+            "num_secondary_processes": 0,
+            "shared_buffer_size": 107374182400,
+            "socket": 0,
+            "dpdk_eal": {
+                "corelist": "16-31",
+                "loglevel": "debug",
+                "proc-type": "Primary",
+                "file-prefix": "dummy-1024-odin-data"
+            },
+            "worker_cores": {
+                "packet_rx": {
+                    "core_name": "PacketRxCore",
+                    "num_cores": 3,
+                    "pcie_device": [
+                        "0000:01:00.0",
+                        "0000:2a:00.0",
+                        "0000:2a:00.1"
+                    ],
+                    "device_ip": [
+                        "10.0.100.9",
+                        "10.0.100.10",
+                        "10.0.100.11"
+                    ],
+                    "rx_ports": [
+                        1234,
+                        61649
+                    ],
+                    "rx_burst_size": 128,
+                    "fwd_ring_size": 131072,
+                    "release_ring_size": 131072,
+                    "rx_queue_id": 0,
+                    "tx_queue_id": 0,
+                    "max_packet_tx_retries": 64,
+                    "max_packet_queue_retries": 64
+                },
+                "packet_processor": {
+                    "core_name": "PacketProcessorCore",
+                    "num_cores": 2,
+                    "stream": "primary",
+                    "mode": "test_16bit",
+                    "connect": "packet_rx",
+                    "rx_ports": [
+                        1234,
+                        61649
+                    ],
+                    "frame_timeout": 1000
+                },
+                "frame_builder": {
+                    "core_name": "FrameBuilderCore",
+                    "num_cores": 2,
+                    "stream": "primary",
+                    "mode": "test_16bit",
+                    "connect": "packet_processor",
+                    "secondary_fanout": false
+                },
+                "frame_wrapper": {
+                    "core_name": "FrameWrapperCore",
+                    "num_cores": 1,
+                    "stream": "primary",
+                    "mode": "test_16bit",
+                    "connect": "frame_builder"
+                }
+            }
+        }
+    },
+    {
+        "hdf": {
+            "dataset": {
+                "dummy": {
+                    "datatype": "uint16",
+                    "dims": [
+                        256,
+                        320
+                    ],
+                    "chunks":
+                    [
+                        100,
+                        256,
+                        320
+                    ],
+                    "compression": "none"
+                }
+            },
+            "file": {
+                "path": "/tmp/"
+            },
+            "frames": 0,
+            "acquisition_id": "dummy_16bit_test",
+            "write": false,
+            "timeout_timer_period": 10000,
+            "process": {
+                "number": 1,
+                "rank": 0
+            }
+        },
+        "Liveview": {
+            "per_second": 1,
+            "live_view_socket_addr": "tcp://0.0.0.0:5021",
+            "dataset_name": "dummy",
+            "filter_tagged": ""
+        }
+    }
+]

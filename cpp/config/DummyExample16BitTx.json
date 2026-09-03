@@ -24,6 +24,7 @@
     },
     {
         "DummyDpdk": {
+            "mode": "test_16bit",
             "update_config": false,
             "dpdk_process_rank": 0,
             "num_secondary_processes": 0,
@@ -32,47 +33,55 @@
                 "corelist": "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30",
                 "loglevel": "debug",
                 "proc-type": "Primary",
-                "file-prefix": "odin-data"
+                "file-prefix": "dummy-odin-data"
             },
             "worker_cores": {
                 "packet_generator": {
                     "core_name": "PacketGeneratorCore",
                     "num_cores": 1,
-
+                    "stream": "primary",
+                    "mode": "test_16bit",
                     "destination_port": 1234,
                     "source_port": 2345,
                     "source_ip_address": [
+                        "10.0.100.6",
                         "10.0.100.7",
-                        "10.0.101.7"
+                        "10.0.100.8"
                     ],
                     "source_mac_address": [
-                        "9c:63:c0:db:bb:dc",
-                        "9c:63:c0:db:bb:dd"
-                    ],
-                    "destination_ip_address": [
-                        "10.0.100.6",
-                        "10.0.101.6"
-                    ],
-                    "destination_mac_address": [
+                        "08:c0:eb:f8:28:6c",
                         "58:a2:e1:c1:fe:e8",
                         "58:a2:e1:c1:fe:e9"
                     ],
+                    "destination_ip_address": [
+                        "10.0.100.9",
+                        "10.0.100.10",
+                        "10.0.100.11"
+                    ],
+                    "destination_mac_address": [
+                        "08:c0:eb:f8:28:7c",
+                        "9c:63:c0:db:bb:dc",
+                        "9c:63:c0:db:bb:dd"
+                    ],
                     "device_addresses": [
+                        "0000:01:00.0",
                         "0000:2a:00.0",
                         "0000:2a:00.1"
                     ],
-
-                    "test_pattern_mode": "numerical-packetnum"
+                    "data_source": "generated",
+                    "pattern": "incrementing",
+                    "file_path": "/aeg_sw/work/users/mux12756/develop/projects/h5-files/16-bit-test-3_000000.h5",
+                    "dataset_name": "/dummy",
+                    "packet_drop": 0
                 },
-                "tx_core": {
+                "packet_tx": {
                     "core_name": "PacketTxCore",
                     "num_cores": 1,
-
+                    "stream": "primary",
+                    "mode": "test_16bit",
                     "connect": "packet_generator",
-                    "num_devices": 2,
-                  
-                    "destination_port": 1234,
-                    "number_of_frames": 2000
+                    "num_devices": 3,
+                    "destination_port": 1234
                 }
             }
         }

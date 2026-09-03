@@ -92,14 +92,6 @@ namespace FrameProcessor
                     continue;
                 }
 
-                // LOG4CXX_INFO(
-                //     logger_,
-                //     "Dequeued packet from port "
-                //     << tx_dev.port_id
-                //     << " ring count "
-                //     << rte_ring_count(tx_dev.ring)
-                // );
-
                 uint16_t sent = rte_eth_tx_burst(tx_dev.port_id, 0,&mbuf, 1);
 
                 if (sent == 0)
@@ -137,11 +129,7 @@ namespace FrameProcessor
 
     void PacketTxCore::status(OdinData::IpcMessage& status, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Status requested for PacketTxCore_" << proc_idx_
-            << " from the DPDK plugin");
-
         std::string status_path = path + "/PacketTxCore_" + std::to_string(proc_idx_) + "/";
-
     }
 
     bool PacketTxCore::connect(void)
@@ -244,7 +232,8 @@ namespace FrameProcessor
 
     void PacketTxCore::requestConfiguration(OdinData::IpcMessage& reply)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        return;
+        // LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketTxCore, "PacketTxCore");

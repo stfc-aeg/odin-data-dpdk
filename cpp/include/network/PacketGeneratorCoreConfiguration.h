@@ -19,6 +19,8 @@ namespace FrameProcessor
         const std::string default_pattern = "incrementing";
         const std::string default_file_path = "/tmp/acq_1";
         const std::string default_h5_dataset_name = "/dummy";
+        const std::string default_round_robin_mode = "frame";
+
         const bool default_reorder_frame = false;
 
         const uint16_t default_packet_drop = 0;
@@ -42,6 +44,7 @@ namespace FrameProcessor
                 pattern(Defaults:: default_pattern),
                 file_path(Defaults::default_file_path),
                 dataset_name(Defaults::default_h5_dataset_name),
+                round_robin_mode(Defaults::default_round_robin_mode),
                 reorder_frame(Defaults::default_reorder_frame),
 
                 packet_drop(Defaults::default_packet_drop)
@@ -49,10 +52,10 @@ namespace FrameProcessor
                 bind_params();
             }
 
-            void resolve(DpdkCoreConfiguration& core_config_)
+            void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "packet_generator")
             {
                 const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config("packet_generator");
+                    core_config_.get_worker_core_config(config_key);
 
                 if (value_ptr != nullptr)
                 {
@@ -75,6 +78,7 @@ namespace FrameProcessor
             {
                 bind_param<std::string>(core_name, "core_name");
                 bind_param<std::string>(connect, "connect");
+                bind_param<std::string>(config_key, "config_key");
                 bind_param<std::string>(upstream_core, "upstream_core");
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
@@ -92,6 +96,7 @@ namespace FrameProcessor
                 bind_param<std::string>(pattern, "pattern");
                 bind_param<std::string>(file_path, "file_path");
                 bind_param<std::string>(dataset_name, "dataset_name");
+                bind_param<std::string>(round_robin_mode, "round_robin_mode");
                 bind_param<bool>(reorder_frame, "reorder_frame");
 
                 bind_param<uint16_t>(packet_drop, "packet_drop");
@@ -99,6 +104,7 @@ namespace FrameProcessor
 
             std::string core_name;
             std::string connect;
+            std::string config_key;
             std::string upstream_core;
             unsigned int num_cores;
             unsigned int num_downstream_cores;
@@ -118,6 +124,7 @@ namespace FrameProcessor
             std::string pattern;
             std::string file_path;
             std::string dataset_name;
+            std::string round_robin_mode;
             bool reorder_frame;
 
             uint16_t packet_drop;
