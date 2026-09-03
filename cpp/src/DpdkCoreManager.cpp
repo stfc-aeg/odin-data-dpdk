@@ -663,6 +663,17 @@ namespace FrameProcessor
         {
             core->configure(config);
         }
+
+    }
+
+    void DpdkCoreManager::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+    // Return the configuration of the plugin
+    LOG4CXX_TRACE(logger_, "Configuration requested for DpdkCoreManager plugin");
+        for (boost::shared_ptr<DpdkWorkerCore>& core: registered_cores_)
+        {
+            core.get()->requestConfiguration(reply);
+        }
     }
 
     std::vector<std::pair<std::string, int>> DpdkCoreManager::requestCommands()

@@ -989,6 +989,11 @@ namespace FrameProcessor
         }
     }
 
+    void TensorstoreCore::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, TensorstoreCore, "TensorstoreCore");
 
 } // End of the FrameProcessor namespace

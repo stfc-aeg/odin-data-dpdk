@@ -29,6 +29,10 @@ namespace FrameProcessor
 
         inline uint16_t port_id(void) const { return port_id_; }
         inline int socket_id(void) const { return socket_id_; }
+        rte_mempool* mbuf_pool() const
+        {
+            return mbuf_pool_;
+        }
 
     private:
 

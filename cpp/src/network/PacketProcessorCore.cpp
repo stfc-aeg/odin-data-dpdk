@@ -569,5 +569,10 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " start_capture: first_frame_number_ reset to -1");
     }
 
+    void PacketProcessorCore::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, PacketProcessorCore, "PacketProcessorCore");
 }
