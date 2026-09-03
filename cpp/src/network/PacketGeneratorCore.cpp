@@ -15,6 +15,7 @@ namespace FrameProcessor
     // Finds the bytes per pixel for specified data type
     size_t get_bytes_per_pixel(FrameProcessor::DataType data_type)
     {
+        // Map internal enum to actual byte size per pixel
         switch (data_type)
         {
             case FrameProcessor::DataType::raw_8bit:
@@ -86,7 +87,7 @@ namespace FrameProcessor
                 allocator);
         }
 
-        // Load the requested DataSource
+        // Load the requested DataSource implementation (generated/hdf5/etc.)
         data_source_ =
             FrameProcessor::DataSourceLoader<
                 FrameProcessor::DataSource>::load_class(
@@ -94,6 +95,7 @@ namespace FrameProcessor
                     decoder_,
                     data_source_config);
 
+        // data_source_ provides the frame data at runtime
         if (!data_source_)
         {
             throw std::runtime_error(
@@ -112,6 +114,7 @@ namespace FrameProcessor
         );
 
         // Searches for the clear-frames ring and creates it if not existing
+        // This ring holds pointers to free frame buffers provided by the SMB
         std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
@@ -134,7 +137,7 @@ namespace FrameProcessor
                 // Populate the ring with hugepages memory locations to the SMB
                 for (int element = 0; element < shared_buf_->get_num_buffers(); element++)
                 {
-
+                    // Push each hugepage buffer address into the ring for reuse
                     rte_ring_enqueue(clear_frames_ring_, shared_buf_->get_buffer_address(element));
                 }
             }
@@ -169,20 +172,21 @@ namespace FrameProcessor
         const FrameProcessor::DataType frame_data_type = decoder_->get_frame_bit_depth();
         const size_t bytes_per_pixel = get_bytes_per_pixel(frame_data_type);
 
-        // Initialise pointer to raw and prepared frame data
+        // Initialise pointers to buffers fetched from the clear-frames ring
         void *raw_frame = nullptr;
         while (raw_frame == nullptr)
         {
             rte_ring_dequeue(clear_frames_ring_, &raw_frame);
         };
 
+        // prepared_frame is a separate buffer where decoder writes packetised data
         void *prepared_frame = nullptr;
         while (prepared_frame == nullptr)
         {
             rte_ring_dequeue(clear_frames_ring_, &prepared_frame);
         };
 
-        // Calculate pixels and bytes in each packet
+        // Calculate pixels and bytes contained in each network packet
         uint32_t pixels_per_packet = frame_pixels / packets_per_frame;
         size_t bytes_per_packet  = static_cast<size_t>(pixels_per_packet) * bytes_per_pixel;
 
@@ -244,7 +248,7 @@ namespace FrameProcessor
                     mbuf->pkt_len  = total_packet_length;
                     mbuf->data_len = total_packet_length;
 
-                    // Set pointers to each protocol header
+                    // Map packet buffer to protocol headers and payload area
                     struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
                     struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)((char *)eth_hdr + l2_len);
                     struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)((char *)ip_hdr + l3_len);
@@ -279,10 +283,10 @@ namespace FrameProcessor
                     ip_hdr->version = 4;
                     ip_hdr->version_ihl = RTE_IPV4_VHL_DEF;
 
-                    // Copy the packet data into the packet
+                    // Copy the prepared frame slice for this packet into the packet payload
                     rte_memcpy(packet_data, static_cast<uint8_t*>(prepared_frame) + (static_cast<size_t>(packet) * bytes_per_packet), bytes_per_packet);
 
-                    // Enqueues the completed packet onto the transmit ring
+                    // Enqueue the mbuf onto the device-specific TX ring, busy-wait until accepted
                     while (
                         rte_ring_enqueue(tx_dev.ring, mbuf) != 0
                     )

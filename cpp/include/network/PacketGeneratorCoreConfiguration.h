@@ -21,8 +21,6 @@ namespace FrameProcessor
         const std::string default_h5_dataset_name = "/dummy";
         const std::string default_round_robin_mode = "frame";
 
-        const bool default_reorder_frame = false;
-
         const uint16_t default_packet_drop = 0;
     }
 
@@ -45,7 +43,6 @@ namespace FrameProcessor
                 file_path(Defaults::default_file_path),
                 dataset_name(Defaults::default_h5_dataset_name),
                 round_robin_mode(Defaults::default_round_robin_mode),
-                reorder_frame(Defaults::default_reorder_frame),
 
                 packet_drop(Defaults::default_packet_drop)
             {
@@ -97,7 +94,6 @@ namespace FrameProcessor
                 bind_param<std::string>(file_path, "file_path");
                 bind_param<std::string>(dataset_name, "dataset_name");
                 bind_param<std::string>(round_robin_mode, "round_robin_mode");
-                bind_param<bool>(reorder_frame, "reorder_frame");
 
                 bind_param<uint16_t>(packet_drop, "packet_drop");
             }
@@ -125,7 +121,6 @@ namespace FrameProcessor
             std::string file_path;
             std::string dataset_name;
             std::string round_robin_mode;
-            bool reorder_frame;
 
             uint16_t packet_drop;
 

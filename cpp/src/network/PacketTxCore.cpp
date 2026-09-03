@@ -31,6 +31,7 @@ namespace FrameProcessor
             << " | num_downsteam_cores: " << config_.num_downstream_cores
         );
 
+        // Create or lookup rings used to recycle frame buffers between cores
         std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_);
         clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
         if (clear_frames_ring_ == NULL)
@@ -42,12 +43,12 @@ namespace FrameProcessor
             clear_frames_ring_ = rte_ring_create(
                 clear_frames_ring_name.c_str(), clear_frames_ring_size, socket_id_, 0
             );
-            {
-                LOG4CXX_ERROR(logger_, "Error creating frame processed ring " << clear_frames_ring_name
+                {
+                    // Log failure to create the ring (should be fatal)
+                    LOG4CXX_ERROR(logger_, "Error creating frame processed ring " << clear_frames_ring_name
                     << " : " << rte_strerror(rte_errno)
                 );
-                // TODO - this is fatal and should raise an exception
-            }
+                }
         }
         else
         {
@@ -92,10 +93,12 @@ namespace FrameProcessor
                     continue;
                 }
 
+                // Send the packets
                 uint16_t sent = rte_eth_tx_burst(tx_dev.port_id, 0,&mbuf, 1);
 
                 if (sent == 0)
                 {
+                    // Transmission failed for this packet
                     LOG4CXX_ERROR(
                         logger_,
                         "TX FAILED port "

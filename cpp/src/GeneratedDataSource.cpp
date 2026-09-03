@@ -15,6 +15,7 @@ GeneratedDataSource::GeneratedDataSource(
         decoder,
         decoder->get_frame_bit_depth())
 {
+    // Parse and validate the pattern name from the JSON config
     if (!data_source_config.HasMember("pattern"))
     {
         throw std::runtime_error(
@@ -74,6 +75,7 @@ GeneratedDataSource::GeneratedDataSource(
 
 void GeneratedDataSource::getData(void* destination)
 {
+    // Compute how many pixels are in each packet
     const uint32_t pixels_per_packet = frame_pixels_ / packets_per_frame_;
     uint64_t value = 0;
 
@@ -83,6 +85,7 @@ void GeneratedDataSource::getData(void* destination)
         {
             case Pattern::Incrementing:
             {
+                // Produce an oscillating ramp that wraps at max_value_
                 if ((pixel/max_value_) % 2 == 0)
                 {
                     value = pixel % max_value_;
@@ -96,12 +99,14 @@ void GeneratedDataSource::getData(void* destination)
 
             case Pattern::PacketNum:
             {
+                // Use the packet index as the pixel value (per-packet region)
                 value = pixel / pixels_per_packet;
                 break;
             }
 
             case Pattern::Fixed:
             {
+                // Fixed pattern returns a constant value for all pixels
                 value = 84;
                 break;
             }
