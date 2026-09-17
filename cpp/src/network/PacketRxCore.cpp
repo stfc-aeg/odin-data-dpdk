@@ -1114,5 +1114,10 @@ namespace FrameProcessor
         }
     }
 
+    void PacketRxCore::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, PacketRxCore, "PacketRxCore");
 }

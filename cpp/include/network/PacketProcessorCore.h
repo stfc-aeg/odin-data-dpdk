@@ -32,6 +32,7 @@ namespace FrameProcessor
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
         void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+        void requestConfiguration(OdinData::IpcMessage& reply);
         std::vector<std::pair<std::string, int>> requestCommands() override;
 
     private:

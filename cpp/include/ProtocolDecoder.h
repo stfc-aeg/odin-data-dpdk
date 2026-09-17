@@ -195,7 +195,6 @@ public:
         return get_super_frame_header_size() + (get_frame_header_size(mode) * frames_per_super_frame_);
     }
 
-
     // Abstract frame methods that must be implemented by application-specific decoders
     virtual const std::size_t get_frame_header_size(const std::string& mode = "") const = 0;
     virtual const std::size_t get_frame_data_size(const std::string& mode = "") const = 0;

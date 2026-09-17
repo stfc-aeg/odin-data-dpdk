@@ -36,7 +36,11 @@ namespace FrameProcessor
       const auto& mode_map = DummyDpdkDecoder::get_mode_string_map();
       if (mode_map.find(mode_str) != mode_map.end())
       {
+        auto mode_it = mode_map.find(mode_str);
+
+        decoder_.set_mode(mode_it->second);
         current_mode_ = mode_str;
+        LOG4CXX_INFO(logger_, "Decoder mode set to: " << mode_str);
       }
       else
       {
@@ -52,7 +56,7 @@ namespace FrameProcessor
 
   void DummyDpdkPlugin::requestConfiguration(OdinData::IpcMessage& reply)
   {
-    LOG4CXX_INFO(logger_, "Configuration requested for DummyDpdk plugin");
+    // LOG4CXX_INFO(logger_, "Configuration requested for DummyDpdk plugin");
 
     const char* config_params_json = config_.encode_params();
 
@@ -69,7 +73,7 @@ namespace FrameProcessor
 
   void DummyDpdkPlugin::status(OdinData::IpcMessage& status)
   {
-    LOG4CXX_INFO(logger_, "Status requested for DummyDpdk plugin");
+    // LOG4CXX_INFO(logger_, "Status requested for DummyDpdk plugin");
 
     status.set_param(get_name() + "/mode", current_mode_);
 
