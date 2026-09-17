@@ -68,10 +68,12 @@
                         "0000:2a:00.0",
                         "0000:2a:00.1"
                     ],
-                    "data_source": "generated",
-                    "pattern": "incrementing",
-                    "file_path": "/aeg_sw/work/users/mux12756/develop/projects/h5-files/16-bit-test-3_000000.h5",
-                    "dataset_name": "/dummy",
+                    "data_source_config": {
+                        "data_source": "generated",
+                        "pattern": "incrementing",
+                        "file_path": "/aeg_sw/work/users/mux12756/develop/projects/h5-files/16-bit-test-3_000000.h5",
+                        "dataset_name": "/dummy"
+                    },
                     "packet_drop": 0
                 },
                 "packet_tx": {

@@ -12,6 +12,8 @@
 
 namespace FrameProcessor
 {
+    static const unsigned int DEFAULT_RING_SIZE = 16384;
+
     // Finds the bytes per pixel for specified data type
     size_t get_bytes_per_pixel(FrameProcessor::DataType data_type)
     {
@@ -35,6 +37,24 @@ namespace FrameProcessor
         }
     }
 
+    RoundRobinMode parse_round_robin_mode(const std::string& mode)
+    {
+        if (mode == "packet")
+        {
+            return RoundRobinMode::Packet;
+        }
+        else if (mode == "frame")
+        {
+            return RoundRobinMode::Frame;
+        }
+        else
+        {
+            throw std::runtime_error(
+                "PacketGeneratorCore: invalid round_robin_mode '" + mode +
+                "' (expected 'frame' or 'packet')");
+        }
+    }
+
     PacketGeneratorCore::PacketGeneratorCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
     ) :
@@ -43,55 +63,28 @@ namespace FrameProcessor
         proc_idx_(fb_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         frame_callback_(dpdkWorkCoreReferences.frame_callback),
-        shared_buf_(dpdkWorkCoreReferences.shared_buf)
+        shared_buf_(dpdkWorkCoreReferences.shared_buf),
+        packet_tx_(false)
     {
 
         // Get the configuration container for this worker
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
+        round_robin_mode_ = parse_round_robin_mode(config_.round_robin_mode);
 
         // Load the relevant DataSource class
         const FrameProcessor::DataType data_type = decoder_->get_frame_bit_depth();
 
-        // Build the DataSource configuration
-        rapidjson::Document data_source_config;
-        data_source_config.SetObject();
+        const auto& data_source_config = config_.data_source_config();
 
-        auto& allocator = data_source_config.GetAllocator();
-
-        data_source_config.AddMember(
-            "data_source",
-            rapidjson::Value(config_.data_source.c_str(), allocator),
-            allocator);
-
-        if (!config_.pattern.empty())
+        if (!data_source_config.HasMember("data_source") || !data_source_config["data_source"].IsString())
         {
-            data_source_config.AddMember(
-                "pattern",
-                rapidjson::Value(config_.pattern.c_str(), allocator),
-                allocator);
+            throw std::runtime_error("PacketGeneratorCore: data_source_config missing required 'data_source' field");
         }
 
-        if (!config_.file_path.empty())
-        {
-            data_source_config.AddMember(
-                "file_path",
-                rapidjson::Value(config_.file_path.c_str(), allocator),
-                allocator);
-        }
-
-        if (!config_.dataset_name.empty())
-        {
-            data_source_config.AddMember(
-                "dataset_name",
-                rapidjson::Value(config_.dataset_name.c_str(), allocator),
-                allocator);
-        }
-
-        // Load the requested DataSource implementation (generated/hdf5/etc.)
         data_source_ =
-            FrameProcessor::DataSourceLoader<
-                FrameProcessor::DataSource>::load_class(
-                    config_.data_source,
+            FrameProcessor::DataSourceLoader
+                <FrameProcessor::DataSource>::load_class(
+                    data_source_config["data_source"].GetString(),
                     decoder_,
                     data_source_config);
 
@@ -99,7 +92,7 @@ namespace FrameProcessor
         if (!data_source_)
         {
             throw std::runtime_error(
-                "Failed to load DataSource: " + config_.data_source);
+                "Failed to load DataSource: " + std::string(data_source_config["data_source"].GetString()));
         }
 
         // Class loading - reference it as base class
@@ -196,11 +189,25 @@ namespace FrameProcessor
         int len_4 = sizeof(struct rte_udp_hdr);
         uint64_t data_len = bytes_per_packet;
 
+        uint64_t total_len_check = static_cast<uint64_t>(l2_len) + l3_len + len_4 + data_len
+            + decoder_->get_packet_header_size();
+
+        if (total_len_check > UINT16_MAX)
+        {
+            throw std::runtime_error(
+                "Calculated packet length " + std::to_string(total_len_check) +
+                " exceeds maximum packet size");
+        }
+
         // Allocate memory for frame data based on above calculations
-        uint16_t total_packet_length = l2_len + l3_len + len_4 + data_len + decoder_->get_packet_header_size(); // xiDyn_HDR_SIZE;
+        uint16_t total_packet_length = static_cast<uint16_t>(total_len_check);
         uint32_t temp_ip_buf;
         uint64_t frame_number = 0;
         uint32_t device_index;
+
+        const uint32_t num_tx_devices = static_cast<uint32_t>(tx_devices_.size());
+
+        void *frame_data;
 
         // While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
@@ -216,7 +223,7 @@ namespace FrameProcessor
             data_source_->getData(raw_frame);
 
             // Encode the data through the decoder method
-            decoder_->prepare_frame(raw_frame, prepared_frame);
+            frame_data = decoder_->prepare_frame(raw_frame, prepared_frame);
 
             for (uint32_t packet = 0; packet < packets_per_frame; packet++)
             {
@@ -225,11 +232,11 @@ namespace FrameProcessor
                 if (!drop_packet)
                 {                       
                     // Decide which ring to use depending on round robin every frame or packet
-                    if (config_.round_robin_mode == "packet")
+                    if (round_robin_mode_ == RoundRobinMode::Packet)
                     {
-                        device_index = packet % tx_devices_.size(); // split frames over rings
+                        device_index = packet % num_tx_devices; // split frames over rings
                     } else {
-                        device_index = frame_number % tx_devices_.size(); // each frame on a different ring
+                        device_index = frame_number % num_tx_devices; // each frame on a different ring
                     }
                     
                     // Select relevant device and allocate memory for packet
@@ -274,17 +281,15 @@ namespace FrameProcessor
                     udp_hdr->dgram_len = rte_bswap16(data_len + 8 + decoder_->get_packet_header_size());
 
                     ip_hdr->fragment_offset = 0;
-                    ip_hdr->ihl = 5;
                     ip_hdr->next_proto_id = 17;
                     ip_hdr->packet_id = (uint16_t)(rand() % (65535 + 1)); // Generate random packet ID
                     ip_hdr->time_to_live = 128;
                     ip_hdr->total_length = rte_cpu_to_be_16(total_packet_length - l2_len);
                     ip_hdr->type_of_service = 0;
-                    ip_hdr->version = 4;
                     ip_hdr->version_ihl = RTE_IPV4_VHL_DEF;
 
                     // Copy the prepared frame slice for this packet into the packet payload
-                    rte_memcpy(packet_data, static_cast<uint8_t*>(prepared_frame) + (static_cast<size_t>(packet) * bytes_per_packet), bytes_per_packet);
+                    rte_memcpy(packet_data, static_cast<uint8_t*>(frame_data) + (static_cast<size_t>(packet) * bytes_per_packet), bytes_per_packet);
 
                     // Enqueue the mbuf onto the device-specific TX ring, busy-wait until accepted
                     while (
@@ -324,15 +329,21 @@ namespace FrameProcessor
 
         std::string status_path = path + "/PacketGeneratorCore_" + std::to_string(proc_idx_) + "/";
 
-        status.set_param(status_path + "data_source", config_.data_source);
+        const auto& data_source_config = config_.data_source_config();
 
-        if (config_.data_source == "generated")
+        if (data_source_config.HasMember("data_source") && data_source_config["data_source"].IsString())
         {
-            status.set_param(status_path + "pattern", config_.pattern);
-        }
-        else if (config_.data_source == "hdf5")
-        {
-            status.set_param(status_path + "file_path", config_.file_path);
+            std::string data_source = data_source_config["data_source"].GetString();
+            status.set_param(status_path + "data_source", data_source);
+
+            if (data_source == "generated" && data_source_config.HasMember("pattern"))
+            {
+                status.set_param(status_path + "pattern", std::string(data_source_config["pattern"].GetString()));
+            }
+            else if (data_source == "hdf5" && data_source_config.HasMember("file_path"))
+            {
+                status.set_param(status_path + "file_path", std::string(data_source_config["file_path"].GetString()));
+            }
         }
     }
 
@@ -357,7 +368,7 @@ namespace FrameProcessor
 
         if (upstream_ring_ == NULL)
         {
-            uint32_t ring_size = 16384;
+            uint32_t ring_size = DEFAULT_RING_SIZE;
 
             upstream_ring_ = rte_ring_create(ring_name.c_str(), ring_size, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ);
 
@@ -378,19 +389,27 @@ namespace FrameProcessor
         // Update the config based from the passed IPCmessage
 
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
-        LOG4CXX_INFO(logger_, config.get_param("dataset_name", false));
-        // LOG4CXX_INFO(logger_, "Config: " << config.encode());
-        // LOG4CXX_INFO(logger_, "Param 2: " << config.get_param("params/dataset_name", false));
+
         if (config.has_param("dataset_name"))
         {
-            config_.dataset_name = config.get_param("dataset_name", false);
-            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting config_.dataset_name to: " <<  config_.dataset_name);
-            // config_.data_source = config.get_param("dat", false);
-            // LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Setting config_.data_source to: " <<  config_.data_source);
-        }        
+            std::string dataset_name = config.get_param<std::string>("dataset_name");
 
-        // Look in PacketRxCore.cpp for example
+            auto& data_source_config = config_.data_source_config();
+            auto& allocator = data_source_config.GetAllocator();
 
+            if (data_source_config.HasMember("dataset_name"))
+            {
+                data_source_config["dataset_name"].SetString(dataset_name.c_str(), allocator);
+            }
+            else
+            {
+                data_source_config.AddMember(
+                    "dataset_name", rapidjson::Value(dataset_name.c_str(), allocator), allocator);
+            }
+
+            LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                << " Setting dataset_name to: " << dataset_name);
+        }
     }
 
     std::vector<std::pair<std::string, int>> PacketGeneratorCore::requestCommands()
@@ -412,10 +431,10 @@ namespace FrameProcessor
         {
             stop_tx();
         }
-        // else
-        // {
-        //     reply.set_nack("PacketTxCore: unknown command: " + command);
-        // }
+        else
+        {
+            reply.set_nack("PacketTxCore: unknown command: " + command);
+        }
     }
 
     void PacketGeneratorCore::start_tx(void)
@@ -468,7 +487,7 @@ namespace FrameProcessor
 
         if (!ring)
         {
-            ring = rte_ring_create(ring_name.c_str(), 16384, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ);
+            ring = rte_ring_create(ring_name.c_str(), DEFAULT_RING_SIZE, socket_id_, RING_F_SP_ENQ | RING_F_SC_DEQ);
         }
 
 
@@ -496,15 +515,20 @@ namespace FrameProcessor
     {
         LOG4CXX_DEBUG(logger_, "Configuration requested for PacketGeneratorCore");
         std::string plugin = "XIDyn";
-        
-        // if (decoder_) {
-        reply.set_param(plugin + "/data_source", config_.data_source);
-        reply.set_param(plugin + "/pattern", config_.pattern);
-        reply.set_param(plugin + "/file_path", config_.file_path);
-        reply.set_param(plugin + "/dataset_name", config_.dataset_name);
-        reply.set_param(plugin + "/packet_drop", 
-                        static_cast<int>(config_.packet_drop));
-        // }
+
+        const auto& data_source_config = config_.data_source_config();
+
+        for (auto it = data_source_config.MemberBegin(); it != data_source_config.MemberEnd(); ++it)
+        {
+            if (it->value.IsString())
+            {
+                reply.set_param(
+                    plugin + "/data_source_config/" + it->name.GetString(),
+                    std::string(it->value.GetString()));
+            }
+        }
+
+        reply.set_param(plugin + "/packet_drop", static_cast<int>(config_.packet_drop));
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketGeneratorCore, "PacketGeneratorCore");

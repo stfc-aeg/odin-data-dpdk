@@ -6,8 +6,11 @@
 #include <string>
 #include <vector>
 #include <boost/shared_ptr.hpp>
-#include <iostream>
 #include <rapidjson/document.h>
+#include <log4cxx/logger.h>
+using namespace log4cxx;
+using namespace log4cxx::helpers;
+#include <DebugLevelLogger.h>
 
 #include "DataSource.h"
 #include "PacketProtocolDecoder.h"
@@ -19,9 +22,6 @@
 namespace FrameProcessor
 {
 
-/**
- * Function template to instantiate a DataSource class.
- */
 template <typename BaseClass, typename SubClass>
 boost::shared_ptr<BaseClass> data_source_maker(
     PacketProtocolDecoder* decoder,
@@ -34,9 +34,6 @@ boost::shared_ptr<BaseClass> data_source_maker(
     return ptr;
 }
 
-/**
- * C++ dynamic DataSource class loader.
- */
 template <typename BaseClass>
 class DataSourceLoader
 {
@@ -51,9 +48,6 @@ public:
         factory_map()[name] = value;
     }
 
-    /**
-     * Load a DataSource class given the class name and configuration.
-     */
     static boost::shared_ptr<BaseClass> load_class(
         const std::string& name,
         PacketProtocolDecoder* decoder,
@@ -71,17 +65,13 @@ public:
             }
             else
             {
-                std::cerr << "DataSource class not found: "
-                          << name << std::endl;
+                LOG4CXX_ERROR(logger(), "DataSource class not found: " << name);
             }
         }
         catch (const std::exception& ex)
         {
-            std::cerr << "Error while loading DataSource class: "
-                      << name
-                      << ", error message: "
-                      << ex.what()
-                      << std::endl;
+            LOG4CXX_ERROR(logger(), "Error while loading DataSource class: " << name
+                << ", error message: " << ex.what());
         }
 
         return data_source;
@@ -110,6 +100,14 @@ public:
         }
 
         return class_names;
+    }
+
+private:
+
+    static LoggerPtr& logger()
+    {
+        static LoggerPtr logger_ = Logger::getLogger("FP.DataSourceLoader");
+        return logger_;
     }
 };
 

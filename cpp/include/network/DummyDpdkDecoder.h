@@ -283,8 +283,6 @@ public:
             return prepare_16bit_test_mode(raw_frame, prepared_frame);
         }
 
-        rte_memcpy(prepared_frame, raw_frame, get_frame_data_size());
-
         return prepared_frame;
     }
 

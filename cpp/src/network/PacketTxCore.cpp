@@ -21,7 +21,7 @@ namespace FrameProcessor
     {
 
         // Get the configuration container for this worker
-        config_.resolve(dpdkWorkCoreReferences.core_config);
+        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
         LOG4CXX_INFO(logger_, "FP.PacketTxCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
@@ -43,24 +43,28 @@ namespace FrameProcessor
             clear_frames_ring_ = rte_ring_create(
                 clear_frames_ring_name.c_str(), clear_frames_ring_size, socket_id_, 0
             );
-                {
-                    // Log failure to create the ring (should be fatal)
-                    LOG4CXX_ERROR(logger_, "Error creating frame processed ring " << clear_frames_ring_name
+
+            if (clear_frames_ring_ == NULL)
+            {
+                // Log failure to create the ring (should be fatal)
+                LOG4CXX_ERROR(logger_, "Error creating frame processed ring " << clear_frames_ring_name
                     << " : " << rte_strerror(rte_errno)
                 );
-                }
-        }
-        else
-        {
+            }
+            else
             {
-                // Populate the ring with hugepages memory locations to the SMB
-
+                // Populate the newly created ring with hugepages memory locations from the SMB
                 for (int element = 0; element < shared_buf_->get_num_buffers(); element++)
                 {
-
                     rte_ring_enqueue(clear_frames_ring_, shared_buf_->get_buffer_address(element));
                 }
             }
+        }
+        else
+        {
+            LOG4CXX_DEBUG_LEVEL(2, logger_, "Frame processed ring name "
+                << clear_frames_ring_name << " has already been created"
+            );
         }
 
     }
@@ -237,6 +241,18 @@ namespace FrameProcessor
     {
         return;
         // LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
+    void PacketTxCore::execute(const std::string& command, OdinData::IpcMessage& reply)
+    {
+        {
+            reply.set_nack("PacketTxCore: unknown command: " + command);
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> PacketTxCore::requestCommands()
+    {
+        return {};
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketTxCore, "PacketTxCore");

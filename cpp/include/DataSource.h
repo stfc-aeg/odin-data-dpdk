@@ -2,6 +2,11 @@
 #define INCLUDE_DATASOURCE_H_
 
 #include <string>
+#include <log4cxx/logger.h>
+using namespace log4cxx;
+using namespace log4cxx::helpers;
+#include <DebugLevelLogger.h>
+
 #include "DataBlockFrame.h"
 #include "PacketProtocolDecoder.h"
 
@@ -19,6 +24,8 @@ public:
     virtual void getData(void* destination) = 0;
 
 protected:
+
+    LoggerPtr logger_;
 
     PacketProtocolDecoder* decoder_;
     FrameProcessor::DataType data_type_;

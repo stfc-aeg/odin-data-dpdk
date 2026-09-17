@@ -37,16 +37,11 @@ namespace FrameProcessor
                 destination_ip_address(Defaults::default_destination_ip_address),
                 destination_mac_address(Defaults::default_destination_mac_address),
                 device_addresses_(Defaults::default_device_addresses),
-                
-                data_source(Defaults::default_data_source),
-                pattern(Defaults:: default_pattern),
-                file_path(Defaults::default_file_path),
-                dataset_name(Defaults::default_h5_dataset_name),
                 round_robin_mode(Defaults::default_round_robin_mode),
-
                 packet_drop(Defaults::default_packet_drop)
             {
                 bind_params();
+                data_source_config_json_.SetObject();
             }
 
             void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "packet_generator")
@@ -58,16 +53,24 @@ namespace FrameProcessor
                 {
                     update(*value_ptr);
 
-                    // Resolve the dpdk_device subsection if present
                     if (value_ptr->HasMember("dpdk_device"))
                     {
                         dpdk_device_.update((*value_ptr)["dpdk_device"]);
                     }
-                }        
+
+                    if (value_ptr->HasMember("data_source_config"))
+                    {
+                        data_source_config_json_.CopyFrom(
+                            (*value_ptr)["data_source_config"], data_source_config_json_.GetAllocator());
+                    }
+                }
             }
 
             const DpdkDeviceConfiguration& dpdk_device(void) const { return dpdk_device_; }
             DpdkDeviceConfiguration& dpdk_device(void) { return dpdk_device_; }
+
+            const rapidjson::Document& data_source_config(void) const { return data_source_config_json_; }
+            rapidjson::Document& data_source_config(void) { return data_source_config_json_; }
 
         private:
 
@@ -80,7 +83,6 @@ namespace FrameProcessor
                 bind_param<unsigned int>(num_cores, "num_cores");
                 bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
 
-
                 bind_param<uint16_t>(destination_port, "destination_port");
                 bind_param<uint16_t>(source_port, "source_port");
                 bind_vector_param<std::string>(source_ip_address, "source_ip_address");
@@ -89,13 +91,9 @@ namespace FrameProcessor
                 bind_vector_param<std::string>(destination_mac_address, "destination_mac_address");
                 bind_vector_param<std::string>(device_addresses_, "device_addresses");
 
-                bind_param<std::string>(data_source, "data_source");
-                bind_param<std::string>(pattern, "pattern");
-                bind_param<std::string>(file_path, "file_path");
-                bind_param<std::string>(dataset_name, "dataset_name");
                 bind_param<std::string>(round_robin_mode, "round_robin_mode");
-
                 bind_param<uint16_t>(packet_drop, "packet_drop");
+                // data_source / pattern / file_path / dataset_name: no longer bound here
             }
 
             std::string core_name;
@@ -105,7 +103,6 @@ namespace FrameProcessor
             unsigned int num_cores;
             unsigned int num_downstream_cores;
 
-            //tx_worker_core
             uint16_t destination_port;
             uint16_t source_port;
             std::vector<std::string> source_ip_address;
@@ -115,13 +112,9 @@ namespace FrameProcessor
             std::vector<std::string> device_addresses_;
             DpdkDeviceConfiguration dpdk_device_;
 
-            //packet_gen_core
-            std::string data_source;
-            std::string pattern;
-            std::string file_path;
-            std::string dataset_name;
-            std::string round_robin_mode;
+            rapidjson::Document data_source_config_json_;
 
+            std::string round_robin_mode;
             uint16_t packet_drop;
 
             friend class PacketGeneratorCore;

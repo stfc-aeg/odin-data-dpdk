@@ -21,6 +21,12 @@ namespace FrameProcessor
 {
     class DataSource;
 
+    enum class RoundRobinMode
+    {
+        Frame,
+        Packet
+    };
+
     class PacketGeneratorCore : public DpdkWorkerCore
     {
     public:
@@ -58,6 +64,7 @@ namespace FrameProcessor
         LoggerPtr logger_;
         FrameCallback& frame_callback_;
 
+        RoundRobinMode round_robin_mode_;
         std::vector<TxDeviceContext> tx_devices_;
 
         struct rte_ring* frame_ready_ring_;
@@ -68,14 +75,8 @@ namespace FrameProcessor
         bool packet_tx_;
 
         DpdkSharedBuffer* shared_buf_;
-
-        std::string instance_pcie_device_;  //!< PCIe address for this instance's NIC
-        std::string instance_device_ip_;    //!< IP address for this instance's NIC
-
         boost::shared_ptr<DataSource> data_source_;
     };
 }
-
-
 
 #endif // INCLUDE_PacketGeneratorCore_H_
