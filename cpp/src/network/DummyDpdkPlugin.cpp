@@ -73,17 +73,102 @@ namespace FrameProcessor
 
   void DummyDpdkPlugin::status(OdinData::IpcMessage& status)
   {
-    // LOG4CXX_INFO(logger_, "Status requested for DummyDpdk plugin");
+    const std::string plugin_name = get_name();
 
-    status.set_param(get_name() + "/mode", current_mode_);
-
-    // Add available modes as an array
+    // Report all available decoder modes.
     for (const auto& mode_pair : DummyDpdkDecoder::get_mode_string_map())
     {
-      status.set_param(get_name() + "/available_modes[]", mode_pair.first);
+      status.set_param(plugin_name + "/available_modes[]", mode_pair.first);
     }
 
-    DpdkFrameProcessorPlugin::status(status);
+    rapidjson::Document config_doc;
+    config_doc.Parse(config_.encode_params());
+
+    if (config_doc.HasParseError() ||
+        !config_doc.HasMember("worker_cores") ||
+        !config_doc["worker_cores"].IsObject())
+    {
+      return;
+    }
+
+    const auto& mode_map = DummyDpdkDecoder::get_mode_string_map();
+
+    // Add worker cores to their configured streams.
+    for (auto& core_member : config_doc["worker_cores"].GetObject())
+    {
+      const std::string core_name = core_member.name.GetString();
+      const rapidjson::Value& core_cfg = core_member.value;
+
+      if (core_cfg.HasMember("stream") && core_cfg["stream"].IsString())
+      {
+        const std::string prefix =
+          plugin_name + "/streams/" +
+          core_cfg["stream"].GetString() +
+          "/worker_cores/" + core_name;
+
+        status.update(core_cfg, prefix);
+      }
+    }
+
+    std::map<std::string, std::string> stream_modes;
+
+    // Collect the configured mode for each stream.
+    for (auto& core_member : config_doc["worker_cores"].GetObject())
+    {
+      const rapidjson::Value& core_cfg = core_member.value;
+
+      if (core_cfg.HasMember("stream") &&
+          core_cfg.HasMember("mode") &&
+          core_cfg["stream"].IsString() &&
+          core_cfg["mode"].IsString())
+      {
+        stream_modes[core_cfg["stream"].GetString()] =
+          core_cfg["mode"].GetString();
+      }
+    }
+
+    // Add mode information for each configured stream.
+    for (const auto& stream_mode : stream_modes)
+    {
+      const std::string& stream = stream_mode.first;
+      const std::string& mode_str = stream_mode.second;
+      const std::string prefix = plugin_name + "/streams/" + stream;
+
+      status.set_param(prefix + "/mode", mode_str);
+
+      auto mode_it = mode_map.find(mode_str);
+
+      if (mode_it == mode_map.end())
+      {
+        continue;
+      }
+
+      DummyDpdkDecoder mode_decoder(mode_it->second);
+      const DummyModeConfiguration& cfg = mode_decoder.resolve_mode();
+
+      // Add decoder-specific status. This will be displayed under each active mode
+      status.set_param(prefix + "/mode_info/packets_per_frame", static_cast<int>(cfg.packets_per_frame));
+      status.set_param(prefix + "/mode_info/payload_size", static_cast<int>(cfg.payload_size));
+      status.set_param(prefix + "/mode_info/frame_outer_chunk_size", static_cast<int>(cfg.frame_outer_chunk_size));
+      status.set_param(prefix + "/mode_info/frame_dimensions[]", static_cast<int>(cfg.x_resolution));
+      status.set_param(prefix + "/mode_info/frame_dimensions[]", static_cast<int>(cfg.y_resolution));
+      status.set_param(prefix + "/mode_info/needs_reordering", cfg.needs_reordering);
+    }
+
+    // Add worker cores shared between all streams.
+    for (auto& core_member : config_doc["worker_cores"].GetObject())
+    {
+      const std::string core_name = core_member.name.GetString();
+      const rapidjson::Value& core_cfg = core_member.value;
+
+      if (!core_cfg.HasMember("stream") || !core_cfg["stream"].IsString())
+      {
+        const std::string prefix =
+          plugin_name + "/streams/shared_worker_cores/" + core_name;
+
+        status.update(core_cfg, prefix);
+      }
+    }
   }
 
   bool DummyDpdkPlugin::reset_statistics(void)
@@ -100,7 +185,6 @@ namespace FrameProcessor
   {
     this->push(frame);
   }
-
 
 } /* namespace FrameProcessor */
 
