@@ -28,10 +28,12 @@ namespace FrameProcessor
     {
     public:
 
-        DpdkWorkerCore(int socket_id=SOCKET_ID_ANY) :
+        DpdkWorkerCore(int socket_id=SOCKET_ID_ANY, const std::string& stream_id = "", const std::string& config_key = "") :
             lcore_id_(-1),
             socket_id_(socket_id),
-            run_lcore_(false)
+            run_lcore_(false),
+            stream_id_(stream_id),
+            config_key_(config_key)
         {
 
         };
@@ -57,11 +59,15 @@ namespace FrameProcessor
 
         inline unsigned int lcore_id(void) const { return lcore_id_; }
         inline unsigned int socket_id(void) const { return socket_id_; }
+        inline const std::string& stream_id(void) const { return stream_id_; }
+        inline const std::string& config_key(void) const { return config_key_; }
 
     protected:
         unsigned int lcore_id_;
         unsigned int socket_id_;
         bool run_lcore_;
+        std::string stream_id_;
+        std::string config_key_;
     };
 }
 

@@ -648,10 +648,28 @@ namespace FrameProcessor
         std::string status_path = plugin_name_ + "/core_manager/";
         status.set_param(status_path + "shared_buffer_size", core_config_.shared_buffer_size_);
 
-        // Loop through all running cores to and update their current status
-        for (auto& core: running_cores_)
+        for (auto& core : running_cores_)
         {
-            core->status(status, plugin_name_);
+            const std::string& stream_id = core->stream_id();
+
+            std::string core_status_path;
+
+        if (!stream_id.empty())
+        {
+            core_status_path =
+                plugin_name_ + "/streams/" +
+                stream_id +
+                "/worker_cores/" +
+                core->config_key();
+        }
+        else
+        {
+            core_status_path =
+                plugin_name_ + "/streams/shared_worker_cores/" +
+                core->config_key();
+        }
+
+        core->status(status, core_status_path);
         }
     }
 

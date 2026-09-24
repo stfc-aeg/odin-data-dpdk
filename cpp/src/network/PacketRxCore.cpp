@@ -21,7 +21,7 @@ namespace FrameProcessor
     PacketRxCore::PacketRxCore(
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
-        DpdkWorkerCore(socket_id),
+        DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
         proc_idx_(proc_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         logger_(Logger::getLogger("FP.PacketRxCore")),
@@ -40,11 +40,17 @@ namespace FrameProcessor
         max_pkts_per_burst_(0),
         estimated_pps_(0),
         max_estimated_pps_(0),
+        min_burst_us_(0),
+        packets_per_second_(0),
+        busy_percentage_(0.0),
+        last_frame_number_(0),
+        core_status_("constructing"),
         latch_pending_(true)
     {
 
         config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
+        core_status_ = "ready";
         LOG4CXX_INFO(logger_, "FP.PacketRxCore " << proc_idx_ << " Created with config:"
             << " | core_name: " << config_.core_name
             << " | num_cores: " << config_.num_cores
@@ -285,6 +291,7 @@ namespace FrameProcessor
     {
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        core_status_ = "starting";
 
         LOG4CXX_INFO(logger_, "PacketRxCore " << lcore_id_ << " starting up");
 
@@ -304,6 +311,8 @@ namespace FrameProcessor
 
         if (!device_configured_ || !device_) {
             LOG4CXX_ERROR(logger_, "No device configured. Stopping RxCore.");
+            core_status_ = "error";
+            run_lcore_ = false;
             return false;
         }
 
@@ -353,7 +362,10 @@ namespace FrameProcessor
         uint64_t pkts_this_second = 0;
         uint64_t cycles_this_second = 0;
         uint64_t max_burst_cycles_this_second = 0;
+        uint64_t min_burst_cycles_this_second = UINT64_MAX;
         uint16_t max_pkts_this_second = 0;
+
+        core_status_ = "running";
 
         while (likely(run_lcore_))
         {
@@ -482,6 +494,8 @@ namespace FrameProcessor
                 cycles_this_second += burst_cycles;
                 if (burst_cycles > max_burst_cycles_this_second)
                     max_burst_cycles_this_second = burst_cycles;
+                if (burst_cycles < min_burst_cycles_this_second)
+                    min_burst_cycles_this_second = burst_cycles;
                 if (num_rx_pkts > max_pkts_this_second)
                     max_pkts_this_second = num_rx_pkts;
             }
@@ -489,18 +503,44 @@ namespace FrameProcessor
             uint64_t timing_now = rte_get_tsc_cycles();
             if (unlikely((timing_now - timing_last) >= cycles_per_sec))
             {
+
+                uint64_t elapsed_cycles = timing_now - timing_last;
+
+                // Actual observed packet throughput over the measurement window.
+                packets_per_second_ = elapsed_cycles > 0
+                    ? (pkts_this_second * cycles_per_sec) / elapsed_cycles
+                    : 0;
+
+                // Percentage of available core time spent processing non-empty RX bursts.
+                busy_percentage_ = elapsed_cycles > 0
+                    ? (static_cast<double>(cycles_this_second) * 100.0) /
+                    static_cast<double>(elapsed_cycles)
+                    : 0.0;
+
                 if (bursts_this_second > 0)
                 {
-                    mean_burst_us_ = (cycles_this_second * 1000000) / (bursts_this_second * cycles_per_sec);
-                    max_burst_us_ = (max_burst_cycles_this_second * 1000000) / cycles_per_sec;
-                    mean_pkts_per_burst_ = pkts_this_second / bursts_this_second;
+                    mean_burst_us_ =
+                        (static_cast<double>(cycles_this_second) * 1000000.0) /
+                        (static_cast<double>(bursts_this_second) * cycles_per_sec);
+
+                    min_burst_us_ =
+                        (static_cast<double>(min_burst_cycles_this_second) * 1000000.0) /
+                        static_cast<double>(cycles_per_sec);
+
+                    max_burst_us_ =
+                        (static_cast<double>(max_burst_cycles_this_second) * 1000000.0) /
+                        static_cast<double>(cycles_per_sec);
+                    mean_pkts_per_burst_ =
+                        static_cast<double>(pkts_this_second) /
+                        static_cast<double>(bursts_this_second);
                     max_pkts_per_burst_ = max_pkts_this_second;
                     // Sustained throughput capacity this second, derived from mean burst
                     // processing time rather than the fastest burst, so this reflects
                     // realistic steady-state performance rather than a best-case ceiling.
-                    estimated_pps_ = mean_burst_us_ > 0
-                        ? (mean_pkts_per_burst_ * 1000000) / mean_burst_us_
-                        : 0;
+                    estimated_pps_ =
+                        cycles_this_second > 0
+                            ? (pkts_this_second * cycles_per_sec) / cycles_this_second
+                            : 0;
 
                     if (max_burst_us_ > max_burst_us_all_time_)
                         max_burst_us_all_time_ = max_burst_us_;
@@ -511,6 +551,7 @@ namespace FrameProcessor
                 bursts_this_second = 0;
                 pkts_this_second = 0;
                 cycles_this_second = 0;
+                min_burst_cycles_this_second = UINT64_MAX;
                 max_burst_cycles_this_second = 0;
                 max_pkts_this_second = 0;
                 timing_last = timing_now;
@@ -554,6 +595,7 @@ namespace FrameProcessor
             }
         }
 
+        core_status_ = "stopped";
         return true;
     }
 
@@ -562,10 +604,14 @@ namespace FrameProcessor
         if (run_lcore_)
         {
             LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+            core_status_ = "stopping";
             run_lcore_ = false;
         }
         else
         {
+            if (core_status_ != "error")
+                core_status_ = "stopped";
+
             LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
         }
     }
@@ -721,6 +767,7 @@ namespace FrameProcessor
 
         uint64_t packet_number = decoder_->get_packet_number(pkt_header);
         uint64_t frame_number  = decoder_->get_frame_number(pkt_header);
+        last_frame_number_ = frame_number;
 
         // Per-stream frame latch: proc_idx_==0 leads; followers adopt via the shared atomic.
         // The shared latch is stream-agnostic because PacketRxCore is shared across streams
@@ -873,16 +920,21 @@ namespace FrameProcessor
 
         std::string status_path = path + "/packetrxcore_" + std::to_string(port_id_) + "/";
 
-        status.set_param(status_path + "total_packets", total_packets_);
-        status.set_param(status_path + "dropped_packets", dropped_packets_);
-        status.set_param(status_path + "captured_packets", captured_packets_);
+        // Generic worker core status
+        status.set_param(status_path + "status", core_status_);
+        status.set_param(status_path + "packets_received", total_packets_);
+        status.set_param(status_path + "packets_processed", captured_packets_);
+        status.set_param(status_path + "packets_dropped", dropped_packets_);
+        status.set_param(status_path + "packets_per_second", packets_per_second_);
+        status.set_param(status_path + "processing_time/average_us", mean_burst_us_);
+        status.set_param(status_path + "processing_time/min_us", min_burst_us_);
+        status.set_param(status_path + "processing_time/max_us", max_burst_us_);
+        status.set_param(status_path + "busy_percentage", busy_percentage_);
+        status.set_param(status_path + "last_frame_number", last_frame_number_);
+
+        // PacketRxCore-specific status
         status.set_param(status_path + "arp_replies", arp_replies_);
         status.set_param(status_path + "icmp_replies", icmp_replies_);
-
-        // Per-burst processing timing - see mean_burst_us_ etc. in the header for why these
-        // are tracked natively rather than relying on the Python side sampling fast enough.
-        status.set_param(status_path + "mean_burst_us", mean_burst_us_);
-        status.set_param(status_path + "max_burst_us", max_burst_us_);
         status.set_param(status_path + "max_burst_us_all_time", max_burst_us_all_time_);
         status.set_param(status_path + "mean_pkts_per_burst", mean_pkts_per_burst_);
         status.set_param(status_path + "max_pkts_per_burst", max_pkts_per_burst_);

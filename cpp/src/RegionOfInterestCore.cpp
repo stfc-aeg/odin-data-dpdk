@@ -7,7 +7,7 @@ namespace FrameProcessor
     RegionOfInterestCore::RegionOfInterestCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
     ) :
-        DpdkWorkerCore(socket_id),
+        DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
         logger_(Logger::getLogger("FP.RegionOfInterestCore")),
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),

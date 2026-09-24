@@ -7,7 +7,7 @@ namespace FrameProcessor
     PythonAccessCore::PythonAccessCore(
         int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
     ) :
-        DpdkWorkerCore(socket_id),
+        DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
         logger_(Logger::getLogger("FP.PythonAccessCore")),
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),

@@ -16,7 +16,7 @@ namespace FrameProcessor
     PacketProcessorCore::PacketProcessorCore(
         int proc_idx, int socket_id, DpdkWorkCoreReferences dpdkWorkCoreReferences
     ) :
-        DpdkWorkerCore(socket_id),
+        DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
         proc_idx_(proc_idx),
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         mode_(dpdkWorkCoreReferences.decoder_mode),

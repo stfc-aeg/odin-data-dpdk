@@ -74,6 +74,7 @@ namespace FrameProcessor
   void DummyDpdkPlugin::status(OdinData::IpcMessage& status)
   {
     const std::string plugin_name = get_name();
+    DpdkFrameProcessorPlugin::status(status);
 
     // Report all available decoder modes.
     for (const auto& mode_pair : DummyDpdkDecoder::get_mode_string_map())
@@ -92,23 +93,6 @@ namespace FrameProcessor
     }
 
     const auto& mode_map = DummyDpdkDecoder::get_mode_string_map();
-
-    // Add worker cores to their configured streams.
-    for (auto& core_member : config_doc["worker_cores"].GetObject())
-    {
-      const std::string core_name = core_member.name.GetString();
-      const rapidjson::Value& core_cfg = core_member.value;
-
-      if (core_cfg.HasMember("stream") && core_cfg["stream"].IsString())
-      {
-        const std::string prefix =
-          plugin_name + "/streams/" +
-          core_cfg["stream"].GetString() +
-          "/worker_cores/" + core_name;
-
-        status.update(core_cfg, prefix);
-      }
-    }
 
     std::map<std::string, std::string> stream_modes;
 
@@ -153,21 +137,6 @@ namespace FrameProcessor
       status.set_param(prefix + "/mode_info/frame_dimensions[]", static_cast<int>(cfg.x_resolution));
       status.set_param(prefix + "/mode_info/frame_dimensions[]", static_cast<int>(cfg.y_resolution));
       status.set_param(prefix + "/mode_info/needs_reordering", cfg.needs_reordering);
-    }
-
-    // Add worker cores shared between all streams.
-    for (auto& core_member : config_doc["worker_cores"].GetObject())
-    {
-      const std::string core_name = core_member.name.GetString();
-      const rapidjson::Value& core_cfg = core_member.value;
-
-      if (!core_cfg.HasMember("stream") || !core_cfg["stream"].IsString())
-      {
-        const std::string prefix =
-          plugin_name + "/streams/shared_worker_cores/" + core_name;
-
-        status.update(core_cfg, prefix);
-      }
     }
   }
 
