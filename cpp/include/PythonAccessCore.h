@@ -31,7 +31,7 @@ namespace FrameProcessor
         void status(OdinData::IpcMessage& status, const std::string& path);
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
-        void requestConfiguration(OdinData::IpcMessage& reply);
+        void requestConfiguration(OdinData::IpcMessage& reply, const std::string& path);
 
     private:
         int proc_idx_;

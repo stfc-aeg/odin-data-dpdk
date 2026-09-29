@@ -80,6 +80,8 @@ namespace FrameProcessor
         std::vector<int> used_core_ids_;
         std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;
         std::vector<boost::shared_ptr<DpdkWorkerCore>> running_cores_;
+        // Parallel to registered_cores_: config_key + within-key instance index for each entry
+        std::vector<std::pair<std::string, unsigned int>> registered_core_keys_;
 
         // One shared buffer per stream; keyed by stream_id
         std::map<std::string, DpdkSharedBuffer*> stream_shared_buffers_;

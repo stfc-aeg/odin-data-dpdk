@@ -390,6 +390,7 @@ namespace FrameProcessor
                                 refs
                             );
                         register_worker_core(core);
+                        registered_core_keys_.push_back({std::string(json_key), i});
                     }
                     catch (const std::exception& e)
                     {
@@ -668,11 +669,20 @@ namespace FrameProcessor
 
     void DpdkCoreManager::requestConfiguration(OdinData::IpcMessage& reply)
     {
-    // Return the configuration of the plugin
-    LOG4CXX_TRACE(logger_, "Configuration requested for DpdkCoreManager plugin");
-        for (boost::shared_ptr<DpdkWorkerCore>& core: registered_cores_)
+        // Return the configuration of the plugin, collated per worker core so the reply
+        // mirrors the startup JSON's worker_cores/<config_key> shape rather than each core's
+        // own runtime class-name/index naming (which can collide across sibling config_keys
+        // that share a core_name).
+        LOG4CXX_TRACE(logger_, "Configuration requested for DpdkCoreManager plugin");
+        for (size_t idx = 0; idx < registered_cores_.size(); ++idx)
         {
-            core.get()->requestConfiguration(reply);
+            const std::string& config_key = registered_core_keys_[idx].first;
+            unsigned int instance_idx = registered_core_keys_[idx].second;
+
+            std::string core_path = plugin_name_ + "/worker_cores/" + config_key
+                + "/" + std::to_string(instance_idx);
+
+            registered_cores_[idx]->requestConfiguration(reply, core_path);
         }
     }
 

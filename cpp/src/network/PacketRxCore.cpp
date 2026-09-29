@@ -1003,35 +1003,7 @@ namespace FrameProcessor
         return true;
     }
 
-    void PacketRxCore::configure(OdinData::IpcMessage& config)
-    {
-        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
 
-        // Config applies to every branch; each stream tracks its own frame counters and latch
-        // state independently, so there is no need to address them separately.
-        for (auto& branch : branches_)
-        {
-            if (config.has_param("rx_enable"))
-            {
-                branch.rx_enable = config.get_param("rx_enable", false);
-                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
-                    << " [" << branch.stream_id << "] rx_enable=" << branch.rx_enable);
-            }
-
-            // Reset the frame latch whenever capture is going inactive
-            if (!branch.rx_enable)
-            {
-                branch.first_frame_number      = -1;
-                branch.first_seen_frame_number = 0;
-                latch_pending_.store(true, std::memory_order_release);
-                if (proc_idx_ == 0)
-                    shared_first_frame_number_.store(-1, std::memory_order_release);
-                branch.rx_frames = config.get_param("rx_frames", branch.rx_frames);
-                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
-                    << " [" << branch.stream_id << "] Reset latch, rx_frames=" << branch.rx_frames);
-            }
-        }
-    }
 
     std::vector<std::pair<std::string, int>> PacketRxCore::requestCommands()
     {
@@ -1114,9 +1086,68 @@ namespace FrameProcessor
         }
     }
 
-    void PacketRxCore::requestConfiguration(OdinData::IpcMessage& reply)
+    const std::string PacketRxCore::CONFIG_RX_ENABLE = "rx_enable";
+    const std::string PacketRxCore::CONFIG_RX_FRAMES = "rx_frames";
+
+    void PacketRxCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "num_cores", config_.num_cores);
+        reply.set_param(p + "rx_burst_size", static_cast<unsigned int>(config_.rx_burst_size_));
+        reply.set_param(p + "fwd_ring_size", config_.fwd_ring_size_);
+        reply.set_param(p + "release_ring_size", config_.release_ring_size_);
+        reply.set_param(p + "rx_queue_id", static_cast<unsigned int>(config_.rx_queue_id_));
+        reply.set_param(p + "tx_queue_id", static_cast<unsigned int>(config_.tx_queue_id_));
+        reply.set_param(p + "max_packet_tx_retries", config_.max_packet_tx_retries_);
+        reply.set_param(p + "max_packet_queue_retries", config_.max_packet_queue_retries_);
+
+        // IpcMessage::set_param has no vector<string> support, so report each entry indexed
+        for (size_t i = 0; i < config_.pcie_device_.size(); ++i)
+            reply.set_param(p + "pcie_device_" + std::to_string(i), config_.pcie_device_[i]);
+        for (size_t i = 0; i < config_.device_ip_.size(); ++i)
+            reply.set_param(p + "device_ip_" + std::to_string(i), config_.device_ip_[i]);
+
+        // Per-stream branch state (mirrors status()'s "stream_<id>/" convention)
+        for (const auto& branch : branches_)
+        {
+            const std::string bpath = p + "stream_" + branch.stream_id + "/";
+            reply.set_param(bpath + "config_key", branch.config_key);
+            reply.set_param(bpath + CONFIG_RX_ENABLE, branch.rx_enable);
+            reply.set_param(bpath + CONFIG_RX_FRAMES, branch.rx_frames);
+        }
+    }
+
+        void PacketRxCore::configure(OdinData::IpcMessage& config)
+    {
+        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+
+        // Config applies to every branch; each stream tracks its own frame counters and latch
+        // state independently, so there is no need to address them separately.
+        for (auto& branch : branches_)
+        {
+            if (config.has_param(CONFIG_RX_ENABLE))
+            {
+                branch.rx_enable = config.get_param(CONFIG_RX_ENABLE, false);
+                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                    << " [" << branch.stream_id << "] rx_enable=" << branch.rx_enable);
+            }
+
+            // Reset the frame latch whenever capture is going inactive
+            if (!branch.rx_enable)
+            {
+                branch.first_frame_number      = -1;
+                branch.first_seen_frame_number = 0;
+                latch_pending_.store(true, std::memory_order_release);
+                if (proc_idx_ == 0)
+                    shared_first_frame_number_.store(-1, std::memory_order_release);
+                branch.rx_frames = config.get_param(CONFIG_RX_FRAMES, branch.rx_frames);
+                LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_
+                    << " [" << branch.stream_id << "] Reset latch, rx_frames=" << branch.rx_frames);
+            }
+        }
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketRxCore, "PacketRxCore");

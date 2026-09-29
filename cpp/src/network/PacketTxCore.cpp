@@ -237,10 +237,17 @@ namespace FrameProcessor
 
     }
 
-    void PacketTxCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void PacketTxCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        return;
-        // LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "connect", config_.connect);
+        reply.set_param(p + "config_key", config_.config_key);
+        reply.set_param(p + "upstream_core", config_.upstream_core);
+        reply.set_param(p + "num_cores", config_.num_cores);
+        reply.set_param(p + "num_downstream_cores", config_.num_downstream_cores);
+        reply.set_param(p + "num_devices", config_.num_devices);
     }
 
     void PacketTxCore::execute(const std::string& command, OdinData::IpcMessage& reply)

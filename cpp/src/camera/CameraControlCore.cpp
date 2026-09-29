@@ -219,9 +219,32 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << lcore_id_ << " Got update config.");
     }
 
-    void CameraControlCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void CameraControlCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "connect", config_.connect);
+        reply.set_param(p + "num_cores", config_.num_cores);
+        reply.set_param(p + "upstream_core", config_.upstream_core);
+        reply.set_param(p + "num_downstream_cores", config_.num_downstream_cores);
+        reply.set_param(p + "frame_timeout", config_.frame_timeout_);
+        reply.set_param(p + "exposure_time", config_.exposure_time_);
+        reply.set_param(p + "frame_rate", config_.frame_rate_);
+        reply.set_param(p + "zmq_address", config_.zmq_address_);
+
+        // Camera's own config, collected into a scratch message first: request_configuration()
+        // nacks the message it's given if the camera is missing, and nacking the shared plugin
+        // reply here would discard every other core's configuration alongside it. Mirrors the
+        // same pattern used by status() above.
+        if (CameraController_ != NULL)
+        {
+            OdinData::IpcMessage camera_reply;
+            if (CameraController_->request_configuration(path, camera_reply))
+            {
+                reply.update(camera_reply);
+            }
+        }
     }
 
     DPDKREGISTER(DpdkWorkerCore, CameraControlCore, "CameraControlCore");

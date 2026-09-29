@@ -38,7 +38,7 @@ namespace FrameProcessor
         void configure(OdinData::IpcMessage& config);
         void* pop_empty_buffer(void);
         void push_empty_buffer(void* buffer);
-        void requestConfiguration(OdinData::IpcMessage& reply);
+        void requestConfiguration(OdinData::IpcMessage& reply, const std::string& path);
 
     private:
 

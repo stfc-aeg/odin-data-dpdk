@@ -239,9 +239,19 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
     }
 
-    void FrameWrapperCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void FrameWrapperCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "config_key", config_.config_key);
+        reply.set_param(p + "stream_id", config_.stream_id);
+        reply.set_param(p + "dataset_name", config_.dataset_name_);
+        reply.set_param(p + "blosc_clevel", config_.blosc_clevel_);
+        reply.set_param(p + "blosc_doshuffle", config_.blosc_doshuffle_);
+        reply.set_param(p + "blosc_compcode", config_.blosc_compcode_);
+        reply.set_param(p + "blosc_blocksize", config_.blosc_blocksize_);
+        reply.set_param(p + "blosc_num_threads", config_.blosc_num_threads_);
     }
 
     DPDKREGISTER(DpdkWorkerCore, FrameWrapperCore, "FrameWrapperCore");

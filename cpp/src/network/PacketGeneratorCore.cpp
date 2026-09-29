@@ -511,24 +511,43 @@ namespace FrameProcessor
         return true;
     }
 
-    void PacketGeneratorCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void PacketGeneratorCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for PacketGeneratorCore");
-        std::string plugin = "XIDyn";
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "connect", config_.connect);
+        reply.set_param(p + "config_key", config_.config_key);
+        reply.set_param(p + "upstream_core", config_.upstream_core);
+        reply.set_param(p + "num_cores", config_.num_cores);
+        reply.set_param(p + "num_downstream_cores", config_.num_downstream_cores);
+        reply.set_param(p + "destination_port", static_cast<unsigned int>(config_.destination_port));
+        reply.set_param(p + "source_port", static_cast<unsigned int>(config_.source_port));
+        // IpcMessage::set_param has no vector<string> support, so report each entry indexed
+        for (size_t i = 0; i < config_.source_ip_address.size(); ++i)
+            reply.set_param(p + "source_ip_address_" + std::to_string(i), config_.source_ip_address[i]);
+        for (size_t i = 0; i < config_.source_mac_address.size(); ++i)
+            reply.set_param(p + "source_mac_address_" + std::to_string(i), config_.source_mac_address[i]);
+        for (size_t i = 0; i < config_.destination_ip_address.size(); ++i)
+            reply.set_param(p + "destination_ip_address_" + std::to_string(i), config_.destination_ip_address[i]);
+        for (size_t i = 0; i < config_.destination_mac_address.size(); ++i)
+            reply.set_param(p + "destination_mac_address_" + std::to_string(i), config_.destination_mac_address[i]);
+        for (size_t i = 0; i < config_.device_addresses_.size(); ++i)
+            reply.set_param(p + "device_addresses_" + std::to_string(i), config_.device_addresses_[i]);
+        reply.set_param(p + "round_robin_mode", config_.round_robin_mode);
+        reply.set_param(p + "packet_drop", static_cast<int>(config_.packet_drop));
 
         const auto& data_source_config = config_.data_source_config();
-
         for (auto it = data_source_config.MemberBegin(); it != data_source_config.MemberEnd(); ++it)
         {
             if (it->value.IsString())
             {
                 reply.set_param(
-                    plugin + "/data_source_config/" + it->name.GetString(),
+                    p + "data_source_config/" + it->name.GetString(),
                     std::string(it->value.GetString()));
             }
         }
-
-        reply.set_param(plugin + "/packet_drop", static_cast<int>(config_.packet_drop));
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketGeneratorCore, "PacketGeneratorCore");

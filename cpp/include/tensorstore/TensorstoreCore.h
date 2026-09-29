@@ -65,9 +65,19 @@ namespace FrameProcessor
 
         // Applies runtime configuration updates
         void configure(OdinData::IpcMessage& config);
-        void requestConfiguration(OdinData::IpcMessage& reply);
+        void requestConfiguration(OdinData::IpcMessage& reply, const std::string& path);
         void execute(const std::string& command, OdinData::IpcMessage& reply) override;
         std::vector<std::pair<std::string, int>> requestCommands() override;
+
+        static const std::string CONFIG_PATH;
+        static const std::string CONFIG_STORAGE_DRIVER;
+        static const std::string CONFIG_KVSTORE_DRIVER;
+        static const std::string CONFIG_MAX_CONCURRENT_WRITES;
+        static const std::string CONFIG_NUMBER_OF_FRAMES;
+        static const std::string CONFIG_HEIGHT;
+        static const std::string CONFIG_WIDTH;
+        static const std::string CONFIG_FRAMES_PER_SECOND;
+        static const std::string CONFIG_ENABLE_WRITING;
 
     private:
         void start_writing_cmd();

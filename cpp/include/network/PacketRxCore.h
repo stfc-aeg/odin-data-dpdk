@@ -75,8 +75,11 @@ namespace FrameProcessor
         bool connect(void);
         void configure(OdinData::IpcMessage& config);
         void execute(const std::string& command, OdinData::IpcMessage& reply) override;
-        void requestConfiguration(OdinData::IpcMessage& reply);
+        void requestConfiguration(OdinData::IpcMessage& reply, const std::string& path);
         std::vector<std::pair<std::string, int>> requestCommands() override;
+
+        static const std::string CONFIG_RX_ENABLE;
+        static const std::string CONFIG_RX_FRAMES;
 
     private:
         void start_capture(OdinData::IpcMessage& reply);

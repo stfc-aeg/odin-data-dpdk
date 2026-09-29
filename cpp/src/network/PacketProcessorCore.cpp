@@ -569,9 +569,20 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " start_capture: first_frame_number_ reset to -1");
     }
 
-    void PacketProcessorCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void PacketProcessorCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "connect", config_.connect);
+        reply.set_param(p + "config_key", config_.config_key);
+        reply.set_param(p + "stream_id", config_.stream_id);
+        reply.set_param(p + "mode", config_.decoder_mode);
+        reply.set_param(p + "num_cores", config_.num_cores);
+        reply.set_param(p + "num_downstream_cores", config_.num_downstream_cores);
+        reply.set_param(p + "frame_timeout", config_.frame_timeout_);
+        reply.set_param(p + "min_packet_size", config_.min_packet_size_);
+        reply.set_param(p + "max_packet_size", config_.max_packet_size_);
     }
 
     DPDKREGISTER(DpdkWorkerCore, PacketProcessorCore, "PacketProcessorCore");

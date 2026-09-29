@@ -880,41 +880,51 @@ namespace FrameProcessor
         return true;
     }
 
+    const std::string TensorstoreCore::CONFIG_PATH = "path";
+    const std::string TensorstoreCore::CONFIG_STORAGE_DRIVER = "storage_driver";
+    const std::string TensorstoreCore::CONFIG_KVSTORE_DRIVER = "kvstore_driver";
+    const std::string TensorstoreCore::CONFIG_MAX_CONCURRENT_WRITES = "max_concurrent_writes";
+    const std::string TensorstoreCore::CONFIG_NUMBER_OF_FRAMES = "number_of_frames";
+    const std::string TensorstoreCore::CONFIG_HEIGHT = "height";
+    const std::string TensorstoreCore::CONFIG_WIDTH = "width";
+    const std::string TensorstoreCore::CONFIG_FRAMES_PER_SECOND = "frames_per_second";
+    const std::string TensorstoreCore::CONFIG_ENABLE_WRITING = "enable_writing";
+
     void TensorstoreCore::configure(OdinData::IpcMessage& config)
     {
         LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
 
         try
         {
-            if (config.has_param("path"))
-                config_.path_ = config.get_param<std::string>("path");
+            if (config.has_param(CONFIG_PATH))
+                config_.path_ = config.get_param<std::string>(CONFIG_PATH);
 
-            if (config.has_param("storage_driver"))
-                config_.storage_driver_ = config.get_param<std::string>("storage_driver");
+            if (config.has_param(CONFIG_STORAGE_DRIVER))
+                config_.storage_driver_ = config.get_param<std::string>(CONFIG_STORAGE_DRIVER);
 
-            if (config.has_param("kvstore_driver"))
-                config_.kvstore_driver_ = config.get_param<std::string>("kvstore_driver");
+            if (config.has_param(CONFIG_KVSTORE_DRIVER))
+                config_.kvstore_driver_ = config.get_param<std::string>(CONFIG_KVSTORE_DRIVER);
 
-            if (config.has_param("max_concurrent_writes"))
-                config_.max_concurrent_writes_ = config.get_param<int>("max_concurrent_writes");
+            if (config.has_param(CONFIG_MAX_CONCURRENT_WRITES))
+                config_.max_concurrent_writes_ = config.get_param<int>(CONFIG_MAX_CONCURRENT_WRITES);
 
-            if (config.has_param("number_of_frames"))
-                config_.number_of_frames_ = config.get_param<uint64_t>("number_of_frames");
+            if (config.has_param(CONFIG_NUMBER_OF_FRAMES))
+                config_.number_of_frames_ = config.get_param<uint64_t>(CONFIG_NUMBER_OF_FRAMES);
 
             // Dataset dims take effect on the next reconfiguration, since resizing an open
             // dataset's frame geometry is not supported
-            if (config.has_param("height"))
-                config_.height_ = config.get_param<std::size_t>("height");
+            if (config.has_param(CONFIG_HEIGHT))
+                config_.height_ = config.get_param<std::size_t>(CONFIG_HEIGHT);
 
-            if (config.has_param("width"))
-                config_.width_ = config.get_param<std::size_t>("width");
+            if (config.has_param(CONFIG_WIDTH))
+                config_.width_ = config.get_param<std::size_t>(CONFIG_WIDTH);
 
-            if (config.has_param("frames_per_second"))
-                frames_per_second_ = config.get_param<unsigned int>("frames_per_second");
+            if (config.has_param(CONFIG_FRAMES_PER_SECOND))
+                frames_per_second_ = config.get_param<unsigned int>(CONFIG_FRAMES_PER_SECOND);
 
-            if (config.has_param("enable_writing"))
+            if (config.has_param(CONFIG_ENABLE_WRITING))
             {
-                bool enable = config.get_param<bool>("enable_writing");
+                bool enable = config.get_param<bool>(CONFIG_ENABLE_WRITING);
                 if (enable != config_.enable_writing_)
                 {
                     config_.enable_writing_ = enable;
@@ -989,9 +999,24 @@ namespace FrameProcessor
         }
     }
 
-    void TensorstoreCore::requestConfiguration(OdinData::IpcMessage& reply)
+    void TensorstoreCore::requestConfiguration(OdinData::IpcMessage& reply, const std::string& path)
     {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+        LOG4CXX_DEBUG(logger_, "Configuration requested for " << path);
+        std::string p = path + "/";
+        reply.set_param(p + "core_name", config_.core_name);
+        reply.set_param(p + "config_key", config_.config_key);
+        reply.set_param(p + "stream_id", config_.stream_id);
+        reply.set_param(p + CONFIG_PATH, config_.path_);
+        reply.set_param(p + CONFIG_STORAGE_DRIVER, config_.storage_driver_);
+        reply.set_param(p + CONFIG_KVSTORE_DRIVER, config_.kvstore_driver_);
+        reply.set_param(p + CONFIG_MAX_CONCURRENT_WRITES, config_.max_concurrent_writes_);
+        reply.set_param(p + CONFIG_NUMBER_OF_FRAMES, config_.number_of_frames_);
+        reply.set_param(p + CONFIG_HEIGHT, config_.height_);
+        reply.set_param(p + CONFIG_WIDTH, config_.width_);
+        reply.set_param(p + CONFIG_FRAMES_PER_SECOND, frames_per_second_);
+        reply.set_param(p + CONFIG_ENABLE_WRITING, config_.enable_writing_);
+        reply.set_param(p + "cache_bytes_limit", config_.cache_bytes_limit_);
+        reply.set_param(p + "csv_logging", config_.csv_logging_);
     }
 
     DPDKREGISTER(DpdkWorkerCore, TensorstoreCore, "TensorstoreCore");
