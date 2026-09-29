@@ -65,6 +65,7 @@ namespace FrameProcessor
 
         // Applies runtime configuration updates
         void configure(OdinData::IpcMessage& config);
+        void requestConfiguration(OdinData::IpcMessage& reply);
         void execute(const std::string& command, OdinData::IpcMessage& reply) override;
         std::vector<std::pair<std::string, int>> requestCommands() override;
 

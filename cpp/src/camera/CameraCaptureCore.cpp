@@ -283,5 +283,10 @@ namespace FrameProcessor
         rte_ring_enqueue(clear_frames_ring_, buffer);
     }
 
+    void CameraCaptureCore::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, CameraCaptureCore, "CameraCaptureCore");
 }

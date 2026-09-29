@@ -219,5 +219,10 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, config_.core_name << " : " << lcore_id_ << " Got update config.");
     }
 
+    void CameraControlCore::requestConfiguration(OdinData::IpcMessage& reply)
+    {
+        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+    }
+
     DPDKREGISTER(DpdkWorkerCore, CameraControlCore, "CameraControlCore");
 }

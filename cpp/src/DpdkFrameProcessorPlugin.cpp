@@ -45,6 +45,11 @@ namespace FrameProcessor
   void DpdkFrameProcessorPlugin::requestConfiguration(OdinData::IpcMessage& reply)
   {
     LOG4CXX_TRACE(logger_, "Configuration requested for DPDKFrameProcessor plugin");
+    LOG4CXX_DEBUG(logger_, "Got update config");
+    if (core_manager_ != nullptr)
+    {
+      core_manager_->requestConfiguration(reply);
+    }
   }
 
   void DpdkFrameProcessorPlugin::status(OdinData::IpcMessage& status)
