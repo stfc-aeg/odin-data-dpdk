@@ -33,7 +33,7 @@ namespace FrameProcessor
         minimum_us_on_frame_(0),
         maximum_us_on_frame_(0),
         core_usage_(0),
-        core_status_("idle"),
+        core_status_("constructing"),
         first_frame_number_(-1),
         total_packets_(0),
         processed_packets_(0),
@@ -43,6 +43,8 @@ namespace FrameProcessor
         // Resolve configuration parameters for this core from the config object passed as an
         // argument, and the current port ID
         config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
+
+        core_status_ = "ready";
 
         // Determine debug level for performance-critical logging
         debug_enabled_ = false;
@@ -144,7 +146,7 @@ namespace FrameProcessor
 
         lcore_id_ = lcore_id;
         run_lcore_ = true;
-        core_status_ = "running";
+        core_status_ = "starting";
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up"
             << " fwd_ring=" << (packet_fwd_ring_ ? "OK" : "NULL")
@@ -200,6 +202,8 @@ namespace FrameProcessor
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " dropped_frame_buffer_="
             << (dropped_frame_buffer_ ? "OK" : "NULL (rte_malloc FAILED)")
             << " frame_buffer_size=" << decoder_->get_frame_buffer_size(mode_));
+
+        core_status_ = "running";
 
         while (likely(run_lcore_))
         {
@@ -473,7 +477,7 @@ namespace FrameProcessor
             
         }
         rte_free(dropped_frame_buffer_);
-        core_status_ = "idle";
+        core_status_ = "stopped";
         return true;
     }
 
@@ -482,10 +486,12 @@ namespace FrameProcessor
         if (run_lcore_)
         {
             LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+            core_status_ = "stopping";
             run_lcore_ = false;
         }
         else
         {
+            core_status_= "stopped";
             if (unlikely(debug_enabled_))
             {
                 LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
