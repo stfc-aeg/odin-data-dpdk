@@ -53,14 +53,17 @@ namespace FrameProcessor
         uint64_t packets_hz_;
         uint64_t dropped_packets_;
         uint64_t last_frame_;
-        uint64_t processed_frames_;
+        uint64_t processed_super_frames_;
         uint64_t processed_frames_hz_;
         uint64_t dropped_frames_;
         uint64_t incomplete_frames_;
         uint64_t idle_loops_;
         uint64_t mean_us_on_frame_;
+        uint64_t minimum_us_on_frame_;
         uint64_t maximum_us_on_frame_;
-        uint8_t  core_usage_;
+        uint64_t core_usage_;
+        uint64_t processed_packets_;
+        std::string core_status_;
 
         uint64_t frame_buffer_size_;
         int64_t first_frame_number_;

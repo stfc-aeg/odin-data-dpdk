@@ -852,6 +852,7 @@ namespace FrameProcessor
         else
         {
             pkt_forwarded = true;
+            branch.packets_processed++;
         }
 
         return pkt_forwarded;
@@ -948,6 +949,7 @@ namespace FrameProcessor
             status.set_param(bpath + "config_key",          branch.config_key);
             status.set_param(bpath + "rx_enable",           branch.rx_enable);
             status.set_param(bpath + "rx_frames",           branch.rx_frames);
+            status.set_param(bpath + "packets_processed",   branch.packets_processed);
             status.set_param(bpath + "first_frame_number",  branch.first_frame_number);
             status.set_param(bpath + "first_seen_frame_number", branch.first_seen_frame_number);
             status.set_param(bpath + "num_cores",           (uint64_t)branch.num_cores);

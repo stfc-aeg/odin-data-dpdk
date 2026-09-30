@@ -53,10 +53,12 @@ namespace FrameProcessor
         // behind.
         uint64_t ring_full_drops;
 
+        uint64_t packets_processed;
+
         StreamBranch() :
             num_cores(0), rx_enable(false), rx_frames(0),
             first_frame_number(-1), first_seen_frame_number(0), ring_full_drops(0),
-            frame_outer_chunk_size(1)
+            frame_outer_chunk_size(1), packets_processed(0)
         {}
     };
 

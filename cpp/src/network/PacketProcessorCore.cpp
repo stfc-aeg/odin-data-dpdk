@@ -26,14 +26,17 @@ namespace FrameProcessor
         current_frame_(-1),
         incomplete_frames_(0),
         last_frame_(0),
-        processed_frames_(0),
+        processed_super_frames_(0),
         processed_frames_hz_(0),
         idle_loops_(0),
         mean_us_on_frame_(0),
+        minimum_us_on_frame_(0),
         maximum_us_on_frame_(0),
         core_usage_(0),
+        core_status_("idle"),
         first_frame_number_(-1),
         total_packets_(0),
+        processed_packets_(0),
         logger_(Logger::getLogger("FP.PacketProcCore"))
     {
 
@@ -141,6 +144,7 @@ namespace FrameProcessor
 
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        core_status_ = "running";
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up"
             << " fwd_ring=" << (packet_fwd_ring_ ? "OK" : "NULL")
@@ -185,6 +189,7 @@ namespace FrameProcessor
         uint64_t cycles_working = 1;
         uint64_t start_frame_cycles = 1;
         uint64_t total_frame_cycles = 1;
+        uint64_t minimum_frame_cycles = UINT64_MAX;
         uint64_t maximum_frame_cycles = 1;
         uint64_t idle_loops = 0;
         uint64_t packets_per_second = 0;
@@ -215,14 +220,13 @@ namespace FrameProcessor
                 for (uint32_t i = 0; i < nb_rx; i++)
                 {
                     pkt = pkt_burst[i];
+                    total_packets_++;
                     
                     // Prefetch next packet for better cache utilization
                     if (i + 1 < nb_rx)
                     {
                         rte_prefetch0(rte_pktmbuf_mtod(pkt_burst[i + 1], void *));
                     }
-                    
-                    total_packets_++;
 
                     // Get pointers to the ethernet, UDP, packet headers and payload
                     pkt_ether_hdr = rte_pktmbuf_mtod(pkt, rte_ether_hdr *);
@@ -331,6 +335,9 @@ namespace FrameProcessor
                         (packet_number * payload_size), pkt_payload, payload_size
                     );
 
+                    processed_packets_++;
+
+
                     // LOG4CXX_TRACE(logger_,"Setting packet "<< packet_number << " as finished for frame " << current_frame_number);
                     // // Set the current packet as received in the frame header
                     if (decoder_->set_packet_received(current_frame_header_, packet_number))
@@ -356,8 +363,9 @@ namespace FrameProcessor
                                     ], current_super_frame_buffer_
                                 );
                                 frame_buffer_map_.erase(current_frame_);
-                                processed_frames_++;
+                                processed_super_frames_++;
                                 frames_per_second++;
+                                last_frame_ = current_super_frame_number;
                             }
                         }
                         current_frame_ = -1;
@@ -375,6 +383,11 @@ namespace FrameProcessor
                 uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
                 total_frame_cycles += cycles_spent;
                 cycles_working += cycles_spent;
+
+                if (minimum_frame_cycles > cycles_spent)
+                {
+                    minimum_frame_cycles = cycles_spent;
+                }
                 
                 if (maximum_frame_cycles < cycles_spent)
                 {
@@ -399,6 +412,7 @@ namespace FrameProcessor
                 mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
                 core_usage_ = (cycles_working * 255) / cycles_per_sec;
 
+                minimum_us_on_frame_ = (minimum_frame_cycles * 1000000) / (cycles_per_sec);
                 maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
 
                 frame_buffer_size_ = frame_buffer_map_.size();
@@ -412,6 +426,7 @@ namespace FrameProcessor
                 frames_per_second = 1;
                 idle_loops = 0;
                 total_frame_cycles = 1;
+                minimum_frame_cycles = UINT64_MAX;
                 cycles_working = 1;
                 last = now;
 
@@ -458,6 +473,7 @@ namespace FrameProcessor
             
         }
         rte_free(dropped_frame_buffer_);
+        core_status_ = "idle";
         return true;
     }
 
@@ -490,14 +506,23 @@ namespace FrameProcessor
         std::string ring_status = status_path + "upstream_rings/";
         std::string timing_status = status_path + "timing/";
 
+        // Generic worker-core status
+        status.set_param(status_path + "status", core_status_);
+        status.set_param(status_path + "packets_received", total_packets_);
+        status.set_param(status_path + "packets_processed", processed_packets_);
+        status.set_param(status_path + "packets_dropped", dropped_packets_);
+        status.set_param(status_path + "packets_per_second", packets_hz_);
+        status.set_param(status_path + "processing_time/average_us", mean_us_on_frame_);
+        status.set_param(status_path + "processing_time/min_us", minimum_us_on_frame_);
+        status.set_param(status_path + "processing_time/max_us", maximum_us_on_frame_);
+        status.set_param(status_path + "busy_percentage", core_usage_);
+        status.set_param(status_path + "last_frame_number", last_frame_);
+
+        // PacketProcessor-specific status
+        status.set_param(status_path + "super_frames_processed", processed_super_frames_);
         status.set_param(status_path + "dropped_frames", dropped_frames_);
         status.set_param(status_path + "dropped_packets", dropped_packets_);
-        status.set_param(status_path + "frames_processed", processed_frames_);
-        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
-        status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "core_usage", (int)core_usage_);
         status.set_param(status_path + "frames_incomplete", incomplete_frames_);
-        status.set_param(status_path + "packets_total", total_packets_);
         status.set_param(status_path + "frame_buffer_size", frame_buffer_size_);
 
         status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
