@@ -12,13 +12,15 @@ namespace FrameProcessor
         proc_idx_(fb_idx),
         decoder_(dpdkWorkCoreReferences.decoder),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
+        core_status_("constructing"),
         processed_frames_(0),
         processed_frames_hz_(0),
         idle_loops_(0),
         mean_us_on_frame_(0),
+        minimum_us_on_frame_(0),
         maximum_us_on_frame_(0),
         core_usage_(0),
-        last_frame_(-1)
+        last_frame_(0)
     {
         config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
@@ -76,6 +78,8 @@ namespace FrameProcessor
             }
             python_access_rings_.push_back(python_ring);
         }
+
+        core_status_ = "ready";
     }
 
     PythonAccessCore::~PythonAccessCore(void)
@@ -86,9 +90,9 @@ namespace FrameProcessor
 
     bool PythonAccessCore::run(unsigned int lcore_id)
     {
-
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        core_status_ = "starting";
 
         LOG4CXX_INFO(logger_, "PythonAccessCore: " << lcore_id_ << " starting up");
 
@@ -100,8 +104,11 @@ namespace FrameProcessor
         uint64_t cycles_working = 1;
         uint64_t start_frame_cycles = 1;
         uint64_t total_frame_cycles = 1;
+        uint64_t minimum_frame_cycles = UINT64_MAX;
         uint64_t maximum_frame_cycles = 1;
         uint64_t idle_loops = 0;
+
+        core_status_ = "running";
 
         while (likely(run_lcore_))
         {
@@ -113,7 +120,19 @@ namespace FrameProcessor
                 mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
                 core_usage_ = (cycles_working * 255) / cycles_per_sec;
 
-                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
+                if (frames_per_second > 1)
+                {
+                    minimum_us_on_frame_ =
+                        (minimum_frame_cycles * 1000000) / cycles_per_sec;
+
+                    maximum_us_on_frame_ =
+                        (maximum_frame_cycles * 1000000) / cycles_per_sec;
+                }
+                else
+                {
+                    minimum_us_on_frame_ = 0;
+                    maximum_us_on_frame_ = 0;
+                }
 
                 idle_loops_ = idle_loops;
 
@@ -122,6 +141,7 @@ namespace FrameProcessor
                 idle_loops = 0;
                 total_frame_cycles = 1;
                 cycles_working = 1;
+                minimum_frame_cycles = UINT64_MAX;
                 last = now;
             }
             if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer_) < 0)
@@ -134,6 +154,7 @@ namespace FrameProcessor
                 start_frame_cycles = rte_get_tsc_cycles();
 
                 uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
+                last_frame_ = frame_number;
 
                 rte_ring_enqueue(python_access_rings_[frame_number % config_.num_downstream_cores], current_frame_buffer_);
 
@@ -141,6 +162,10 @@ namespace FrameProcessor
                 total_frame_cycles += cycles_spent;
                 cycles_working += cycles_spent;
 
+                if (minimum_frame_cycles > cycles_spent)
+                {
+                    minimum_frame_cycles = cycles_spent;
+                }
                 if (maximum_frame_cycles < cycles_spent)
                 {
                     maximum_frame_cycles = cycles_spent;
@@ -155,6 +180,8 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " completed");
 
+        core_status_ = "stopped";
+
         return true;
     }
 
@@ -163,6 +190,7 @@ namespace FrameProcessor
         if (run_lcore_)
         {
             LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+            core_status_ = "stopping";
             run_lcore_ = false;
         }
         else
@@ -175,22 +203,32 @@ namespace FrameProcessor
     {
         std::string status_path = path + "/PythonAccessCore_" + std::to_string(proc_idx_) + "/";
         std::string ring_status = status_path + "upstream_rings/";
-        std::string timing_status = status_path + "timing/";
 
-        status.set_param(status_path + "frames_processed", processed_frames_);
-        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
-        status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "core_usage", (int)core_usage_);
+        // Generic worker-core status
+        status.set_param(status_path + "status", core_status_);
+        status.set_param(status_path + "objects_processed", processed_frames_);
+        status.set_param(status_path + "objects_per_second", processed_frames_hz_);
         status.set_param(status_path + "last_frame_number", last_frame_);
+        status.set_param(status_path + "busy_percentage", core_usage_);
 
-        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
-        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+        status.set_param(status_path + "processing_time/average_us", mean_us_on_frame_);
+        status.set_param(status_path + "processing_time/min_us", minimum_us_on_frame_);
+        status.set_param(status_path + "processing_time/max_us", maximum_us_on_frame_);
 
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
-        status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+        // PythonAccess-specific status
+        status.set_param(status_path + "frames_processed", processed_frames_);
 
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
+        if (upstream_ring_ != nullptr)
+        {
+            status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
+            status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
+        }
+
+        if (clear_frames_ring_ != nullptr)
+        {
+            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
+            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
+        }
     }
 
     bool PythonAccessCore::connect(void)
