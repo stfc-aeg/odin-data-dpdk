@@ -14,13 +14,15 @@ namespace FrameProcessor
         decoder_(dpdkWorkCoreReferences.decoder),
         mode_(dpdkWorkCoreReferences.decoder_mode),
         frame_callback_(dpdkWorkCoreReferences.frame_callback),
+        core_status_("constructing"),
         processed_frames_(0),
         processed_frames_hz_(0),
         idle_loops_(0),
         mean_us_on_frame_(0),
+        minimum_us_on_frame_(0),
         maximum_us_on_frame_(0),
         core_usage_(0),
-        last_frame_(-1)
+        last_frame_(0)
     {
         config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
@@ -31,6 +33,8 @@ namespace FrameProcessor
             << " | upstream_core: " << config_.upstream_core
             << " | num_downstream_cores: " << config_.num_downstream_cores
         );
+
+        core_status_ = "ready";
     }
 
     FrameWrapperCore::~FrameWrapperCore(void)
@@ -44,6 +48,7 @@ namespace FrameProcessor
 
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        core_status_ = "starting";
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up");
 
@@ -67,8 +72,11 @@ namespace FrameProcessor
         uint64_t cycles_working = 1;
         uint64_t start_frame_cycles = 1;
         uint64_t total_frame_cycles = 1;
+        uint64_t minimum_frame_cycles = UINT64_MAX;
         uint64_t maximum_frame_cycles = 1;
         uint64_t idle_loops = 0;
+
+        core_status_ = "running";
 
         while (likely(run_lcore_))
         {
@@ -80,7 +88,19 @@ namespace FrameProcessor
                 mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
                 core_usage_ = (cycles_working * 255) / cycles_per_sec;
 
-                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / (cycles_per_sec);
+                if (frames_per_second > 1)
+                {
+                    minimum_us_on_frame_ =
+                        (minimum_frame_cycles * 1000000) / cycles_per_sec;
+
+                    maximum_us_on_frame_ =
+                        (maximum_frame_cycles * 1000000) / cycles_per_sec;
+                }
+                else
+                {
+                    minimum_us_on_frame_ = 0;
+                    maximum_us_on_frame_ = 0;
+                }
 
                 idle_loops_ = idle_loops;
 
@@ -89,7 +109,9 @@ namespace FrameProcessor
                 idle_loops = 0;
                 total_frame_cycles = 1;
                 cycles_working = 1;
+                minimum_frame_cycles = UINT64_MAX;
                 last = now;
+
             }
             if (rte_ring_dequeue(upstream_ring_, (void**) &current_super_frame_buffer_) < 0)
             {
@@ -158,6 +180,11 @@ namespace FrameProcessor
                 total_frame_cycles += cycles_spent;
                 cycles_working += cycles_spent;
 
+                if (minimum_frame_cycles > cycles_spent)
+                {
+                    minimum_frame_cycles = cycles_spent;
+                }
+
                 if (maximum_frame_cycles < cycles_spent)
                 {
                     maximum_frame_cycles = cycles_spent;
@@ -172,6 +199,8 @@ namespace FrameProcessor
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " completed");
 
+        core_status_ = "stopped";
+
         return true;
     }
 
@@ -180,6 +209,7 @@ namespace FrameProcessor
         if (run_lcore_)
         {
             LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+            core_status_ = "stopped";
             run_lcore_ = false;
         }
         else
@@ -192,22 +222,26 @@ namespace FrameProcessor
     {
         std::string status_path = path + "/FrameWrapperCore_" + std::to_string(proc_idx_) + "/";
         std::string ring_status = status_path + "upstream_rings/";
-        std::string timing_status = status_path + "timing/";
 
-        status.set_param(status_path + "frames_processed", processed_frames_);
-        status.set_param(status_path + "frames_processed_per_second", processed_frames_hz_);
-        status.set_param(status_path + "idle_loops", idle_loops_);
-        status.set_param(status_path + "core_usage", (int)core_usage_);
+        // Generic worker-core status
+        status.set_param(status_path + "status", core_status_);
+        status.set_param(status_path + "objects_processed", processed_frames_);
+        status.set_param(status_path + "objects_per_second", processed_frames_hz_);
         status.set_param(status_path + "last_frame_number", last_frame_);
+        status.set_param(status_path + "busy_percentage", core_usage_);
 
-        status.set_param(timing_status + "mean_frame_us", mean_us_on_frame_);
-        status.set_param(timing_status + "max_frame_us", maximum_us_on_frame_);
+        status.set_param(status_path + "processing_time/average_us", mean_us_on_frame_);
+        status.set_param(status_path + "processing_time/min_us", minimum_us_on_frame_);
+        status.set_param(status_path + "processing_time/max_us", maximum_us_on_frame_);
+
+        // FrameWrapper-specific status
+        status.set_param(status_path + "frames_processed", processed_frames_);
 
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
         status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
-
         status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
-        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
+        status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_)
+        );
     }
 
     bool FrameWrapperCore::connect(void)

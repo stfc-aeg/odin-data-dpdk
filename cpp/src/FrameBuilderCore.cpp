@@ -116,8 +116,19 @@ namespace FrameProcessor
                 mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
                 core_usage_ = (cycles_working * 255) / cycles_per_sec;
 
-                minimum_us_on_frame_ = (minimum_frame_cycles * 1000000) / cycles_per_sec;
-                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / cycles_per_sec;
+                if (frames_per_second > 1)
+                {
+                    minimum_us_on_frame_ =
+                        (minimum_frame_cycles * 1000000) / cycles_per_sec;
+
+                    maximum_us_on_frame_ =
+                        (maximum_frame_cycles * 1000000) / cycles_per_sec;
+                }
+                else
+                {
+                    minimum_us_on_frame_ = 0;
+                    maximum_us_on_frame_ = 0;
+                }
 
                 // Reset any counters
                 frames_per_second = 1;

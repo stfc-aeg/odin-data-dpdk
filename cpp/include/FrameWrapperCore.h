@@ -42,11 +42,13 @@ namespace FrameProcessor
         FrameCallback& frame_callback_;
 
         // Status reporting variables
+        std::string core_status_;
         uint64_t last_frame_;
         uint64_t processed_frames_;
         uint64_t processed_frames_hz_;
         uint64_t idle_loops_;
         uint64_t mean_us_on_frame_;
+        uint64_t minimum_us_on_frame_;
         uint64_t maximum_us_on_frame_;
         uint64_t core_usage_;
 
