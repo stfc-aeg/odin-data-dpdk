@@ -43,12 +43,16 @@ namespace FrameProcessor
         LoggerPtr logger_;
 
         // Status reporting variables
+        std::string core_status_;
+        uint64_t processed_frames_;
         uint64_t built_frames_;
         uint64_t built_frames_hz_;
         uint64_t idle_loops_;
         uint64_t mean_us_on_frame_;
+        uint64_t minimum_us_on_frame_;
         uint64_t maximum_us_on_frame_;
-        uint8_t core_usage_;
+        uint64_t core_usage_;
+        uint64_t last_frame_number_;
 
 
         struct rte_ring* upstream_ring_;

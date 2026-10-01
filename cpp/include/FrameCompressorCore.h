@@ -51,7 +51,7 @@ namespace FrameProcessor
         uint64_t mean_us_on_frame_;
         uint64_t minimum_us_on_frame_;
         uint64_t maximum_us_on_frame_;
-        uint8_t core_usage_;
+        uint64_t core_usage_;
         std::string core_status_;
 
         struct rte_ring* frame_ready_ring_;

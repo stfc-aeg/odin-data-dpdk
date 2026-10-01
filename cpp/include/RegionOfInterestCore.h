@@ -48,7 +48,7 @@ namespace FrameProcessor
         uint64_t idle_loops_;
         uint64_t mean_us_on_frame_;
         uint64_t maximum_us_on_frame_;
-        uint8_t core_usage_;
+        uint64_t core_usage_;
 
         struct rte_ring* upstream_ring_;
         struct rte_ring* clear_frames_ring_;
