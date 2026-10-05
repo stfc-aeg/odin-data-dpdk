@@ -64,7 +64,22 @@ namespace FrameProcessor
         decoder_(dynamic_cast<PacketProtocolDecoder *>(dpdkWorkCoreReferences.decoder)),
         frame_callback_(dpdkWorkCoreReferences.frame_callback),
         shared_buf_(dpdkWorkCoreReferences.shared_buf),
-        packet_tx_(false)
+        packet_tx_(false),
+        total_packets_(0),
+        packets_sent_(0),
+        dropped_packets_(0),
+        mbuf_alloc_failures_(0),
+        tx_ring_full_waits_(0),
+        frames_generated_(0),
+        last_frame_number_(0),
+        mean_frame_us_(0),
+        min_frame_us_(0),
+        max_frame_us_(0),
+        max_frame_us_all_time_(0),
+        packets_per_second_(0),
+        frames_per_second_(0),
+        busy_percentage_(0.0),
+        core_status_("constructing")
     {
 
         // Get the configuration container for this worker
@@ -135,6 +150,8 @@ namespace FrameProcessor
                 }
             }
         }
+
+        core_status_ = "ready";
     }
 
     PacketGeneratorCore::~PacketGeneratorCore(void)
@@ -148,6 +165,7 @@ namespace FrameProcessor
 
         lcore_id_ = lcore_id;
         run_lcore_ = true;
+        core_status_ = "starting";
 
         LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " starting up");
 
@@ -207,17 +225,72 @@ namespace FrameProcessor
 
         const uint32_t num_tx_devices = static_cast<uint32_t>(tx_devices_.size());
 
+        if (num_tx_devices == 0)
+        {
+            LOG4CXX_ERROR(logger_, "No TX devices configured. Stopping PacketGeneratorCore.");
+            core_status_ = "error";
+            run_lcore_ = false;
+            return false;
+        }
+
         void *frame_data;
+
+        const uint64_t cycles_per_sec = rte_get_tsc_hz();
+        uint64_t timing_last = rte_get_tsc_cycles();
+        uint64_t frames_this_second = 0;
+        uint64_t pkts_this_second = 0;
+        uint64_t cycles_this_second = 0;
+        uint64_t max_frame_cycles_this_second = 0;
+        uint64_t min_frame_cycles_this_second = UINT64_MAX;
+
+        core_status_ = "running";
 
         // While loop to continuously dequeue frame objects
         while (likely(run_lcore_))
         {
+            uint64_t timing_now = rte_get_tsc_cycles();
+            if (unlikely((timing_now - timing_last) >= cycles_per_sec))
+            {
+                uint64_t elapsed_cycles = timing_now - timing_last;
+
+                packets_per_second_ = (pkts_this_second * cycles_per_sec) / elapsed_cycles;
+                frames_per_second_  = (frames_this_second * cycles_per_sec) / elapsed_cycles;
+                busy_percentage_    = (static_cast<double>(cycles_this_second) * 100.0) /
+                                      static_cast<double>(elapsed_cycles);
+
+                if (frames_this_second > 0)
+                {
+                    mean_frame_us_ = (static_cast<double>(cycles_this_second) * 1000000.0) /
+                                     (static_cast<double>(frames_this_second) * cycles_per_sec);
+                    min_frame_us_  = (static_cast<double>(min_frame_cycles_this_second) * 1000000.0) /
+                                     static_cast<double>(cycles_per_sec);
+                    max_frame_us_  = (static_cast<double>(max_frame_cycles_this_second) * 1000000.0) /
+                                     static_cast<double>(cycles_per_sec);
+                    if (max_frame_us_ > max_frame_us_all_time_)
+                        max_frame_us_all_time_ = max_frame_us_;
+                }
+                else
+                {
+                    mean_frame_us_ = min_frame_us_ = max_frame_us_ = 0.0;
+                }
+
+                frames_this_second = 0;
+                pkts_this_second = 0;
+                cycles_this_second = 0;
+                max_frame_cycles_this_second = 0;
+                min_frame_cycles_this_second = UINT64_MAX;
+                timing_last = timing_now;
+            }
+
             // Check if packet tx has been disabled
             if (!packet_tx_)
             {
                 rte_pause();
                 continue;
             }
+
+            const uint64_t frame_start_cycles = rte_get_tsc_cycles();
+            uint64_t pkts_this_frame = 0;
 
             // Collect the data from the data source
             data_source_->getData(raw_frame);
@@ -227,6 +300,8 @@ namespace FrameProcessor
 
             for (uint32_t packet = 0; packet < packets_per_frame; packet++)
             {
+                total_packets_++;
+
                 // Randomly drop packets based on configuration
                 bool drop_packet = (rte_rand() % 1000) < config_.packet_drop;
                 if (!drop_packet)
@@ -246,6 +321,7 @@ namespace FrameProcessor
                     // Ensure buffer has been allocated
                     if (mbuf == nullptr)
                     {
+                        mbuf_alloc_failures_++;
                         LOG4CXX_ERROR(logger_, "Failed to allocate mbuf");
                         continue;
                     }
@@ -296,12 +372,27 @@ namespace FrameProcessor
                         rte_ring_enqueue(tx_dev.ring, mbuf) != 0
                     )
                     {
+                        tx_ring_full_waits_;
                         rte_pause();
                     }
-                } else {
+                    packets_sent_++;
+                    pkts_this_frame++;
+
+                } else
+                {
+                    dropped_packets_++;
                     LOG4CXX_INFO(logger_, "Packet dropped!");
                 }
             }
+            const uint64_t frame_cycles = rte_get_tsc_cycles() - frame_start_cycles;
+            frames_this_second++;
+            pkts_this_second += pkts_this_frame;
+            cycles_this_second += frame_cycles;
+            if (frame_cycles > max_frame_cycles_this_second) max_frame_cycles_this_second = frame_cycles;
+            if (frame_cycles < min_frame_cycles_this_second) min_frame_cycles_this_second = frame_cycles;
+
+            frames_generated_++;
+            last_frame_number_ = frame_number;
             frame_number++;
         }
   
@@ -314,10 +405,13 @@ namespace FrameProcessor
         if (run_lcore_)
         {
             LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+            core_status_ = "stopping";
             run_lcore_ = false;
         }
         else
         {
+            if (core_status_ != "error")
+                core_status_ = "stopped";
             LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
         }
     }
@@ -329,21 +423,58 @@ namespace FrameProcessor
 
         std::string status_path = path + "/PacketGeneratorCore_" + std::to_string(proc_idx_) + "/";
 
-        const auto& data_source_config = config_.data_source_config();
+        // Generic worker core status (same keys as PacketRxCore)
+        status.set_param(status_path + "status", core_status_);
+        status.set_param(status_path + "packets_sent", packets_sent_);
+        status.set_param(status_path + "packets_dropped", dropped_packets_);
+        status.set_param(status_path + "packets_per_second", packets_per_second_);
+        status.set_param(status_path + "processing_time/average_us", mean_frame_us_);
+        status.set_param(status_path + "processing_time/min_us", min_frame_us_);
+        status.set_param(status_path + "processing_time/max_us", max_frame_us_);
+        status.set_param(status_path + "busy_percentage", busy_percentage_);
+        status.set_param(status_path + "last_frame_number", last_frame_number_);
 
-        if (data_source_config.HasMember("data_source") && data_source_config["data_source"].IsString())
+        // Generator-specific
+        status.set_param(status_path + "tx_enabled", packet_tx_);
+        status.set_param(status_path + "total_packets", total_packets_);
+        status.set_param(status_path + "frames_generated", frames_generated_);
+        status.set_param(status_path + "frames_per_second", frames_per_second_);
+        status.set_param(status_path + "max_frame_us_all_time", max_frame_us_all_time_);
+        status.set_param(status_path + "mbuf_alloc_failures", mbuf_alloc_failures_);
+        status.set_param(status_path + "tx_ring_full_waits", tx_ring_full_waits_);
+        status.set_param(status_path + "num_tx_devices", (uint64_t)tx_devices_.size());
+
+        // Per-TX-device ring / mbuf pool / xstats
+        for (const auto& dev : tx_devices_)
         {
-            std::string data_source = data_source_config["data_source"].GetString();
-            status.set_param(status_path + "data_source", data_source);
+            const std::string dpath = status_path + "tx_device_" + std::to_string(dev.port_id) + "/";
 
-            if (data_source == "generated" && data_source_config.HasMember("pattern"))
+            if (dev.ring)
             {
-                status.set_param(status_path + "pattern", std::string(data_source_config["pattern"].GetString()));
+                uint64_t cnt = rte_ring_count(dev.ring);
+                uint64_t sz  = rte_ring_get_size(dev.ring);
+                status.set_param(dpath + "tx_ring_count", cnt);
+                status.set_param(dpath + "tx_ring_free", (uint64_t)rte_ring_free_count(dev.ring));
+                status.set_param(dpath + "tx_ring_size", sz);
+                status.set_param(dpath + "tx_ring_utilization_pct", sz > 0 ? (cnt * 100) / sz : (uint64_t)0);
             }
-            else if (data_source == "hdf5" && data_source_config.HasMember("file_path"))
+
+            if (dev.device)
             {
-                status.set_param(status_path + "file_path", std::string(data_source_config["file_path"].GetString()));
+                struct rte_mempool* pool = dev.device->mbuf_pool();
+                if (pool)
+                {
+                    uint32_t avail = rte_mempool_avail_count(pool);
+                    uint32_t in_use = rte_mempool_in_use_count(pool);
+                    uint32_t total = avail + in_use;
+                    status.set_param(dpath + "mbuf_pool_available", avail);
+                    status.set_param(dpath + "mbuf_pool_in_use", in_use);
+                    status.set_param(dpath + "mbuf_pool_total", total);
+                    status.set_param(dpath + "mbuf_pool_utilization_pct", total > 0 ? (in_use * 100) / total : 0);
+                }
             }
+
+            // xstats: same body as PacketRxCore::status(), using dev.port_id and dpath + "port_xstats/"
         }
     }
 
