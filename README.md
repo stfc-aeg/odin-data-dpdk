@@ -40,20 +40,24 @@ odin-data-dpdk/
 - GCC >= 10
 - G++ >= 10
 - DPDK
-- odin-data (must be installed first)
+
+CMake 3.21 is compatible if Tensorstore functionality is not required.
 
 ## Quick Start
 
 ### Basic Installation
 
 ```bash
-# Clone and build odin-data first
+# Create install folder
+mkdir ~/develop/install
+
+# Clone and build odin-data
 cd ~/develop/repos
 git clone https://github.com/odin-detector/odin-data
 cd odin-data/cpp
-git checkout 1.10.2
+git checkout 1.13.0
 mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=~/develop/install ..
+cmake -DCMAKE_INSTALL_PREFIX=~/develop/install -DODINDATA_ROOT_DIR=~/develop/install ..
 make -j install
 
 # Clone and build odin-data-dpdk
@@ -61,7 +65,7 @@ cd ~/develop/repos
 git clone https://github.com/stfc-aeg/odin-data-dpdk
 cd odin-data-dpdk/cpp
 mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=/develop/install -DODINDATA_ROOT_DIR=/develop/install -DCMAKE_MODULE_PATH=/develop/odin-data/cpp/cmake ..
+cmake -DCMAKE_INSTALL_PREFIX=/develop/install -DODINDATA_ROOT_DIR=/develop/install ..
 make -j install
 ```
 
@@ -100,6 +104,7 @@ Detector specific plugins can built on top of this folder structure to allow odi
 ### Packet-Based Plugins
 - [mercury-detector](https://github.com/stfc-aeg/mercury-detector/tree/dpdk-plugin)
 - [babyd-detector](https://github.com/stfc-aeg/babyd-detector/tree/data)
+- [xidyn-detector](https://github.com/stfc-aeg/xidyn-detector)
 
 ### Camera-Based Plugins
 - [odin-orca-quest](https://github.com/stfc-aeg/odin-orca-quest/tree/data)
@@ -112,7 +117,7 @@ Tensorstore support can be enabled at build time:
 ```bash
 cmake -DCMAKE_INSTALL_PREFIX=/develop/install -DODINDATA_ROOT_DIR=/develop/install -DENABLE_TENSORSTORE=ON -DCMAKE_MODULE_PATH=/develop/odin-data/cpp/cmake ..
 
-NOTE: The fake cameras used to pass frames into the Tensorstore Core were modifed to enable them to output frames faster. These changes have not beenm commited as to not break other work that may be done with this repo.
+NOTE: The fake cameras used to pass frames into the Tensorstore Core were modifed to enable them to output frames faster. These changes have not been commited as to not break other work that may be done with this repo.
 ```
 
 ## Python Tools
