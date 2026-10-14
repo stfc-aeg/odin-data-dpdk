@@ -1,15 +1,14 @@
 #include "DataSource.h"
 #include "PacketProtocolDecoder.h"
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-DataSource::DataSource(PacketProtocolDecoder* decoder, FrameProcessor::DataType data_type):
+DataSource::DataSource(PacketProtocolDecoder* decoder, FrameProcessor::DataType data_type) :
     logger_(Logger::getLogger("FP.DataSource")),
-    decoder_(decoder), data_type_(data_type)
+    decoder_(decoder),
+    data_type_(data_type)
 {
-    if (decoder_ == nullptr)
-    {
+    if (decoder_ == nullptr) {
         LOG4CXX_ERROR(logger_, "DataSource constructed with a null decoder");
         return;
     }
@@ -22,8 +21,11 @@ DataSource::DataSource(PacketProtocolDecoder* decoder, FrameProcessor::DataType 
     packets_per_frame_ = decoder_->get_packets_per_frame();
     // payload_size_ = decoder_->get_payload_size();
 
-    LOG4CXX_INFO(logger_, "DataSource created: " << frame_width_ << "x" << frame_height_
-        << " (" << frame_pixels_ << " px), " << packets_per_frame_ << " packets/frame");
+    LOG4CXX_INFO(
+        logger_,
+        "DataSource created: " << frame_width_ << "x" << frame_height_ << " (" << frame_pixels_ << " px), "
+                               << packets_per_frame_ << " packets/frame"
+    );
 }
 
 DataSource::~DataSource() = default;

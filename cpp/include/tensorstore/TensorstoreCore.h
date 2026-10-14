@@ -29,146 +29,139 @@
 #include "TensorstoreCSVLogger.h"
 #include "TensorstorePerformanceMonitor.h"
 
-namespace FrameProcessor
-{
-    // Enumeration of supported pixel data types.
-    enum class PixelDataType {
-        UINT8,  // 8-bit unsigned integer (1 byte)
-        UINT16,  // 16-bit unsigned integer (2 bytes)
-        UINT32,  // 32-bit unsigned integer (4 bytes)
-        UINT64   // 64-bit unsigned integer (8 bytes)
+namespace FrameProcessor {
+// Enumeration of supported pixel data types.
+enum class PixelDataType {
+    UINT8, // 8-bit unsigned integer (1 byte)
+    UINT16, // 16-bit unsigned integer (2 bytes)
+    UINT32, // 32-bit unsigned integer (4 bytes)
+    UINT64 // 64-bit unsigned integer (8 bytes)
+};
+
+// DPDK worker core for asynchronous TensorStore write operations.
+class TensorstoreCore : public DpdkWorkerCore {
+public:
+    TensorstoreCore(int fb_idx, int socket_id, DpdkWorkCoreReferences& dpdkWorkCoreReferences);
+
+    ~TensorstoreCore();
+
+    // Main work loop running on dedicated CPU core
+    bool run(unsigned int lcore_id);
+
+    // Stops the worker core and cleans up resources
+    void stop(void);
+
+    // Reports performance statistics and status
+    void status(OdinData::IpcMessage& status, const std::string& path);
+
+    // Connects to upstream input rings
+    bool connect(void);
+
+    // Applies runtime configuration updates
+    void configure(OdinData::IpcMessage& config);
+    void requestConfiguration(OdinData::IpcMessage& reply);
+    void execute(const std::string& command, OdinData::IpcMessage& reply) override;
+    std::vector<std::pair<std::string, int>> requestCommands() override;
+
+private:
+    void start_writing_cmd();
+    void stop_writing_cmd();
+
+    // Tracks information for an in-progress asynchronous write
+    struct PendingWrite {
+        uint64_t frame_number; // First frame number in this write
+        std::vector<::SuperFrameHeader*> frame_buffers; // Frame buffer pointers
+        tensorstore::WriteFutures write_future; // TensorStore write future
+        uint64_t start_cycles; // TSC timestamp when write started
+        uint64_t num_frames; // Number of frames in the write
     };
 
-    // DPDK worker core for asynchronous TensorStore write operations.
-    class TensorstoreCore : public DpdkWorkerCore
-    {
-    public:
-        TensorstoreCore(
-            int fb_idx, 
-            int socket_id, 
-            DpdkWorkCoreReferences &dpdkWorkCoreReferences
-        );
+    // Checks for and processes completed write operations
+    void pollAndProcessCompletions();
 
-        ~TensorstoreCore();
+    // Forwards a frame buffer to downstream ring
+    void forwardFrame(::SuperFrameHeader* frame_buffer, uint64_t frame_number);
 
-        // Main work loop running on dedicated CPU core
-        bool run(unsigned int lcore_id);
+    // Handles dataset reconfiguration
+    // Flushes pending writes, closes existing dataset, and creates
+    // a new dataset with updated configuration
+    void handleReconfiguration();
 
-        // Stops the worker core and cleans up resources
-        void stop(void);
+    // Checks a frame's actual dimensions against the open dataset's dimensions. Returns true
+    // if the frame can be written. Frames stamped with dimensions that disagree with the
+    // dataset cannot be written without corrupting it, so they are forwarded instead.
+    bool frameDimensionsMatchDataset(::SuperFrameHeader* frame_buffer, uint64_t frame_number);
 
-        // Reports performance statistics and status
-        void status(OdinData::IpcMessage& status, const std::string& path);
+    // The configured dataset/CSV paths scoped by stream_id, so that cores in different
+    // streams do not write over each other. Derived on each use rather than written back
+    // into config_, so a configure() message setting "path" cannot drop the scoping and
+    // repeated calls cannot double-append the stream.
+    std::string streamScopedDatasetPath() const;
+    std::string streamScopedCsvPath() const;
 
-        // Connects to upstream input rings
-        bool connect(void);
+    // A human-readable description of where data actually lands, for logs and status. The
+    // dataset path alone is ambiguous: under the s3 kvstore it is an object key prefix inside
+    // the bucket, not a local directory, so a bare "/data0/tensorstore/primary/" reads as a
+    // local write when it is really a remote one.
+    std::string datasetDestinationDescription() const;
 
-        // Applies runtime configuration updates
-        void configure(OdinData::IpcMessage& config);
-        void requestConfiguration(OdinData::IpcMessage& reply);
-        void execute(const std::string& command, OdinData::IpcMessage& reply) override;
-        std::vector<std::pair<std::string, int>> requestCommands() override;
+    // Core configuration
+    int proc_idx_;
+    log4cxx::LoggerPtr logger_;
+    TensorstoreCoreConfiguration config_;
 
-    private:
-        void start_writing_cmd();
-        void stop_writing_cmd();
-        
-        // Tracks information for an in-progress asynchronous write
-        struct PendingWrite
-        {
-            uint64_t frame_number;                       // First frame number in this write
-            std::vector<::SuperFrameHeader*> frame_buffers; // Frame buffer pointers
-            tensorstore::WriteFutures write_future;      // TensorStore write future
-            uint64_t start_cycles;                       // TSC timestamp when write started
-            uint64_t num_frames;                         // Number of frames in the write
-        };
+    // Decoder mode for this core's stream, passed to every geometry call on the decoder so
+    // that cores in different streams read their own resolution/bit depth rather than
+    // whichever mode the shared decoder instance happens to hold.
+    std::string mode_;
 
-        // Checks for and processes completed write operations
-        void pollAndProcessCompletions();
+    // DPDK resources
+    ProtocolDecoder* decoder_;
+    DpdkSharedBuffer* shared_buf_;
+    struct rte_ring* clear_frames_ring_;
+    struct rte_ring* upstream_ring_;
+    std::vector<struct rte_ring*> downstream_rings_;
 
-        // Forwards a frame buffer to downstream ring
-        void forwardFrame(::SuperFrameHeader* frame_buffer, uint64_t frame_number);
+    // TensorStore state
+    bool tensorstore_initialized_;
+    std::string data_type_;
+    PixelDataType pixel_type_;
+    std::optional<tensorstore::TensorStore<>> store_;
+    uint64_t current_dataset_capacity_;
+    uint64_t highest_frame_written_;
+    std::string last_error_message_;
+    bool flush_pending_writes;
 
-        // Handles dataset reconfiguration
-        // Flushes pending writes, closes existing dataset, and creates
-        // a new dataset with updated configuration
-        void handleReconfiguration();
+    // Latched once per acquisition so that a persistent geometry mismatch (e.g. an ROI core
+    // upstream cropping to dims the config does not declare) logs a single error rather than
+    // one per frame at full frame rate.
+    bool dimension_mismatch_logged_;
 
-        // Checks a frame's actual dimensions against the open dataset's dimensions. Returns true
-        // if the frame can be written. Frames stamped with dimensions that disagree with the
-        // dataset cannot be written without corrupting it, so they are forwarded instead.
-        bool frameDimensionsMatchDataset(::SuperFrameHeader* frame_buffer, uint64_t frame_number);
+    // Write tracking
+    std::unordered_map<uint64_t, PendingWrite> pending_writes_queue_;
+    std::vector<struct SuperFrameHeader*> frame_chunk_buffer_;
 
-        // The configured dataset/CSV paths scoped by stream_id, so that cores in different
-        // streams do not write over each other. Derived on each use rather than written back
-        // into config_, so a configure() message setting "path" cannot drop the scoping and
-        // repeated calls cannot double-append the stream.
-        std::string streamScopedDatasetPath() const;
-        std::string streamScopedCsvPath() const;
+    // Performance statistics
+    uint64_t last_frame_;
+    uint64_t processed_frames_;
+    TensorstorePerformanceMonitor perf_monitor_;
 
-        // A human-readable description of where data actually lands, for logs and status. The
-        // dataset path alone is ambiguous: under the s3 kvstore it is an object key prefix inside
-        // the bucket, not a local directory, so a bare "/data0/tensorstore/primary/" reads as a
-        // local write when it is really a remote one.
-        std::string datasetDestinationDescription() const;
+    // Write statistics
+    uint64_t frames_written_;
+    uint64_t write_errors_;
+    uint64_t avg_write_time_us_;
+    uint64_t pending_writes_count_;
+    uint64_t frames_forwarded_;
+    uint64_t completed_writes_;
 
-        // Core configuration
-        int proc_idx_;
-        log4cxx::LoggerPtr logger_;
-        TensorstoreCoreConfiguration config_;
-        
-        // Decoder mode for this core's stream, passed to every geometry call on the decoder so
-        // that cores in different streams read their own resolution/bit depth rather than
-        // whichever mode the shared decoder instance happens to hold.
-        std::string mode_;
-
-        // DPDK resources
-        ProtocolDecoder* decoder_;
-        DpdkSharedBuffer* shared_buf_;
-        struct rte_ring* clear_frames_ring_;
-        struct rte_ring* upstream_ring_;
-        std::vector<struct rte_ring*> downstream_rings_;
-        
-        // TensorStore state
-        bool tensorstore_initialized_;
-        std::string data_type_;
-        PixelDataType pixel_type_;
-        std::optional<tensorstore::TensorStore<>> store_;
-        uint64_t current_dataset_capacity_;
-        uint64_t highest_frame_written_;
-        std::string last_error_message_;
-        bool flush_pending_writes;
-
-        // Latched once per acquisition so that a persistent geometry mismatch (e.g. an ROI core
-        // upstream cropping to dims the config does not declare) logs a single error rather than
-        // one per frame at full frame rate.
-        bool dimension_mismatch_logged_;
-        
-        // Write tracking
-        std::unordered_map<uint64_t, PendingWrite> pending_writes_queue_;
-        std::vector<struct SuperFrameHeader*> frame_chunk_buffer_;
-        
-        // Performance statistics
-        uint64_t last_frame_;
-        uint64_t processed_frames_;
-        TensorstorePerformanceMonitor perf_monitor_;
-        
-        // Write statistics
-        uint64_t frames_written_;
-        uint64_t write_errors_;
-        uint64_t avg_write_time_us_;
-        uint64_t pending_writes_count_;
-        uint64_t frames_forwarded_;
-        uint64_t completed_writes_;
-        
-        // CSV logging
-        TensorstoreCSVLogger csv_logger_;
-        std::string csv_path_;
-        uint64_t run_start_time_;
-        uint64_t first_write_time_;
-        bool first_write_recorded_;
-        unsigned int frames_per_second_;
-    };
+    // CSV logging
+    TensorstoreCSVLogger csv_logger_;
+    std::string csv_path_;
+    uint64_t run_start_time_;
+    uint64_t first_write_time_;
+    bool first_write_recorded_;
+    unsigned int frames_per_second_;
+};
 
 } // namespace FrameProcessor
 

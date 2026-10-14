@@ -7,20 +7,18 @@
 
 struct PacketHeader { };
 
-class PacketProtocolDecoder : public ProtocolDecoder
-{
+class PacketProtocolDecoder : public ProtocolDecoder {
 public:
-
     PacketProtocolDecoder(
-        const std::size_t packets_per_frame, const std::size_t payload_size,
-        const std::size_t test_pattern,
+        const std::size_t packets_per_frame, const std::size_t payload_size, const std::size_t test_pattern,
         const unsigned int frames_per_super_frame = 1
     ) :
         ProtocolDecoder(payload_size, frames_per_super_frame),
         packets_per_frame_(packets_per_frame)
-    { }
+    {
+    }
 
-    virtual ~PacketProtocolDecoder() { };
+    virtual ~PacketProtocolDecoder() {};
 
     virtual const std::size_t get_frame_data_size(const std::string& mode = "") const
     {
@@ -57,11 +55,11 @@ public:
     virtual void* prepare_frame(void* raw_frame, void* prepared_frame) = 0;
 
     virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame) = 0;
-    virtual SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame) = 0;
+    virtual SuperFrameHeader*
+    reorder_frame(SuperFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame)
+        = 0;
 
 protected:
-
     std::size_t packets_per_frame_;
-
 };
 #endif // INCLUDE_PACKET_PROTOCOL_DECODER_H_

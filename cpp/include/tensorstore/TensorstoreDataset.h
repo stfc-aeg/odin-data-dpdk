@@ -11,9 +11,7 @@
 namespace FrameProcessor {
 
 // Creates or opens a tensorstore dataset
-tensorstore::Result<tensorstore::TensorStore<>> CreateDataset(
-    const ::nlohmann::json& json_spec
-);
+tensorstore::Result<tensorstore::TensorStore<>> CreateDataset(const ::nlohmann::json& json_spec);
 
 } // namespace FrameProcessor
 

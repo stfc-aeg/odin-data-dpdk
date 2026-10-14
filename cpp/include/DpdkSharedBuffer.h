@@ -15,31 +15,28 @@ using namespace log4cxx;
 using namespace log4cxx::helpers;
 #include <DebugLevelLogger.h>
 
-namespace FrameProcessor
-{
-    class DpdkSharedBuffer
-    {
-    public:
-        DpdkSharedBuffer(
-            const std::size_t mem_size, const std::size_t buffer_size,
-            const int socket_id=SOCKET_ID_ANY,
-            const std::string& stream_id=""
-        );
-        ~DpdkSharedBuffer();
-        void* get_buffer_address(const unsigned int buffer) const;
-        const std::size_t get_num_buffers(void) const;
-        const std::size_t get_buffer_size(void) const;
-        const std::size_t get_mem_size(void) const;
+namespace FrameProcessor {
+class DpdkSharedBuffer {
+public:
+    DpdkSharedBuffer(
+        const std::size_t mem_size, const std::size_t buffer_size, const int socket_id = SOCKET_ID_ANY,
+        const std::string& stream_id = ""
+    );
+    ~DpdkSharedBuffer();
+    void* get_buffer_address(const unsigned int buffer) const;
+    const std::size_t get_num_buffers(void) const;
+    const std::size_t get_buffer_size(void) const;
+    const std::size_t get_mem_size(void) const;
 
-    private:
-        std::size_t mem_size_;    //!< total size of the shared buffer memory zone
-        std::size_t buffer_size_; //!< size of each buffer in the shared buffer object
-        std::size_t num_buffers_; //!< number of buffers in the shared buffer object
-        int socket_id_;           //!< DPDK NUMA socket ID for shared buffer memzone
-        std::string name_;        //!< Shared buffer name (used for DPDK lookups)
-        const struct rte_memzone *memzone_; //!< Pointer to DPDK memzone structure
-        LoggerPtr logger_;        //!< Message logger instance
-    };
+private:
+    std::size_t mem_size_; //!< total size of the shared buffer memory zone
+    std::size_t buffer_size_; //!< size of each buffer in the shared buffer object
+    std::size_t num_buffers_; //!< number of buffers in the shared buffer object
+    int socket_id_; //!< DPDK NUMA socket ID for shared buffer memzone
+    std::string name_; //!< Shared buffer name (used for DPDK lookups)
+    const struct rte_memzone* memzone_; //!< Pointer to DPDK memzone structure
+    LoggerPtr logger_; //!< Message logger instance
+};
 }
 
 #endif // INCLUDE_DPDKSHAREDBUFFER_H_

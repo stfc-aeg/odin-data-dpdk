@@ -6,112 +6,110 @@
 #include "network/DpdkDeviceConfiguration.h"
 #include <sstream>
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-    namespace Defaults
+namespace Defaults {
+    const std::vector<std::string> default_device_ip = { "10.0.0.1" };
+    const std::vector<uint16_t> default_rx_ports = { 1234, 1235 };
+    const uint16_t default_rx_queue_id = 0;
+    const uint16_t default_tx_queue_id = 0;
+    const uint16_t default_rx_burst_size = 128;
+    const unsigned int default_fwd_ring_size = 32768;
+    const unsigned int default_release_ring_size = 32768;
+    const unsigned int default_max_packet_tx_retries = 64;
+    const unsigned int default_max_packet_queue_retries = 64;
+    const std::vector<std::string> default_pcie_device = { "" };
+}
+
+class PacketRxConfiguration : public OdinData::ParamContainer {
+
+public:
+    PacketRxConfiguration() :
+        ParamContainer(),
+        device_ip_(Defaults::default_device_ip),
+        rx_ports_(Defaults::default_rx_ports),
+        rx_queue_id_(Defaults::default_rx_queue_id),
+        tx_queue_id_(Defaults::default_tx_queue_id),
+        rx_burst_size_(Defaults::default_rx_burst_size),
+        fwd_ring_size_(Defaults::default_fwd_ring_size),
+        release_ring_size_(Defaults::default_release_ring_size),
+        max_packet_tx_retries_(Defaults::default_max_packet_tx_retries),
+        max_packet_queue_retries_(Defaults::default_max_packet_queue_retries),
+        num_processor_cores_(Defaults::default_num_processor_cores),
+        pcie_device_(Defaults::default_pcie_device)
     {
-        const std::vector<std::string> default_device_ip = {"10.0.0.1"};
-        const std::vector<uint16_t> default_rx_ports = {1234, 1235};
-        const uint16_t default_rx_queue_id = 0;
-        const uint16_t default_tx_queue_id = 0;
-        const uint16_t default_rx_burst_size = 128;
-        const unsigned int default_fwd_ring_size = 32768;
-        const unsigned int default_release_ring_size = 32768;
-        const unsigned int default_max_packet_tx_retries = 64;
-        const unsigned int default_max_packet_queue_retries = 64;
-        const std::vector<std::string> default_pcie_device = {""};
+        bind_params();
     }
 
-    class PacketRxConfiguration : public OdinData::ParamContainer
+    void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "packet_rx")
     {
+        const ParamContainer::Value* value_ptr = core_config_.get_worker_core_config(config_key);
 
-        public:
+        if (value_ptr != nullptr) {
+            update(*value_ptr);
 
-            PacketRxConfiguration() :
-                ParamContainer(),
-                device_ip_(Defaults::default_device_ip),
-                rx_ports_(Defaults::default_rx_ports),
-                rx_queue_id_(Defaults::default_rx_queue_id),
-                tx_queue_id_(Defaults::default_tx_queue_id),
-                rx_burst_size_(Defaults::default_rx_burst_size),
-                fwd_ring_size_(Defaults::default_fwd_ring_size),
-                release_ring_size_(Defaults::default_release_ring_size),
-                max_packet_tx_retries_(Defaults::default_max_packet_tx_retries),
-                max_packet_queue_retries_(Defaults::default_max_packet_queue_retries),
-                num_processor_cores_(Defaults::default_num_processor_cores),
-                pcie_device_(Defaults::default_pcie_device)
-            {
-                bind_params();
+            // Resolve the dpdk_device subsection if present
+            if (value_ptr->HasMember("dpdk_device")) {
+                dpdk_device_.update((*value_ptr)["dpdk_device"]);
             }
+        }
+    }
 
-            void resolve(DpdkCoreConfiguration& core_config_, const std::string& config_key = "packet_rx")
-            {
-                const ParamContainer::Value* value_ptr =
-                    core_config_.get_worker_core_config(config_key);
+    const DpdkDeviceConfiguration& dpdk_device(void) const
+    {
+        return dpdk_device_;
+    }
+    DpdkDeviceConfiguration& dpdk_device(void)
+    {
+        return dpdk_device_;
+    }
 
-                if (value_ptr != nullptr)
-                {
-                    update(*value_ptr);
+private:
+    virtual void bind_params(void)
+    {
+        bind_param<std::string>(core_name, "core_name");
+        bind_param<std::string>(connect, "connect");
+        bind_param<std::string>(config_key, "config_key");
+        bind_param<std::string>(stream_id, "stream_id");
+        bind_param<std::string>(decoder_mode, "mode");
+        bind_param<unsigned int>(num_cores, "num_cores");
+        bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
+        bind_vector_param<std::string>(device_ip_, "device_ip");
+        bind_vector_param<uint16_t>(rx_ports_, "rx_ports");
+        bind_param<uint16_t>(rx_queue_id_, "rx_queue_id");
+        bind_param<uint16_t>(tx_queue_id_, "tx_queue_id");
+        bind_param<uint16_t>(rx_burst_size_, "rx_burst_size");
+        bind_param<unsigned int>(fwd_ring_size_, "fwd_ring_size");
+        bind_param<unsigned int>(release_ring_size_, "release_ring_size");
+        bind_param<unsigned int>(max_packet_tx_retries_, "max_packet_tx_retries");
+        bind_param<unsigned int>(max_packet_queue_retries_, "max_packet_queue_retries");
+        bind_vector_param<std::string>(pcie_device_, "pcie_device");
+    }
 
-                    // Resolve the dpdk_device subsection if present
-                    if (value_ptr->HasMember("dpdk_device"))
-                    {
-                        dpdk_device_.update((*value_ptr)["dpdk_device"]);
-                    }
-                }
-            }
+    std::string core_name;
+    std::string connect;
+    std::string config_key;
+    std::string stream_id;
+    std::string decoder_mode;
+    unsigned int num_cores;
+    unsigned int num_downstream_cores;
+    std::vector<std::string> device_ip_; //!< IP addresses of DPDK NIC devices (one per core)
+    std::vector<uint16_t> rx_ports_; //!< List of ports to receive packets on
+    uint16_t rx_queue_id_; //!< Packet RX queue ID
+    uint16_t tx_queue_id_; //!< Packet TX queue ID
+    uint16_t rx_burst_size_; //!< Packet RX burst size
+    unsigned int fwd_ring_size_; //!< Packet forward ring size
+    unsigned int release_ring_size_; //!< Packet release ring size
+    unsigned int max_packet_tx_retries_; //!< Max num of packet RX retries
+    unsigned int max_packet_queue_retries_; //!< Max num of packet queue retries
+    std::vector<std::string> pcie_device_; //!< PCIe addresses for NIC devices (one per core)
 
-            const DpdkDeviceConfiguration& dpdk_device(void) const { return dpdk_device_; }
-            DpdkDeviceConfiguration& dpdk_device(void) { return dpdk_device_; }
+    unsigned int num_processor_cores_; //!< Number of packet processor cores running
 
-        private:
+    DpdkDeviceConfiguration dpdk_device_; //!< DPDK device configuration subsection
 
-            virtual void bind_params(void)
-            {
-                bind_param<std::string>(core_name, "core_name");
-                bind_param<std::string>(connect, "connect");
-                bind_param<std::string>(config_key, "config_key");
-                bind_param<std::string>(stream_id, "stream_id");
-                bind_param<std::string>(decoder_mode, "mode");
-                bind_param<unsigned int>(num_cores, "num_cores");
-                bind_param<unsigned int>(num_downstream_cores, "num_downstream_cores");
-                bind_vector_param<std::string>(device_ip_, "device_ip");
-                bind_vector_param<uint16_t>(rx_ports_, "rx_ports");
-                bind_param<uint16_t>(rx_queue_id_, "rx_queue_id");
-                bind_param<uint16_t>(tx_queue_id_, "tx_queue_id");
-                bind_param<uint16_t>(rx_burst_size_, "rx_burst_size");
-                bind_param<unsigned int>(fwd_ring_size_, "fwd_ring_size");
-                bind_param<unsigned int>(release_ring_size_, "release_ring_size");
-                bind_param<unsigned int>(max_packet_tx_retries_, "max_packet_tx_retries");
-                bind_param<unsigned int>(max_packet_queue_retries_, "max_packet_queue_retries");
-                bind_vector_param<std::string>(pcie_device_, "pcie_device");
-            }
-
-            std::string core_name;
-            std::string connect;
-            std::string config_key;
-            std::string stream_id;
-            std::string decoder_mode;
-            unsigned int num_cores;
-            unsigned int num_downstream_cores;
-            std::vector<std::string> device_ip_;        //!< IP addresses of DPDK NIC devices (one per core)
-            std::vector<uint16_t> rx_ports_;            //!< List of ports to receive packets on
-            uint16_t rx_queue_id_;                      //!< Packet RX queue ID
-            uint16_t tx_queue_id_;                      //!< Packet TX queue ID
-            uint16_t rx_burst_size_;                    //!< Packet RX burst size
-            unsigned int fwd_ring_size_;                //!< Packet forward ring size
-            unsigned int release_ring_size_;            //!< Packet release ring size
-            unsigned int max_packet_tx_retries_;        //!< Max num of packet RX retries
-            unsigned int max_packet_queue_retries_;     //!< Max num of packet queue retries
-            std::vector<std::string> pcie_device_;      //!< PCIe addresses for NIC devices (one per core)
-
-            unsigned int num_processor_cores_;  //!< Number of packet processor cores running
-
-            DpdkDeviceConfiguration dpdk_device_;  //!< DPDK device configuration subsection
-
-            friend class PacketRxCore;
-    };
+    friend class PacketRxCore;
+};
 }
 
 #endif // PACKETRXCONFIGURATION_H_

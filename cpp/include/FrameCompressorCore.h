@@ -14,51 +14,46 @@ using namespace log4cxx::helpers;
 #include <rte_ring.h>
 #include <blosc.h>
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-    class FrameCompressorCore : public DpdkWorkerCore
-    {
-    public:
+class FrameCompressorCore : public DpdkWorkerCore {
+public:
+    FrameCompressorCore(int fb_idx, int socket_id, DpdkWorkCoreReferences& dpdkWorkCoreReferences);
+    ~FrameCompressorCore();
 
-        FrameCompressorCore(
-            int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
-        );
-        ~FrameCompressorCore();
+    bool run(unsigned int lcore_id);
+    void stop(void);
+    void status(OdinData::IpcMessage& status, const std::string& path);
+    bool connect(void);
+    void configure(OdinData::IpcMessage& config);
+    void requestConfiguration(OdinData::IpcMessage& reply);
 
-        bool run(unsigned int lcore_id);
-        void stop(void);
-        void status(OdinData::IpcMessage& status, const std::string& path);
-        bool connect(void);
-        void configure(OdinData::IpcMessage& config);
-        void requestConfiguration(OdinData::IpcMessage& reply);
+private:
+    int proc_idx_;
+    ProtocolDecoder* decoder_;
+    DpdkSharedBuffer* shared_buf_;
+    FrameCompressorConfiguration config_;
 
-    private:
-        int proc_idx_;
-        ProtocolDecoder* decoder_;
-        DpdkSharedBuffer* shared_buf_;
-        FrameCompressorConfiguration config_;
+    LoggerPtr logger_;
 
-        LoggerPtr logger_;
+    // Status reporting variables
+    uint64_t last_frame_;
+    uint64_t received_frames_;
+    uint64_t processed_frames_;
+    uint64_t dropped_frames_;
+    uint64_t processed_frames_hz_;
+    uint64_t idle_loops_;
+    uint64_t mean_us_on_frame_;
+    uint64_t minimum_us_on_frame_;
+    uint64_t maximum_us_on_frame_;
+    uint64_t core_usage_;
+    std::string core_status_;
 
-        // Status reporting variables
-        uint64_t last_frame_;
-        uint64_t received_frames_;
-        uint64_t processed_frames_;
-        uint64_t dropped_frames_;
-        uint64_t processed_frames_hz_;
-        uint64_t idle_loops_;
-        uint64_t mean_us_on_frame_;
-        uint64_t minimum_us_on_frame_;
-        uint64_t maximum_us_on_frame_;
-        uint64_t core_usage_;
-        std::string core_status_;
-
-        struct rte_ring* frame_ready_ring_;
-        struct rte_ring* clear_frames_ring_;
-        struct rte_ring* upstream_ring_;
-        std::vector<struct rte_ring*> downstream_rings_;
-    };
+    struct rte_ring* frame_ready_ring_;
+    struct rte_ring* clear_frames_ring_;
+    struct rte_ring* upstream_ring_;
+    std::vector<struct rte_ring*> downstream_rings_;
+};
 }
 
 #endif // INCLUDE_FRAMECOMPRESSORCORE_H_
