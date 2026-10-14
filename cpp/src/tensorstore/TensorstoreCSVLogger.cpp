@@ -7,8 +7,8 @@ using namespace log4cxx::helpers;
 
 namespace FrameProcessor {
 
-TensorstoreCSVLogger::TensorstoreCSVLogger()
-    : enabled_(false)
+TensorstoreCSVLogger::TensorstoreCSVLogger() :
+    enabled_(false)
 {
 }
 
@@ -22,7 +22,7 @@ TensorstoreCSVLogger::~TensorstoreCSVLogger()
 bool TensorstoreCSVLogger::Open(const std::string& filename, log4cxx::LoggerPtr logger)
 {
     path_ = filename;
-    
+
     std::ifstream check_file(path_);
     bool file_exists = check_file.good();
     check_file.close();
@@ -39,7 +39,7 @@ bool TensorstoreCSVLogger::Open(const std::string& filename, log4cxx::LoggerPtr 
                   << "success,cumulative_frames,avg_write_time_us,core_id,frames_per_second\n";
             file_.flush();
         }
-        
+
         return true;
     } else {
         enabled_ = false;
@@ -49,33 +49,20 @@ bool TensorstoreCSVLogger::Open(const std::string& filename, log4cxx::LoggerPtr 
 }
 
 void TensorstoreCSVLogger::LogWrite(
-    uint64_t frame_number,
-    size_t num_frames,
-    uint64_t write_time_us,
-    bool success,
-    uint64_t frames_written,
-    uint64_t avg_write_time_us,
-    unsigned int lcore_id,
-    unsigned int frames_per_second,
-    uint64_t first_write_time,
-    uint64_t tsc_hz)
+    uint64_t frame_number, size_t num_frames, uint64_t write_time_us, bool success, uint64_t frames_written,
+    uint64_t avg_write_time_us, unsigned int lcore_id, unsigned int frames_per_second, uint64_t first_write_time,
+    uint64_t tsc_hz
+)
 {
     if (!file_.is_open() || !enabled_) {
         return;
     }
-    
-    uint64_t current_cycles = rte_get_tsc_cycles();
-    double elapsed_seconds = static_cast<double>(current_cycles - first_write_time) /
-                             static_cast<double>(tsc_hz);
 
-    file_ << elapsed_seconds << ","
-          << frame_number << ","
-          << num_frames << ","
-          << write_time_us << ","
-          << (success ? "1" : "0") << ","
-          << frames_written << ","
-          << avg_write_time_us << ","
-          << lcore_id << ","
+    uint64_t current_cycles = rte_get_tsc_cycles();
+    double elapsed_seconds = static_cast<double>(current_cycles - first_write_time) / static_cast<double>(tsc_hz);
+
+    file_ << elapsed_seconds << "," << frame_number << "," << num_frames << "," << write_time_us << ","
+          << (success ? "1" : "0") << "," << frames_written << "," << avg_write_time_us << "," << lcore_id << ","
           << frames_per_second << "\n";
     file_.flush();
 }

@@ -6,23 +6,17 @@
 #include <rapidjson/document.h>
 #include <string>
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-class HDF5DataSource : public DataSource
-{
+class HDF5DataSource : public DataSource {
 public:
-
-    HDF5DataSource(
-        PacketProtocolDecoder* decoder,
-        const rapidjson::Value& data_source_config);
+    HDF5DataSource(PacketProtocolDecoder* decoder, const rapidjson::Value& data_source_config);
 
     ~HDF5DataSource() override;
 
     void getData(void* destination) override;
 
 private:
-
     hid_t file_;
     hid_t dataset_;
     hid_t dataspace_;

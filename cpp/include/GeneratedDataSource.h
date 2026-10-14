@@ -5,23 +5,16 @@
 #include <string>
 #include <rapidjson/document.h>
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-class GeneratedDataSource : public DataSource
-{
+class GeneratedDataSource : public DataSource {
 public:
-
-    GeneratedDataSource(
-        PacketProtocolDecoder* decoder,
-        const rapidjson::Value& data_source_config);
+    GeneratedDataSource(PacketProtocolDecoder* decoder, const rapidjson::Value& data_source_config);
 
     void getData(void* destination) override;
 
 private:
-
-    enum class Pattern
-    {
+    enum class Pattern {
         Incrementing,
         PacketNum,
         Fixed

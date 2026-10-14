@@ -8,8 +8,8 @@
 #ifndef INCLUDE_DUMMY_DPDK_CAMERA_PLUGIN_H_
 #define INCLUDE_DUMMY_DPDK_CAMERA_PLUGIN_H_
 
-#include<string>
-#include<map>
+#include <string>
+#include <map>
 
 #include <boost/scoped_ptr.hpp>
 
@@ -24,20 +24,17 @@ using namespace log4cxx::helpers;
 #include "camera/DummyDpdkCameraDecoder.h"
 #include "ClassLoader.h"
 
+namespace FrameProcessor {
 
-namespace FrameProcessor
-{
+/** DummyDpdk Plugin
+ *
+ * The DummyDpdkCameraPlugin class implements a DPDK-aware plugin capable of receiving data
+ * frame packets from upstream DPDK packet processing cores and injecting them into the
+ * frameProcessor frame data flow.
+ */
+class DummyDpdkCameraPlugin : public DpdkFrameProcessorPlugin {
 
-  /** DummyDpdk Plugin
-   *
-   * The DummyDpdkCameraPlugin class implements a DPDK-aware plugin capable of receiving data
-   * frame packets from upstream DPDK packet processing cores and injecting them into the
-   * frameProcessor frame data flow.
-   */
-  class DummyDpdkCameraPlugin : public DpdkFrameProcessorPlugin
-  {
-
-  public:
+public:
     DummyDpdkCameraPlugin();
     virtual ~DummyDpdkCameraPlugin();
 
@@ -48,22 +45,20 @@ namespace FrameProcessor
 
     void process_frame(boost::shared_ptr<Frame> frame);
 
-  private:
-
+private:
     /** Pointer to logger **/
     LoggerPtr logger_;
 
     DummyDpdkCameraProtocolDecoder decoder_;
 
     OdinData::IpcMessage config_;
+};
 
-  };
-
-  /**
-   * Registration of this plugin through the ClassLoader.  This macro
-   * registers the class without needing to worry about name mangling
-   */
-  REGISTER(FrameProcessorPlugin, DummyDpdkCameraPlugin, "DummyDpdkCameraPlugin");
+/**
+ * Registration of this plugin through the ClassLoader.  This macro
+ * registers the class without needing to worry about name mangling
+ */
+REGISTER(FrameProcessorPlugin, DummyDpdkCameraPlugin, "DummyDpdkCameraPlugin");
 
 } /* namespace FrameProcessor */
 

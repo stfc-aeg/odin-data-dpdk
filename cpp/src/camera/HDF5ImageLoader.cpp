@@ -1,34 +1,38 @@
 #include "camera/HDF5ImageLoader.h"
-#include <stdexcept>
-#include <iostream>
 #include <cmath>
+#include <iostream>
+#include <stdexcept>
 
-HDF5ImageLoader::HDF5ImageLoader(int width, int height, int bitDepth, 
-                                 ImageFormat format, const std::string& datasetName)
-    : width_(width)
-    , height_(height)
-    , bitDepth_(bitDepth)
-    , format_(format)
-    , datasetName_(datasetName)
-    , h5file_(-1)
-    , dataset_(-1)
-    , totalFrames_(0)
-    , drawTextEnabled_(false)
-    , drawFrameNumberEnabled_(false)
-    , inputFormat_(PixelFormat::UINT16)
-    , outputFormat_(PixelFormat::UINT16)
-	, logger_(Logger::getLogger("FP.HDF5ImageLoader")) {
+HDF5ImageLoader::HDF5ImageLoader(
+    int width, int height, int bitDepth, ImageFormat format, const std::string& datasetName
+) :
+    width_(width),
+    height_(height),
+    bitDepth_(bitDepth),
+    format_(format),
+    datasetName_(datasetName),
+    h5file_(-1),
+    dataset_(-1),
+    totalFrames_(0),
+    drawTextEnabled_(false),
+    drawFrameNumberEnabled_(false),
+    inputFormat_(PixelFormat::UINT16),
+    outputFormat_(PixelFormat::UINT16),
+    logger_(Logger::getLogger("FP.HDF5ImageLoader"))
+{
 
     // Initialize frame data structures
     current_frame_.resize(width * height);
     frameCache_.valid = false;
-    
-    LOG4CXX_INFO(logger_, "HDF5ImageLoader initialized (width=" << width 
-              << ", height=" << height 
-              << ", dataset=" << datasetName << ")" );
+
+    LOG4CXX_INFO(
+        logger_,
+        "HDF5ImageLoader initialized (width=" << width << ", height=" << height << ", dataset=" << datasetName << ")"
+    );
 }
 
-HDF5ImageLoader::~HDF5ImageLoader() {
+HDF5ImageLoader::~HDF5ImageLoader()
+{
     if (dataset_ >= 0) {
         H5Dclose(dataset_);
     }
@@ -37,9 +41,10 @@ HDF5ImageLoader::~HDF5ImageLoader() {
     }
 }
 
-void HDF5ImageLoader::loadImagesFromHDF5(const std::string& filePath) {
-    LOG4CXX_INFO(logger_, "Loading HDF5 file: " << filePath );
-    
+void HDF5ImageLoader::loadImagesFromHDF5(const std::string& filePath)
+{
+    LOG4CXX_INFO(logger_, "Loading HDF5 file: " << filePath);
+
     h5file_ = H5Fopen(filePath.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (h5file_ < 0) {
         throw std::runtime_error("Failed to open HDF5 file: " + filePath);
@@ -57,96 +62,103 @@ void HDF5ImageLoader::loadImagesFromHDF5(const std::string& filePath) {
     int rank = H5Sget_simple_extent_ndims(dataspace);
     std::vector<hsize_t> dims(rank);
     H5Sget_simple_extent_dims(dataspace, dims.data(), nullptr);
-    
+
     if (rank != 3) {
         H5Sclose(dataspace);
         throw std::runtime_error("Dataset must be 3-dimensional (frames, height, width)");
     }
-    
+
     totalFrames_ = dims[0];
-    
+
     if (dims[1] != height_ || dims[2] != width_) {
-        LOG4CXX_ERROR(logger_, "Dataset dimensions (" << dims[2] << "x" << dims[1]
-                  << ") do not match expected dimensions (" << width_ << "x" << height_ << ")");
+        LOG4CXX_ERROR(
+            logger_,
+            "Dataset dimensions (" << dims[2] << "x" << dims[1] << ") do not match expected dimensions (" << width_
+                                   << "x" << height_ << ")"
+        );
         H5Sclose(dataspace);
         throw std::runtime_error("Dataset dimensions do not match expected dimensions");
     }
-    
+
     // Determine input format from dataset type
     hid_t dtype = H5Dget_type(dataset_);
     size_t size = H5Tget_size(dtype);
     H5Tclose(dtype);
 
-    if (size == 1) inputFormat_ = PixelFormat::UINT8;
-    else if (size == 2) inputFormat_ = PixelFormat::UINT16;
-    else if (size == 4) inputFormat_ = PixelFormat::UINT32;
+    if (size == 1)
+        inputFormat_ = PixelFormat::UINT8;
+    else if (size == 2)
+        inputFormat_ = PixelFormat::UINT16;
+    else if (size == 4)
+        inputFormat_ = PixelFormat::UINT32;
     else {
         H5Sclose(dataspace);
         throw std::runtime_error("Unsupported pixel format in HDF5 file");
     }
-    
+
     H5Sclose(dataspace);
-    
+
     // Initialize frame cache
     frameCache_.data.resize(width_ * height_);
     frameCache_.valid = false;
-    
-    LOG4CXX_INFO(logger_, "Successfully opened HDF5 file with " << totalFrames_ << " frames" );
-    LOG4CXX_INFO(logger_, "Input format: " << size << " bytes per pixel" );
+
+    LOG4CXX_INFO(logger_, "Successfully opened HDF5 file with " << totalFrames_ << " frames");
+    LOG4CXX_INFO(logger_, "Input format: " << size << " bytes per pixel");
 }
 
-void HDF5ImageLoader::loadFrameFromHDF5(size_t frameIndex) {
+void HDF5ImageLoader::loadFrameFromHDF5(size_t frameIndex)
+{
     if (dataset_ < 0) {
         throw std::runtime_error("No HDF5 file loaded");
     }
-    
+
     // Make sure frameIndex is in bounds
     if (frameIndex >= totalFrames_) {
-        throw std::runtime_error("Frame index out of bounds: " + 
-                                std::to_string(frameIndex) + " >= " + 
-                                std::to_string(totalFrames_));
+        throw std::runtime_error(
+            "Frame index out of bounds: " + std::to_string(frameIndex) + " >= " + std::to_string(totalFrames_)
+        );
     }
-    
+
     // Define hyperslab selection parameters
-    hsize_t offset[3] = {frameIndex, 0, 0};
-    hsize_t count[3] = {1, static_cast<hsize_t>(height_), static_cast<hsize_t>(width_)};
-    
+    hsize_t offset[3] = { frameIndex, 0, 0 };
+    hsize_t count[3] = { 1, static_cast<hsize_t>(height_), static_cast<hsize_t>(width_) };
+
     // Create dataspace for memory and file
     hid_t memspace = H5Screate_simple(2, &count[1], nullptr);
     hid_t filespace = H5Dget_space(dataset_);
     H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, nullptr, count, nullptr);
-    
+
     // Clear the frame cache data before loading new data
     std::fill(frameCache_.data.begin(), frameCache_.data.end(), 0);
-    
+
     // Read data based on input format
     herr_t status = -1;
     switch (inputFormat_) {
-        case PixelFormat::UINT8: {
-            std::vector<uint8_t> temp(width_ * height_);
-            status = H5Dread(dataset_, H5T_NATIVE_UINT8, memspace, filespace, H5P_DEFAULT, temp.data());
-            if (status >= 0) {
-                convertPixelFormat(temp, frameCache_.data);
-            }
-            break;
+    case PixelFormat::UINT8: {
+        std::vector<uint8_t> temp(width_ * height_);
+        status = H5Dread(dataset_, H5T_NATIVE_UINT8, memspace, filespace, H5P_DEFAULT, temp.data());
+        if (status >= 0) {
+            convertPixelFormat(temp, frameCache_.data);
         }
-        case PixelFormat::UINT16: {
-            status = H5Dread(dataset_, H5T_NATIVE_UINT16, memspace, filespace, H5P_DEFAULT, frameCache_.data.data());
-            break;
+        break;
+    }
+    case PixelFormat::UINT16: {
+        status = H5Dread(dataset_, H5T_NATIVE_UINT16, memspace, filespace, H5P_DEFAULT, frameCache_.data.data());
+        break;
+    }
+    case PixelFormat::UINT32: {
+        std::vector<uint32_t> temp(width_ * height_);
+        status = H5Dread(dataset_, H5T_NATIVE_UINT32, memspace, filespace, H5P_DEFAULT, temp.data());
+        if (status >= 0) {
+            convertPixelFormat(temp, frameCache_.data);
         }
-        case PixelFormat::UINT32: {
-            std::vector<uint32_t> temp(width_ * height_);
-            status = H5Dread(dataset_, H5T_NATIVE_UINT32, memspace, filespace, H5P_DEFAULT, temp.data());
-            if (status >= 0) {
-                convertPixelFormat(temp, frameCache_.data);
-            }
-            break;
-        }
+        break;
+    }
     }
 
     H5Sclose(memspace);
     H5Sclose(filespace);
-    
+
     if (status < 0) {
         throw std::runtime_error("Failed to read frame " + std::to_string(frameIndex) + " from HDF5 file");
     }
@@ -154,48 +166,49 @@ void HDF5ImageLoader::loadFrameFromHDF5(size_t frameIndex) {
     // Mark the cache as valid with the current frame index
     frameCache_.frameIndex = frameIndex;
     frameCache_.valid = true;
-    
+
     // Log for debugging
-    LOG4CXX_INFO(logger_, "Loaded frame " << frameIndex << " from HDF5 file" );
+    LOG4CXX_INFO(logger_, "Loaded frame " << frameIndex << " from HDF5 file");
 }
 
-template<typename InType, typename OutType>
-void HDF5ImageLoader::convertPixelFormat(const std::vector<InType>& input, 
-                                         std::vector<OutType>& output) {
+template <typename InType, typename OutType>
+void HDF5ImageLoader::convertPixelFormat(const std::vector<InType>& input, std::vector<OutType>& output)
+{
     output.resize(input.size());
-    
+
     // Calculate scaling factors based on input and output types
     double inMax = std::pow(2, sizeof(InType) * 8) - 1;
     double outMax = std::pow(2, sizeof(OutType) * 8) - 1;
     double scale = outMax / inMax;
-    
+
     for (size_t i = 0; i < input.size(); ++i) {
         output[i] = static_cast<OutType>(input[i] * scale);
     }
 }
 
-void HDF5ImageLoader::generateImage(int cameraNumber, uint64_t frameNumber) {
+void HDF5ImageLoader::generateImage(int cameraNumber, uint64_t frameNumber)
+{
     if (dataset_ < 0) {
         throw std::runtime_error("No HDF5 file loaded - call loadImagesFromHDF5() first");
     }
-    
+
     if (totalFrames_ == 0) {
         throw std::runtime_error("No frames available in HDF5 file");
     }
-    
+
     // Calculate which frame to use from the HDF5 file
     // Using modulo to wrap around when we reach the end
     size_t requestedFrame = frameNumber % totalFrames_;
-    
+
     // Load frame if needed
     if (!frameCache_.valid || frameCache_.frameIndex != requestedFrame) {
         loadFrameFromHDF5(requestedFrame);
     }
-    
+
     // Always make a clean copy from the cache to the current frame
     // to ensure changes don't accumulate across frames
     current_frame_ = frameCache_.data;
-    
+
     // Draw text overlays if enabled
     if (drawTextEnabled_) {
         drawText("CAMERA: " + std::to_string(cameraNumber), 10, 30, 0xFFFF, 4);
@@ -205,37 +218,44 @@ void HDF5ImageLoader::generateImage(int cameraNumber, uint64_t frameNumber) {
     }
 }
 
-void HDF5ImageLoader::setTextDrawingEnabled(bool enabled) {
+void HDF5ImageLoader::setTextDrawingEnabled(bool enabled)
+{
     drawTextEnabled_ = enabled;
 }
 
-void HDF5ImageLoader::setFrameNumberDrawingEnabled(bool enabled) {
+void HDF5ImageLoader::setFrameNumberDrawingEnabled(bool enabled)
+{
     drawFrameNumberEnabled_ = enabled;
 }
 
-void HDF5ImageLoader::setOutputFormat(PixelFormat format) {
+void HDF5ImageLoader::setOutputFormat(PixelFormat format)
+{
     outputFormat_ = format;
 }
 
-const std::vector<uint16_t>& HDF5ImageLoader::getImageData() const {
+const std::vector<uint16_t>& HDF5ImageLoader::getImageData() const
+{
     return current_frame_;
 }
 
-size_t HDF5ImageLoader::getFrameCount() const {
+size_t HDF5ImageLoader::getFrameCount() const
+{
     return totalFrames_;
 }
 
-void HDF5ImageLoader::drawPixel(int x, int y, uint16_t value) {
+void HDF5ImageLoader::drawPixel(int x, int y, uint16_t value)
+{
     if (x >= 0 && x < width_ && y >= 0 && y < height_) {
         current_frame_[y * width_ + x] = value;
     }
 }
 
-void HDF5ImageLoader::drawChar(char c, int x, int y, uint16_t value, int scale) {
+void HDF5ImageLoader::drawChar(char c, int x, int y, uint16_t value, int scale)
+{
     int index = (c - 32) * 120;
     int charWidth = 24;
     int charHeight = 40;
-    
+
     for (int row = 0; row < charHeight; ++row) {
         for (int col = 0; col < charWidth; col += 8) {
             uint8_t byte = Font40_Table[index + (row * 3) + (col / 8)];
@@ -252,9 +272,10 @@ void HDF5ImageLoader::drawChar(char c, int x, int y, uint16_t value, int scale) 
     }
 }
 
-void HDF5ImageLoader::drawText(const std::string& text, int x, int y, uint16_t value, int scale) {
-    int charSpacing = 24 * scale;  // Spacing between characters
-    
+void HDF5ImageLoader::drawText(const std::string& text, int x, int y, uint16_t value, int scale)
+{
+    int charSpacing = 24 * scale; // Spacing between characters
+
     for (size_t i = 0; i < text.length(); ++i) {
         drawChar(text[i], x + i * charSpacing, y, value, scale);
     }
@@ -4250,6 +4271,5 @@ const uint8_t HDF5ImageLoader::Font40_Table[] = {
 	0x00, 0x00, 0x00, 
 	0x00, 0x00, 0x00, 
 	0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 
-	
+	0x00, 0x00, 0x00,
 };

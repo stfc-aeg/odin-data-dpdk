@@ -1,0 +1,13 @@
+Language: Cpp
+BasedOnStyle: WebKit
+ColumnLimit: 120
+AlignAfterOpenBracket: BlockIndent
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortFunctionsOnASingleLine: None
+BinPackParameters: True
+AlignEscapedNewlines: Left
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
+MaxEmptyLinesToKeep: 1
+AllowShortEnumsOnASingleLine: false
+SortIncludes: false

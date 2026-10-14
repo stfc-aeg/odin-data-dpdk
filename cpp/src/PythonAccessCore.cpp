@@ -2,268 +2,253 @@
 #include "DpdkUtils.h"
 #include <stdexcept>
 
-namespace FrameProcessor
+namespace FrameProcessor {
+PythonAccessCore::PythonAccessCore(int fb_idx, int socket_id, DpdkWorkCoreReferences& dpdkWorkCoreReferences) :
+    DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
+    logger_(Logger::getLogger("FP.PythonAccessCore")),
+    proc_idx_(fb_idx),
+    decoder_(dpdkWorkCoreReferences.decoder),
+    shared_buf_(dpdkWorkCoreReferences.shared_buf),
+    core_status_("constructing"),
+    processed_frames_(0),
+    processed_frames_hz_(0),
+    idle_loops_(0),
+    mean_us_on_frame_(0),
+    minimum_us_on_frame_(0),
+    maximum_us_on_frame_(0),
+    core_usage_(0),
+    last_frame_(0)
 {
-    PythonAccessCore::PythonAccessCore(
-        int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
-    ) :
-        DpdkWorkerCore(socket_id, dpdkWorkCoreReferences.stream_id, dpdkWorkCoreReferences.config_key),
-        logger_(Logger::getLogger("FP.PythonAccessCore")),
-        proc_idx_(fb_idx),
-        decoder_(dpdkWorkCoreReferences.decoder),
-        shared_buf_(dpdkWorkCoreReferences.shared_buf),
-        core_status_("constructing"),
-        processed_frames_(0),
-        processed_frames_hz_(0),
-        idle_loops_(0),
-        mean_us_on_frame_(0),
-        minimum_us_on_frame_(0),
-        maximum_us_on_frame_(0),
-        core_usage_(0),
-        last_frame_(0)
-    {
-        config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
+    config_.resolve(dpdkWorkCoreReferences.core_config, dpdkWorkCoreReferences.config_key);
 
-        LOG4CXX_INFO(logger_, "FP.PythonAccessCore " << proc_idx_ << " Created with config:"
-            << " | core_name: " << config_.core_name
-            << " | num_cores: " << config_.num_cores
-            << " | connect: " << config_.connect
-            << " | upstream_core: " << config_.upstream_core
-            << " | num_downstream_cores: " << config_.num_downstream_cores
+    LOG4CXX_INFO(
+        logger_,
+        "FP.PythonAccessCore " << proc_idx_ << " Created with config:"
+                               << " | core_name: " << config_.core_name << " | num_cores: " << config_.num_cores
+                               << " | connect: " << config_.connect << " | upstream_core: " << config_.upstream_core
+                               << " | num_downstream_cores: " << config_.num_downstream_cores
+    );
+
+    // Create downstream rings, or look them up if already created by a sibling core
+    for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++) {
+        std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
+        struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
+        if (downstream_ring == NULL) {
+            unsigned int downstream_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
+            LOG4CXX_INFO(logger_, "Creating ring name " << downstream_ring_name << " of size " << downstream_ring_size);
+            downstream_ring = rte_ring_create(downstream_ring_name.c_str(), downstream_ring_size, socket_id_, 0);
+            if (downstream_ring == NULL) {
+                throw std::runtime_error(
+                    "Failed to create downstream ring " + downstream_ring_name + ": " + rte_strerror(rte_errno)
+                );
+            }
+        }
+        downstream_rings_.push_back(downstream_ring);
+    }
+
+    // Create PythonRingBuffer rings for external Python consumers.
+    // Python code should dequeue frames, process them, then re-enqueue to the downstream ring.
+    for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++) {
+        std::string python_ring_name = ring_name_str("PythonRingBuffer", socket_id_, ring_idx);
+        struct rte_ring* python_ring = rte_ring_lookup(python_ring_name.c_str());
+        if (python_ring == NULL) {
+            unsigned int python_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
+            LOG4CXX_INFO(logger_, "Creating ring name " << python_ring_name << " of size " << python_ring_size);
+            python_ring = rte_ring_create(python_ring_name.c_str(), python_ring_size, socket_id_, 0);
+            if (python_ring == NULL) {
+                throw std::runtime_error(
+                    "Failed to create python ring buffer " + python_ring_name + ": " + rte_strerror(rte_errno)
+                );
+            }
+        }
+        python_access_rings_.push_back(python_ring);
+    }
+
+    core_status_ = "ready";
+}
+
+PythonAccessCore::~PythonAccessCore(void)
+{
+    LOG4CXX_DEBUG_LEVEL(2, logger_, "PythonAccessCore destructor");
+    stop();
+}
+
+bool PythonAccessCore::run(unsigned int lcore_id)
+{
+    lcore_id_ = lcore_id;
+    run_lcore_ = true;
+    core_status_ = "starting";
+
+    LOG4CXX_INFO(logger_, "PythonAccessCore: " << lcore_id_ << " starting up");
+
+    struct SuperFrameHeader* current_frame_buffer_;
+
+    uint64_t frames_per_second = 1;
+    uint64_t last = rte_get_tsc_cycles();
+    uint64_t cycles_per_sec = rte_get_tsc_hz();
+    uint64_t cycles_working = 1;
+    uint64_t start_frame_cycles = 1;
+    uint64_t total_frame_cycles = 1;
+    uint64_t minimum_frame_cycles = UINT64_MAX;
+    uint64_t maximum_frame_cycles = 1;
+    uint64_t idle_loops = 0;
+
+    core_status_ = "running";
+
+    while (likely(run_lcore_)) {
+        uint64_t now = rte_get_tsc_cycles();
+        if (unlikely((now - last) >= (cycles_per_sec))) {
+            // Update any monitoring variables every second
+            processed_frames_hz_ = frames_per_second - 1;
+            mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
+            core_usage_ = (cycles_working * 255) / cycles_per_sec;
+
+            if (frames_per_second > 1) {
+                minimum_us_on_frame_ = (minimum_frame_cycles * 1000000) / cycles_per_sec;
+
+                maximum_us_on_frame_ = (maximum_frame_cycles * 1000000) / cycles_per_sec;
+            } else {
+                minimum_us_on_frame_ = 0;
+                maximum_us_on_frame_ = 0;
+            }
+
+            idle_loops_ = idle_loops;
+
+            // Reset any counters
+            frames_per_second = 1;
+            idle_loops = 0;
+            total_frame_cycles = 1;
+            cycles_working = 1;
+            minimum_frame_cycles = UINT64_MAX;
+            last = now;
+        }
+        if (rte_ring_dequeue(upstream_ring_, (void**)&current_frame_buffer_) < 0) {
+            idle_loops_++;
+            continue;
+        } else {
+            start_frame_cycles = rte_get_tsc_cycles();
+
+            uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
+            last_frame_ = frame_number;
+
+            rte_ring_enqueue(python_access_rings_[frame_number % config_.num_downstream_cores], current_frame_buffer_);
+
+            uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
+            total_frame_cycles += cycles_spent;
+            cycles_working += cycles_spent;
+
+            if (minimum_frame_cycles > cycles_spent) {
+                minimum_frame_cycles = cycles_spent;
+            }
+            if (maximum_frame_cycles < cycles_spent) {
+                maximum_frame_cycles = cycles_spent;
+            }
+
+            frames_per_second++;
+            processed_frames_++;
+
+            LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Enqueued frame: " << frame_number);
+        }
+    }
+
+    LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " completed");
+
+    core_status_ = "stopped";
+
+    return true;
+}
+
+void PythonAccessCore::stop(void)
+{
+    if (run_lcore_) {
+        LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
+        core_status_ = "stopping";
+        run_lcore_ = false;
+    } else {
+        LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
+    }
+}
+
+void PythonAccessCore::status(OdinData::IpcMessage& status, const std::string& path)
+{
+    std::string status_path = path + "/PythonAccessCore_" + std::to_string(proc_idx_) + "/";
+    std::string ring_status = status_path + "upstream_rings/";
+
+    // Generic worker-core status
+    status.set_param(status_path + "status", core_status_);
+    status.set_param(status_path + "objects_processed", processed_frames_);
+    status.set_param(status_path + "objects_per_second", processed_frames_hz_);
+    status.set_param(status_path + "last_frame_number", last_frame_);
+    status.set_param(status_path + "busy_percentage", core_usage_);
+
+    status.set_param(status_path + "processing_time/average_us", mean_us_on_frame_);
+    status.set_param(status_path + "processing_time/min_us", minimum_us_on_frame_);
+    status.set_param(status_path + "processing_time/max_us", maximum_us_on_frame_);
+
+    // PythonAccess-specific status
+    status.set_param(status_path + "frames_processed", processed_frames_);
+
+    if (upstream_ring_ != nullptr) {
+        status.set_param(
+            ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count",
+            rte_ring_count(upstream_ring_)
         );
-
-        // Create downstream rings, or look them up if already created by a sibling core
-        for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
-        {
-            std::string downstream_ring_name = ring_name_str(config_.config_key, socket_id_, ring_idx);
-            struct rte_ring* downstream_ring = rte_ring_lookup(downstream_ring_name.c_str());
-            if (downstream_ring == NULL)
-            {
-                unsigned int downstream_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
-                LOG4CXX_INFO(logger_, "Creating ring name "
-                    << downstream_ring_name << " of size " << downstream_ring_size
-                );
-                downstream_ring = rte_ring_create(
-                    downstream_ring_name.c_str(), downstream_ring_size, socket_id_, 0
-                );
-                if (downstream_ring == NULL)
-                {
-                    throw std::runtime_error("Failed to create downstream ring " + downstream_ring_name
-                        + ": " + rte_strerror(rte_errno));
-                }
-            }
-            downstream_rings_.push_back(downstream_ring);
-        }
-
-        // Create PythonRingBuffer rings for external Python consumers.
-        // Python code should dequeue frames, process them, then re-enqueue to the downstream ring.
-        for (int ring_idx = 0; ring_idx < config_.num_downstream_cores; ring_idx++)
-        {
-            std::string python_ring_name = ring_name_str("PythonRingBuffer", socket_id_, ring_idx);
-            struct rte_ring* python_ring = rte_ring_lookup(python_ring_name.c_str());
-            if (python_ring == NULL)
-            {
-                unsigned int python_ring_size = nearest_power_two(shared_buf_->get_num_buffers());
-                LOG4CXX_INFO(logger_, "Creating ring name "
-                    << python_ring_name << " of size " << python_ring_size
-                );
-                python_ring = rte_ring_create(
-                    python_ring_name.c_str(), python_ring_size, socket_id_, 0
-                );
-                if (python_ring == NULL)
-                {
-                    throw std::runtime_error("Failed to create python ring buffer " + python_ring_name
-                        + ": " + rte_strerror(rte_errno));
-                }
-            }
-            python_access_rings_.push_back(python_ring);
-        }
-
-        core_status_ = "ready";
+        status.set_param(
+            ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size",
+            rte_ring_get_size(upstream_ring_)
+        );
     }
 
-    PythonAccessCore::~PythonAccessCore(void)
-    {
-        LOG4CXX_DEBUG_LEVEL(2, logger_, "PythonAccessCore destructor");
-        stop();
+    if (clear_frames_ring_ != nullptr) {
+        status.set_param(
+            ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count",
+            rte_ring_count(clear_frames_ring_)
+        );
+        status.set_param(
+            ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size",
+            rte_ring_get_size(clear_frames_ring_)
+        );
+    }
+}
+
+bool PythonAccessCore::connect(void)
+{
+    std::string upstream_ring_name = ring_name_str(config_.upstream_core, socket_id_, proc_idx_);
+    struct rte_ring* upstream_ring = rte_ring_lookup(upstream_ring_name.c_str());
+    if (upstream_ring == NULL) {
+        LOG4CXX_ERROR(
+            logger_,
+            config_.core_name << " : " << proc_idx_ << " Failed to connect to upstream ring: " << upstream_ring_name
+        );
+        return false;
+    }
+    upstream_ring_ = upstream_ring;
+
+    std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
+    clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
+    if (clear_frames_ring_ == NULL) {
+        LOG4CXX_ERROR(
+            logger_,
+            config_.core_name << " : " << proc_idx_
+                              << " Failed to connect to clear_frames ring: " << clear_frames_ring_name
+        );
+        return false;
     }
 
-    bool PythonAccessCore::run(unsigned int lcore_id)
-    {
-        lcore_id_ = lcore_id;
-        run_lcore_ = true;
-        core_status_ = "starting";
+    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
 
-        LOG4CXX_INFO(logger_, "PythonAccessCore: " << lcore_id_ << " starting up");
+    return true;
+}
 
-        struct SuperFrameHeader *current_frame_buffer_;
+void PythonAccessCore::configure(OdinData::IpcMessage& config)
+{
+    LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
+}
 
-        uint64_t frames_per_second = 1;
-        uint64_t last = rte_get_tsc_cycles();
-        uint64_t cycles_per_sec = rte_get_tsc_hz();
-        uint64_t cycles_working = 1;
-        uint64_t start_frame_cycles = 1;
-        uint64_t total_frame_cycles = 1;
-        uint64_t minimum_frame_cycles = UINT64_MAX;
-        uint64_t maximum_frame_cycles = 1;
-        uint64_t idle_loops = 0;
+void PythonAccessCore::requestConfiguration(OdinData::IpcMessage& reply)
+{
+    LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
+}
 
-        core_status_ = "running";
-
-        while (likely(run_lcore_))
-        {
-            uint64_t now = rte_get_tsc_cycles();
-            if (unlikely((now - last) >= (cycles_per_sec)))
-            {
-                // Update any monitoring variables every second
-                processed_frames_hz_ = frames_per_second - 1;
-                mean_us_on_frame_ = (total_frame_cycles * 1000000) / (frames_per_second * cycles_per_sec);
-                core_usage_ = (cycles_working * 255) / cycles_per_sec;
-
-                if (frames_per_second > 1)
-                {
-                    minimum_us_on_frame_ =
-                        (minimum_frame_cycles * 1000000) / cycles_per_sec;
-
-                    maximum_us_on_frame_ =
-                        (maximum_frame_cycles * 1000000) / cycles_per_sec;
-                }
-                else
-                {
-                    minimum_us_on_frame_ = 0;
-                    maximum_us_on_frame_ = 0;
-                }
-
-                idle_loops_ = idle_loops;
-
-                // Reset any counters
-                frames_per_second = 1;
-                idle_loops = 0;
-                total_frame_cycles = 1;
-                cycles_working = 1;
-                minimum_frame_cycles = UINT64_MAX;
-                last = now;
-            }
-            if (rte_ring_dequeue(upstream_ring_, (void**) &current_frame_buffer_) < 0)
-            {
-                idle_loops_++;
-                continue;
-            }
-            else
-            {
-                start_frame_cycles = rte_get_tsc_cycles();
-
-                uint64_t frame_number = decoder_->get_super_frame_number(current_frame_buffer_);
-                last_frame_ = frame_number;
-
-                rte_ring_enqueue(python_access_rings_[frame_number % config_.num_downstream_cores], current_frame_buffer_);
-
-                uint64_t cycles_spent = rte_get_tsc_cycles() - start_frame_cycles;
-                total_frame_cycles += cycles_spent;
-                cycles_working += cycles_spent;
-
-                if (minimum_frame_cycles > cycles_spent)
-                {
-                    minimum_frame_cycles = cycles_spent;
-                }
-                if (maximum_frame_cycles < cycles_spent)
-                {
-                    maximum_frame_cycles = cycles_spent;
-                }
-
-                frames_per_second++;
-                processed_frames_++;
-
-                LOG4CXX_DEBUG(logger_, config_.core_name << " : " << proc_idx_ << " Enqueued frame: " << frame_number);
-            }
-        }
-
-        LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " completed");
-
-        core_status_ = "stopped";
-
-        return true;
-    }
-
-    void PythonAccessCore::stop(void)
-    {
-        if (run_lcore_)
-        {
-            LOG4CXX_INFO(logger_, "Core " << lcore_id_ << " stopping");
-            core_status_ = "stopping";
-            run_lcore_ = false;
-        }
-        else
-        {
-            LOG4CXX_DEBUG_LEVEL(2, logger_, "Core " << lcore_id_ << " already stopped");
-        }
-    }
-
-    void PythonAccessCore::status(OdinData::IpcMessage& status, const std::string& path)
-    {
-        std::string status_path = path + "/PythonAccessCore_" + std::to_string(proc_idx_) + "/";
-        std::string ring_status = status_path + "upstream_rings/";
-
-        // Generic worker-core status
-        status.set_param(status_path + "status", core_status_);
-        status.set_param(status_path + "objects_processed", processed_frames_);
-        status.set_param(status_path + "objects_per_second", processed_frames_hz_);
-        status.set_param(status_path + "last_frame_number", last_frame_);
-        status.set_param(status_path + "busy_percentage", core_usage_);
-
-        status.set_param(status_path + "processing_time/average_us", mean_us_on_frame_);
-        status.set_param(status_path + "processing_time/min_us", minimum_us_on_frame_);
-        status.set_param(status_path + "processing_time/max_us", maximum_us_on_frame_);
-
-        // PythonAccess-specific status
-        status.set_param(status_path + "frames_processed", processed_frames_);
-
-        if (upstream_ring_ != nullptr)
-        {
-            status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_count", rte_ring_count(upstream_ring_));
-            status.set_param(ring_status + ring_name_str(config_.upstream_core, socket_id_, proc_idx_) + "_size", rte_ring_get_size(upstream_ring_));
-        }
-
-        if (clear_frames_ring_ != nullptr)
-        {
-            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_count", rte_ring_count(clear_frames_ring_));
-            status.set_param(ring_status + ring_name_clear_frames(socket_id_, config_.stream_id) + "_size", rte_ring_get_size(clear_frames_ring_));
-        }
-    }
-
-    bool PythonAccessCore::connect(void)
-    {
-        std::string upstream_ring_name = ring_name_str(config_.upstream_core, socket_id_, proc_idx_);
-        struct rte_ring* upstream_ring = rte_ring_lookup(upstream_ring_name.c_str());
-        if (upstream_ring == NULL)
-        {
-            LOG4CXX_ERROR(logger_, config_.core_name << " : " << proc_idx_ << " Failed to connect to upstream ring: " << upstream_ring_name);
-            return false;
-        }
-        upstream_ring_ = upstream_ring;
-
-        std::string clear_frames_ring_name = ring_name_clear_frames(socket_id_, config_.stream_id);
-        clear_frames_ring_ = rte_ring_lookup(clear_frames_ring_name.c_str());
-        if (clear_frames_ring_ == NULL)
-        {
-            LOG4CXX_ERROR(logger_, config_.core_name << " : " << proc_idx_ << " Failed to connect to clear_frames ring: " << clear_frames_ring_name);
-            return false;
-        }
-
-        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Connected to upstream resources successfully!");
-
-        return true;
-    }
-
-    void PythonAccessCore::configure(OdinData::IpcMessage& config)
-    {
-        LOG4CXX_INFO(logger_, config_.core_name << " : " << proc_idx_ << " Got update config.");
-    }
-
-    void PythonAccessCore::requestConfiguration(OdinData::IpcMessage& reply)
-    {
-        LOG4CXX_DEBUG(logger_, "Configuration requested for worker core");
-    }
-
-    DPDKREGISTER(DpdkWorkerCore, PythonAccessCore, "PythonAccessCore");
+DPDKREGISTER(DpdkWorkerCore, PythonAccessCore, "PythonAccessCore");
 }

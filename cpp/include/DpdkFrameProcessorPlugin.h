@@ -8,8 +8,8 @@
 #ifndef INCLUDE_DPDKFRAMEPROCESSORPLUGIN_H_
 #define INCLUDE_DPDKFRAMEPROCESSORPLUGIN_H_
 
-#include<string>
-#include<map>
+#include <string>
+#include <map>
 
 #include <boost/scoped_ptr.hpp>
 
@@ -25,17 +25,15 @@ using namespace log4cxx::helpers;
 #include "DpdkCoreManager.h"
 #include "ProtocolDecoder.h"
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-  /** DPDK FrameProcessor plugin
-   *
-   * TODO fill in
-   */
-  class DpdkFrameProcessorPlugin : public FrameProcessorPlugin
-  {
+/** DPDK FrameProcessor plugin
+ *
+ * TODO fill in
+ */
+class DpdkFrameProcessorPlugin : public FrameProcessorPlugin {
 
-  public:
+public:
     DpdkFrameProcessorPlugin();
     virtual ~DpdkFrameProcessorPlugin();
 
@@ -54,21 +52,18 @@ namespace FrameProcessor
 
     virtual void process_frame(boost::shared_ptr<Frame> frame) = 0;
 
-  protected:
-
+protected:
     void configure(
-      OdinData::IpcMessage& config, OdinData::IpcMessage& reply,
-      ProtocolDecoder* decoder_ptr, FrameCallback& frame_callback
+        OdinData::IpcMessage& config, OdinData::IpcMessage& reply, ProtocolDecoder* decoder_ptr,
+        FrameCallback& frame_callback
     );
 
-  private:
-
+private:
     /** Pointer to logger **/
     LoggerPtr logger_;
 
     boost::scoped_ptr<DpdkCoreManager> core_manager_;
-
-  };
+};
 
 } /* namespace FrameProcessor */
 

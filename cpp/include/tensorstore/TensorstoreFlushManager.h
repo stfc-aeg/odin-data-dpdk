@@ -13,9 +13,9 @@ struct SuperFrameHeader;
 
 // Result of a flush operation
 struct FlushResult {
-    bool success;                
-    uint64_t frames_forwarded;    
-    bool dataset_shrunk;          
+    bool success;
+    uint64_t frames_forwarded;
+    bool dataset_shrunk;
 };
 
 // Manages the flushing of pending writes and dataset cleanup
@@ -28,21 +28,13 @@ public:
     // 3. Shrinks dataset to final size (if applicable)
     // 4. Cleans up tensorstore resources
     static FlushResult FlushPendingWrites(
-        std::optional<tensorstore::TensorStore<>>& store,
-        bool& tensorstore_initialized,
-        uint64_t highest_frame_written,
-        uint64_t current_capacity,
-        uint64_t frame_height,
-        uint64_t frame_width,
-        log4cxx::LoggerPtr logger
+        std::optional<tensorstore::TensorStore<>>& store, bool& tensorstore_initialized, uint64_t highest_frame_written,
+        uint64_t current_capacity, uint64_t frame_height, uint64_t frame_width, log4cxx::LoggerPtr logger
     );
 
     // Resets write statistics after a flush has been completed
     static void ResetWriteStatistics(
-        uint64_t& frames_written,
-        uint64_t& write_errors,
-        uint64_t& current_capacity,
-        uint64_t& highest_frame
+        uint64_t& frames_written, uint64_t& write_errors, uint64_t& current_capacity, uint64_t& highest_frame
     );
 };
 

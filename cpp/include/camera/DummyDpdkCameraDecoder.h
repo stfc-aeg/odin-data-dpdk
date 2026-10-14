@@ -10,8 +10,7 @@
 #define FRAME_OUTER_CHUNK_SIZE 1
 #define PACKETS_PER_FRAME 1
 
-struct __rte_packed_begin DummyDpdkCameraFrameHeader : RawFrameHeader
-{
+struct __rte_packed_begin DummyDpdkCameraFrameHeader : RawFrameHeader {
     uint64_t frame_number;
     uint32_t packets_received;
     uint32_t sof_marker_count;
@@ -20,26 +19,27 @@ struct __rte_packed_begin DummyDpdkCameraFrameHeader : RawFrameHeader
     uint64_t frame_complete_time;
     uint32_t frame_time_delta;
     uint64_t image_size;
-    uint8_t packet_state[PACKETS_PER_FRAME];  // Flexible array member
+    uint8_t packet_state[PACKETS_PER_FRAME]; // Flexible array member
 } __rte_packed_end;
 
-namespace Defaults
-{
-    const std::size_t default_packets_per_frame = PACKETS_PER_FRAME;
-    const std::size_t default_payload_size = 18874368;  // OrcaQuest image size (2304 * 4096 * 2 bytes per pixel)
+namespace Defaults {
+const std::size_t default_packets_per_frame = PACKETS_PER_FRAME;
+const std::size_t default_payload_size = 18874368; // OrcaQuest image size (2304 * 4096 * 2 bytes per pixel)
 }
 
-class DummyDpdkCameraProtocolDecoder : public CameraProtocolDecoder
-{
+class DummyDpdkCameraProtocolDecoder : public CameraProtocolDecoder {
 public:
     DummyDpdkCameraProtocolDecoder() :
         CameraProtocolDecoder(Defaults::default_payload_size, Defaults::default_packets_per_frame)
-    { }
+    {
+    }
 
-    virtual ~DummyDpdkCameraProtocolDecoder() { }
+    virtual ~DummyDpdkCameraProtocolDecoder()
+    {
+    }
 
     // Implement pure virtual methods from ProtocolDecoder base class
-    
+
     /**
      * @brief Get the size of the frame header
      * @return Size in bytes of the frame header including packet state array
@@ -47,8 +47,8 @@ public:
     virtual const std::size_t get_frame_header_size(const std::string& mode = "") const override
     {
         std::size_t packet_marker_size = sizeof(DummyDpdkCameraFrameHeader().packet_state);
-        std::size_t frame_header_size = sizeof(DummyDpdkCameraFrameHeader) +
-            (packet_marker_size * PACKETS_PER_FRAME - 1);
+        std::size_t frame_header_size
+            = sizeof(DummyDpdkCameraFrameHeader) + (packet_marker_size * PACKETS_PER_FRAME - 1);
         return frame_header_size;
     }
 
@@ -59,7 +59,7 @@ public:
      */
     virtual void set_frame_number(RawFrameHeader* frame_hdr, uint64_t frame_number) override
     {
-        (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_number = frame_number;
+        (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_number = frame_number;
     }
 
     /**
@@ -69,7 +69,7 @@ public:
      */
     virtual const uint64_t get_frame_number(RawFrameHeader* frame_hdr) const override
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_number;
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_number;
     }
 
     /**
@@ -79,7 +79,7 @@ public:
      */
     virtual void set_frame_start_time(RawFrameHeader* frame_hdr, uint64_t frame_start_time) override
     {
-        (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_start_time = frame_start_time;
+        (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_start_time = frame_start_time;
     }
 
     /**
@@ -89,7 +89,7 @@ public:
      */
     virtual const uint64_t get_frame_start_time(RawFrameHeader* frame_hdr) const override
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_start_time;
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_start_time;
     }
 
     /**
@@ -99,7 +99,7 @@ public:
      */
     virtual void set_frame_complete_time(RawFrameHeader* frame_hdr, uint64_t frame_complete_time) override
     {
-        (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_complete_time = frame_complete_time;
+        (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_complete_time = frame_complete_time;
     }
 
     /**
@@ -109,11 +109,11 @@ public:
      */
     virtual const uint64_t get_frame_complete_time(RawFrameHeader* frame_hdr) const override
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->frame_complete_time;
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->frame_complete_time;
     }
 
     // Additional Orca-specific methods
-    
+
     /**
      * @brief Get frame dimensions for OrcaQuest camera
      */
@@ -124,7 +124,7 @@ public:
 
     virtual const std::size_t get_frame_y_resolution(const std::string& mode = "") const override
     {
-        return 4096;  // OrcaQuest Y resolution
+        return 4096; // OrcaQuest Y resolution
     }
 
     virtual std::vector<std::size_t> get_frame_dimensions(const std::string& mode = "") const override
@@ -137,7 +137,7 @@ public:
 
     virtual const FrameProcessor::DataType get_frame_bit_depth(const std::string& mode = "") const override
     {
-        return FrameProcessor::raw_16bit;  // OrcaQuest uses 16-bit data
+        return FrameProcessor::raw_16bit; // OrcaQuest uses 16-bit data
     }
 
     /**
@@ -145,7 +145,7 @@ public:
      */
     const uint64_t get_image_size(RawFrameHeader* frame_hdr) const
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->image_size;
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->image_size;
     }
 
     /**
@@ -153,7 +153,7 @@ public:
      */
     void set_image_size(RawFrameHeader* frame_hdr, uint64_t image_size)
     {
-        (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->image_size = image_size;
+        (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->image_size = image_size;
     }
 
     /**
@@ -161,7 +161,7 @@ public:
      */
     const uint32_t get_packets_received(RawFrameHeader* frame_hdr) const
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->packets_received;
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->packets_received;
     }
 
     /**
@@ -169,12 +169,11 @@ public:
      */
     bool set_packet_received(RawFrameHeader* frame_hdr, uint32_t packet_number)
     {
-        if (packet_number >= PACKETS_PER_FRAME)
-        {
+        if (packet_number >= PACKETS_PER_FRAME) {
             return false;
         }
-        
-        DummyDpdkCameraFrameHeader* orca_hdr = reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr);
+
+        DummyDpdkCameraFrameHeader* orca_hdr = reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr);
         orca_hdr->packet_state[packet_number] = 1;
         orca_hdr->packets_received++;
         return true;
@@ -185,9 +184,8 @@ public:
      */
     const uint8_t get_packet_state(RawFrameHeader* frame_hdr, uint32_t packet_number) const
     {
-        return (reinterpret_cast<DummyDpdkCameraFrameHeader *>(frame_hdr))->packet_state[packet_number];
+        return (reinterpret_cast<DummyDpdkCameraFrameHeader*>(frame_hdr))->packet_state[packet_number];
     }
-
 };
 
 #endif // INCLUDE_DUMMY_DPDK_CAMERA_PROTOCOL_DECODER_H_
