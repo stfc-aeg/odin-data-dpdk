@@ -53,10 +53,12 @@ namespace FrameProcessor
         // behind.
         uint64_t ring_full_drops;
 
+        uint64_t packets_processed;
+
         StreamBranch() :
             num_cores(0), rx_enable(false), rx_frames(0),
             first_frame_number(-1), first_seen_frame_number(0), ring_full_drops(0),
-            frame_outer_chunk_size(1)
+            frame_outer_chunk_size(1), packets_processed(0)
         {}
     };
 
@@ -120,11 +122,17 @@ namespace FrameProcessor
         // captures true high-water marks (e.g. a burst that briefly maxed out processing time)
         // that a Python-side status poll every 500ms-5s could otherwise miss entirely between
         // polls. Mirrors the timing convention already used by FrameWrapperCore.
-        uint64_t mean_burst_us_;         //!< Mean time to process one rx_burst, over the last second
-        uint64_t max_burst_us_;          //!< Max time to process one rx_burst, over the last second
+        double mean_burst_us_;         //!< Mean time to process one rx_burst, over the last second
+        double max_burst_us_;          //!< Max time to process one rx_burst, over the last second
         uint64_t max_burst_us_all_time_; //!< All-time high-water mark for a single burst's processing time
-        uint64_t mean_pkts_per_burst_;   //!< Mean packets per burst, over the last second
+        double mean_pkts_per_burst_;   //!< Mean packets per burst, over the last second
         uint64_t max_pkts_per_burst_;    //!< Max packets in a single burst, over the last second
+        double min_burst_us_;
+        uint64_t packets_per_second_;
+        double busy_percentage_;
+        uint64_t last_frame_number_;
+
+        std::string core_status_;
         uint64_t estimated_pps_;         //!< mean_pkts_per_burst_ / mean_burst_us_ - sustained throughput capacity
         uint64_t max_estimated_pps_;     //!< All-time high-water mark for estimated_pps_
         PacketProtocolDecoder* decoder_;
