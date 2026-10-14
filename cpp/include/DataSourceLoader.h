@@ -15,71 +15,52 @@ using namespace log4cxx::helpers;
 #include "DataSource.h"
 #include "PacketProtocolDecoder.h"
 
-#define DATASOURCEREGISTER(Class, Name) \
+#define DATASOURCEREGISTER(Class, Name)                          \
     FrameProcessor::DataSourceLoader<FrameProcessor::DataSource> \
         dscl##Class(Name, FrameProcessor::data_source_maker<FrameProcessor::DataSource, Class>);
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
 template <typename BaseClass, typename SubClass>
-boost::shared_ptr<BaseClass> data_source_maker(
-    PacketProtocolDecoder* decoder,
-    const rapidjson::Value& data_source_config)
+boost::shared_ptr<BaseClass>
+data_source_maker(PacketProtocolDecoder* decoder, const rapidjson::Value& data_source_config)
 {
-    boost::shared_ptr<BaseClass> ptr =
-        boost::shared_ptr<BaseClass>(
-            new SubClass(decoder, data_source_config));
+    boost::shared_ptr<BaseClass> ptr = boost::shared_ptr<BaseClass>(new SubClass(decoder, data_source_config));
 
     return ptr;
 }
 
-template <typename BaseClass>
-class DataSourceLoader
-{
-    typedef boost::shared_ptr<BaseClass> (*maker_t)(
-        PacketProtocolDecoder* decoder,
-        const rapidjson::Value& data_source_config);
+template <typename BaseClass> class DataSourceLoader {
+    typedef boost::shared_ptr<BaseClass> (*maker_t
+    )(PacketProtocolDecoder* decoder, const rapidjson::Value& data_source_config);
 
 public:
-
     DataSourceLoader(std::string name, maker_t value)
     {
         factory_map()[name] = value;
     }
 
-    static boost::shared_ptr<BaseClass> load_class(
-        const std::string& name,
-        PacketProtocolDecoder* decoder,
-        const rapidjson::Value& data_source_config)
+    static boost::shared_ptr<BaseClass>
+    load_class(const std::string& name, PacketProtocolDecoder* decoder, const rapidjson::Value& data_source_config)
     {
         boost::shared_ptr<BaseClass> data_source;
 
-        try
-        {
-            if (factory_map().count(name))
-            {
-                data_source = factory_map()[name](
-                    decoder,
-                    data_source_config);
-            }
-            else
-            {
+        try {
+            if (factory_map().count(name)) {
+                data_source = factory_map()[name](decoder, data_source_config);
+            } else {
                 LOG4CXX_ERROR(logger(), "DataSource class not found: " << name);
             }
-        }
-        catch (const std::exception& ex)
-        {
-            LOG4CXX_ERROR(logger(), "Error while loading DataSource class: " << name
-                << ", error message: " << ex.what());
+        } catch (const std::exception& ex) {
+            LOG4CXX_ERROR(
+                logger(), "Error while loading DataSource class: " << name << ", error message: " << ex.what()
+            );
         }
 
         return data_source;
     }
 
-    static void register_class(
-        const std::string& name,
-        maker_t maker)
+    static void register_class(const std::string& name, maker_t maker)
     {
         factory_map()[name] = maker;
     }
@@ -94,8 +75,7 @@ public:
     {
         std::vector<std::string> class_names;
 
-        for (const auto& entry : factory_map())
-        {
+        for (const auto& entry : factory_map()) {
             class_names.push_back(entry.first);
         }
 
@@ -103,7 +83,6 @@ public:
     }
 
 private:
-
     static LoggerPtr& logger()
     {
         static LoggerPtr logger_ = Logger::getLogger("FP.DataSourceLoader");

@@ -15,48 +15,50 @@ using namespace log4cxx::helpers;
 
 #include "network/DpdkDeviceConfiguration.h"
 
-namespace FrameProcessor
-{
-    class DpdkDevice
+namespace FrameProcessor {
+class DpdkDevice {
+public:
+    DpdkDevice(uint16_t port_id, const DpdkDeviceConfiguration& config);
+    ~DpdkDevice();
+
+    bool start(void);
+    bool stop(void);
+
+    inline uint16_t port_id(void) const
     {
-    public:
+        return port_id_;
+    }
+    inline int socket_id(void) const
+    {
+        return socket_id_;
+    }
+    rte_mempool* mbuf_pool() const
+    {
+        return mbuf_pool_;
+    }
 
-        DpdkDevice(uint16_t port_id, const DpdkDeviceConfiguration& config);
-        ~DpdkDevice();
+private:
+    bool init_mbuf_pool(void);
+    bool init_port(void);
 
-        bool start(void);
-        bool stop(void);
+    uint16_t port_id_;
+    int socket_id_;
 
-        inline uint16_t port_id(void) const { return port_id_; }
-        inline int socket_id(void) const { return socket_id_; }
-        rte_mempool* mbuf_pool() const
-        {
-            return mbuf_pool_;
-        }
+    std::string dev_name_;
+    std::string mac_addr_;
 
-    private:
+    unsigned int mbuf_pool_size_;
+    unsigned int mbuf_cache_size_;
+    struct rte_mempool* mbuf_pool_;
 
-        bool init_mbuf_pool(void);
-        bool init_port(void);
+    uint32_t mtu_;
+    uint16_t rx_rings_;
+    uint16_t rx_num_desc_;
+    uint16_t tx_rings_;
+    uint16_t tx_num_desc_;
 
-        uint16_t port_id_;
-        int      socket_id_;
-
-        std::string dev_name_;
-        std::string mac_addr_;
-
-        unsigned int mbuf_pool_size_;
-        unsigned int mbuf_cache_size_;
-        struct rte_mempool* mbuf_pool_;
-
-        uint32_t mtu_;
-        uint16_t rx_rings_;
-        uint16_t rx_num_desc_;
-        uint16_t tx_rings_;
-        uint16_t tx_num_desc_;
-
-        LoggerPtr logger_;
-    };
+    LoggerPtr logger_;
+};
 }
 
 #endif // INCLUDE_DPDKDEVICE_H_

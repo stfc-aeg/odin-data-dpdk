@@ -25,66 +25,63 @@ using namespace log4cxx::helpers;
 #include "DpdkSharedBuffer.h"
 #include "DpdkCoreConfiguration.h"
 #include "ProtocolDecoder.h"
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-    class DpdkCoreManager
-    {
+class DpdkCoreManager {
 
-    public:
-        DpdkCoreManager(
-            OdinData::IpcMessage& config, OdinData::IpcMessage& reply,
-            const std::string plugin_name, ProtocolDecoder* decoder, FrameCallback& frame_callback
-        );
-        ~DpdkCoreManager();
+public:
+    DpdkCoreManager(
+        OdinData::IpcMessage& config, OdinData::IpcMessage& reply, const std::string plugin_name,
+        ProtocolDecoder* decoder, FrameCallback& frame_callback
+    );
+    ~DpdkCoreManager();
 
-        void status(OdinData::IpcMessage& status);
-        void register_worker_core(boost::shared_ptr<DpdkWorkerCore> worker_core);
-        bool start(void);
-        void stop(void);
-        void configure(OdinData::IpcMessage& config);
-        void execute(const std::string& command, OdinData::IpcMessage& reply);
-        void requestConfiguration(OdinData::IpcMessage& reply);
-        std::vector<std::pair<std::string, int>> requestCommands();
+    void status(OdinData::IpcMessage& status);
+    void register_worker_core(boost::shared_ptr<DpdkWorkerCore> worker_core);
+    bool start(void);
+    void stop(void);
+    void configure(OdinData::IpcMessage& config);
+    void execute(const std::string& command, OdinData::IpcMessage& reply);
+    void requestConfiguration(OdinData::IpcMessage& reply);
+    std::vector<std::pair<std::string, int>> requestCommands();
 
-    private:
+private:
+    // DpdkCoreFactory dpdkCoreFactory;
 
-        // DpdkCoreFactory dpdkCoreFactory;
+    static const std::string CONFIG_DPDK_EAL_PARAMS;
 
-        static const std::string CONFIG_DPDK_EAL_PARAMS;
+    static ssize_t dpdk_log_writer(void*, const char* data, size_t len);
+    int build_dpdk_eal_args(
+        OdinData::IpcMessage& config, std::vector<std::string>& eal_strings, std::vector<char*>& eal_argv
+    );
+    std::string param_value(const rapidjson::Value& param);
 
-        static ssize_t dpdk_log_writer(void *, const char *data, size_t len);
-        int build_dpdk_eal_args(OdinData::IpcMessage& config,
-            std::vector<std::string>& eal_strings, std::vector<char*>& eal_argv);
-        std::string param_value(const rapidjson::Value& param);
+    static int start_worker(void* worker_ptr);
 
-        static int start_worker(void* worker_ptr);
+    // upstream config_key -> downstream config_key (one upstream can have multiple downstreams)
+    std::multimap<std::string, std::string> core_chain_order_;
+    // downstream config_key -> upstream config_key (reverse lookup)
+    std::map<std::string, std::string> downstream_to_upstream_;
 
-        // upstream config_key -> downstream config_key (one upstream can have multiple downstreams)
-        std::multimap<std::string, std::string> core_chain_order_;
-        // downstream config_key -> upstream config_key (reverse lookup)
-        std::map<std::string, std::string> downstream_to_upstream_;
+    LoggerPtr logger_;
 
-        LoggerPtr logger_;
+    std::string plugin_name_;
+    FrameCallback frame_callback_;
 
-        std::string plugin_name_;
-        FrameCallback frame_callback_;
+    DpdkCoreConfiguration core_config_;
 
-        DpdkCoreConfiguration core_config_;
+    // Internal map to associate DPDK EAL parameters with arguments
+    typedef std::map<std::string, const char*> DpdkEalParamMap;
+    static DpdkEalParamMap dpdk_eal_param_map_;
 
-        // Internal map to associate DPDK EAL parameters with arguments
-        typedef std::map<std::string, const char*> DpdkEalParamMap;
-        static DpdkEalParamMap dpdk_eal_param_map_;
+    std::vector<std::vector<int>> available_core_ids_;
+    std::vector<int> used_core_ids_;
+    std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;
+    std::vector<boost::shared_ptr<DpdkWorkerCore>> running_cores_;
 
-        std::vector<std::vector<int> > available_core_ids_;
-        std::vector<int> used_core_ids_;
-        std::vector<boost::shared_ptr<DpdkWorkerCore>> registered_cores_;
-        std::vector<boost::shared_ptr<DpdkWorkerCore>> running_cores_;
-
-        // One shared buffer per stream; keyed by stream_id
-        std::map<std::string, DpdkSharedBuffer*> stream_shared_buffers_;
-        std::vector<DpdkSharedBuffer *> shared_buffers_;
-
-    };
+    // One shared buffer per stream; keyed by stream_id
+    std::map<std::string, DpdkSharedBuffer*> stream_shared_buffers_;
+    std::vector<DpdkSharedBuffer*> shared_buffers_;
+};
 }
 #endif /* INCLUDE_DPDKCORE_MANAGER_H_ */

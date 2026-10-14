@@ -12,15 +12,12 @@ using namespace log4cxx::helpers;
 #include "DummyDpdkDecoder.h"
 #include "ClassLoader.h"
 
+namespace FrameProcessor {
 
-namespace FrameProcessor
-{
+/** Reference implementation of DpdkFrameProcessorPlugin for network packet ingestion. */
+class DummyDpdkPlugin : public DpdkFrameProcessorPlugin {
 
-  /** Reference implementation of DpdkFrameProcessorPlugin for network packet ingestion. */
-  class DummyDpdkPlugin : public DpdkFrameProcessorPlugin
-  {
-
-  public:
+public:
     DummyDpdkPlugin();
     virtual ~DummyDpdkPlugin();
 
@@ -31,8 +28,7 @@ namespace FrameProcessor
 
     void process_frame(boost::shared_ptr<Frame> frame);
 
-  private:
-
+private:
     LoggerPtr logger_;
 
     DummyDpdkDecoder decoder_;
@@ -40,10 +36,9 @@ namespace FrameProcessor
     OdinData::IpcMessage config_;
 
     std::string current_mode_;
+};
 
-  };
-
-  REGISTER(FrameProcessorPlugin, DummyDpdkPlugin, "DummyDpdkPlugin");
+REGISTER(FrameProcessorPlugin, DummyDpdkPlugin, "DummyDpdkPlugin");
 
 } /* namespace FrameProcessor */
 

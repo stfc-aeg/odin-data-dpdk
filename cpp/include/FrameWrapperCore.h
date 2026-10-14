@@ -13,49 +13,44 @@ using namespace log4cxx::helpers;
 #include <rte_ring.h>
 #include <blosc.h>
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-    class FrameWrapperCore : public DpdkWorkerCore
-    {
-    public:
+class FrameWrapperCore : public DpdkWorkerCore {
+public:
+    FrameWrapperCore(int fb_idx, int socket_id, DpdkWorkCoreReferences& dpdkWorkCoreReferences);
+    ~FrameWrapperCore();
 
-        FrameWrapperCore(
-            int fb_idx, int socket_id, DpdkWorkCoreReferences &dpdkWorkCoreReferences
-        );
-        ~FrameWrapperCore();
+    bool run(unsigned int lcore_id);
+    void stop(void);
+    void status(OdinData::IpcMessage& status, const std::string& path);
+    bool connect(void);
+    void configure(OdinData::IpcMessage& config);
+    void requestConfiguration(OdinData::IpcMessage& reply);
 
-        bool run(unsigned int lcore_id);
-        void stop(void);
-        void status(OdinData::IpcMessage& status, const std::string& path);
-        bool connect(void);
-        void configure(OdinData::IpcMessage& config);
-        void requestConfiguration(OdinData::IpcMessage& reply);
+private:
+    int proc_idx_;
+    ProtocolDecoder* decoder_;
+    std::string mode_;
+    FrameWrapperConfiguration config_;
 
-    private:
-        int proc_idx_;
-        ProtocolDecoder* decoder_;
-        std::string mode_;
-        FrameWrapperConfiguration config_;
+    LoggerPtr logger_;
+    FrameCallback& frame_callback_;
 
-        LoggerPtr logger_;
-        FrameCallback& frame_callback_;
+    // Status reporting variables
+    std::string core_status_;
+    uint64_t last_frame_;
+    uint64_t processed_frames_;
+    uint64_t processed_frames_hz_;
+    uint64_t idle_loops_;
+    uint64_t mean_us_on_frame_;
+    uint64_t minimum_us_on_frame_;
+    uint64_t maximum_us_on_frame_;
+    uint64_t core_usage_;
 
-        // Status reporting variables
-        std::string core_status_;
-        uint64_t last_frame_;
-        uint64_t processed_frames_;
-        uint64_t processed_frames_hz_;
-        uint64_t idle_loops_;
-        uint64_t mean_us_on_frame_;
-        uint64_t minimum_us_on_frame_;
-        uint64_t maximum_us_on_frame_;
-        uint64_t core_usage_;
-
-        struct rte_ring* frame_ready_ring_;
-        struct rte_ring* clear_frames_ring_;
-        struct rte_ring* upstream_ring_;
-    };
+    struct rte_ring* frame_ready_ring_;
+    struct rte_ring* clear_frames_ring_;
+    struct rte_ring* upstream_ring_;
+};
 }
 
 #endif // INCLUDE_FrameWrapperCore_H_

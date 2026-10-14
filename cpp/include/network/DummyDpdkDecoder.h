@@ -14,9 +14,9 @@
 
 // Mode enumeration — add new modes here as needed
 enum class DummyDpdkMode {
-    FRAME_1000x1000,   // 250 packets, 8000 byte payload, 1000x1000 uint16 frame
-    FRAME_512x512,     // 64 packets,  4096 byte payload, 512x512  uint16 frame
-    FRAME_256x256,      // 16 packets,  2048 byte payload, 256x256  uint16 frame
+    FRAME_1000x1000, // 250 packets, 8000 byte payload, 1000x1000 uint16 frame
+    FRAME_512x512, // 64 packets,  4096 byte payload, 512x512  uint16 frame
+    FRAME_256x256, // 16 packets,  2048 byte payload, 256x256  uint16 frame
 
     TEST_8BIT,
     TEST_16BIT,
@@ -34,8 +34,7 @@ struct DummyModeConfiguration {
     std::size_t y_resolution;
 };
 
-struct __rte_packed_begin X10GPacketHeader : PacketHeader
-{
+struct __rte_packed_begin X10GPacketHeader : PacketHeader {
     rte_be64_t frame_number;
     rte_be64_t padding[6];
     rte_be32_t packet_number;
@@ -45,43 +44,38 @@ struct __rte_packed_begin X10GPacketHeader : PacketHeader
     uint8_t readout_lane;
 } __rte_packed_end;
 
-struct __rte_packed_begin X10GRawFrameHeader : RawFrameHeader
-{
+struct __rte_packed_begin X10GRawFrameHeader : RawFrameHeader {
     uint64_t frame_number;
     uint32_t packets_received;
     uint32_t sof_marker_count;
     uint32_t eof_marker_count;
     uint64_t frame_start_time;
-	uint64_t frame_complete_time;
-	uint32_t frame_time_delta;
+    uint64_t frame_complete_time;
+    uint32_t frame_time_delta;
     uint64_t image_size;
-    uint8_t packet_state[1];  // One for each packet in the frame
+    uint8_t packet_state[1]; // One for each packet in the frame
 } __rte_packed_end;
 
-class DummyDpdkDecoder : public PacketProtocolDecoder
-{
+class DummyDpdkDecoder : public PacketProtocolDecoder {
 
 public:
-
     static const std::map<std::string, DummyDpdkMode>& get_mode_string_map()
     {
-        static const std::map<std::string, DummyDpdkMode> mode_string_map = {
-            {"frame_1000x1000", DummyDpdkMode::FRAME_1000x1000},
-            {"frame_512x512",   DummyDpdkMode::FRAME_512x512},
-            {"frame_256x256",   DummyDpdkMode::FRAME_256x256},
+        static const std::map<std::string, DummyDpdkMode> mode_string_map
+            = { { "frame_1000x1000", DummyDpdkMode::FRAME_1000x1000 },
+                { "frame_512x512", DummyDpdkMode::FRAME_512x512 },
+                { "frame_256x256", DummyDpdkMode::FRAME_256x256 },
 
-            {"test_8bit", DummyDpdkMode::TEST_8BIT},
-            {"test_16bit", DummyDpdkMode::TEST_16BIT},
-            {"test_32bit", DummyDpdkMode::TEST_32BIT},
-            {"test_64bit", DummyDpdkMode::TEST_64BIT}
-        };
+                { "test_8bit", DummyDpdkMode::TEST_8BIT },
+                { "test_16bit", DummyDpdkMode::TEST_16BIT },
+                { "test_32bit", DummyDpdkMode::TEST_32BIT },
+                { "test_64bit", DummyDpdkMode::TEST_64BIT } };
         return mode_string_map;
     }
 
     DummyDpdkDecoder(DummyDpdkMode initial_mode = DummyDpdkMode::FRAME_1000x1000) :
         PacketProtocolDecoder(
-            get_mode_configs().at(initial_mode).packets_per_frame,
-            get_mode_configs().at(initial_mode).payload_size,
+            get_mode_configs().at(initial_mode).packets_per_frame, get_mode_configs().at(initial_mode).payload_size,
             get_mode_configs().at(initial_mode).frame_outer_chunk_size
         ),
         current_mode_(initial_mode)
@@ -89,31 +83,34 @@ public:
         configure_for_mode(initial_mode);
     }
 
-    virtual ~DummyDpdkDecoder() { }
+    virtual ~DummyDpdkDecoder()
+    {
+    }
 
     void set_mode(DummyDpdkMode new_mode)
     {
-        if (new_mode != current_mode_)
-        {
+        if (new_mode != current_mode_) {
             current_mode_ = new_mode;
             configure_for_mode(new_mode);
         }
     }
 
-    DummyDpdkMode get_mode() const { return current_mode_; }
+    DummyDpdkMode get_mode() const
+    {
+        return current_mode_;
+    }
 
     std::string get_mode_string() const
     {
-        static const std::map<DummyDpdkMode, std::string> mode_to_string = {
-            {DummyDpdkMode::FRAME_1000x1000, "frame_1000x1000"},
-            {DummyDpdkMode::FRAME_512x512,   "frame_512x512"},
-            {DummyDpdkMode::FRAME_256x256,   "frame_256x256"},
+        static const std::map<DummyDpdkMode, std::string> mode_to_string
+            = { { DummyDpdkMode::FRAME_1000x1000, "frame_1000x1000" },
+                { DummyDpdkMode::FRAME_512x512, "frame_512x512" },
+                { DummyDpdkMode::FRAME_256x256, "frame_256x256" },
 
-            {DummyDpdkMode::TEST_8BIT, "test_8bit"},
-            {DummyDpdkMode::TEST_16BIT, "test_16bit"},
-            {DummyDpdkMode::TEST_32BIT, "test_32bit"},
-            {DummyDpdkMode::TEST_64BIT, "test_64bit"}
-        };
+                { DummyDpdkMode::TEST_8BIT, "test_8bit" },
+                { DummyDpdkMode::TEST_16BIT, "test_16bit" },
+                { DummyDpdkMode::TEST_32BIT, "test_32bit" },
+                { DummyDpdkMode::TEST_64BIT, "test_64bit" } };
 
         auto it = mode_to_string.find(current_mode_);
         return (it != mode_to_string.end()) ? it->second : "unknown";
@@ -157,13 +154,13 @@ public:
     virtual std::vector<std::size_t> get_frame_dimensions(const std::string& mode = "") const override
     {
         const DummyModeConfiguration& cfg = resolve_mode();
-        return {cfg.x_resolution, cfg.y_resolution};
+        return { cfg.x_resolution, cfg.y_resolution };
     }
 
-    virtual const std::size_t get_frame_header_size(const std::string& mode = "") const override {
+    virtual const std::size_t get_frame_header_size(const std::string& mode = "") const override
+    {
         std::size_t packet_marker_size = sizeof(X10GRawFrameHeader().packet_state);
-        std::size_t packet_header_size = sizeof(X10GRawFrameHeader) +
-            (packet_marker_size * packets_per_frame_ - 1);
+        std::size_t packet_header_size = sizeof(X10GRawFrameHeader) + (packet_marker_size * packets_per_frame_ - 1);
         return packet_header_size;
     }
 
@@ -175,13 +172,13 @@ public:
     virtual const std::size_t get_packet_payload_offset(void) const
     {
         // Headers are always before payload in dummy decoder
-        return sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + 
-                sizeof(struct rte_udp_hdr) + get_packet_header_size();
+        return sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr)
+            + get_packet_header_size();
     }
 
     void set_frame_number(RawFrameHeader* frame_hdr, uint64_t frame_number)
     {
-        (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->frame_number = frame_number;
+        (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->frame_number = frame_number;
     }
 
     const uint64_t get_frame_number(RawFrameHeader* frame_hdr) const
@@ -189,51 +186,48 @@ public:
         return reinterpret_cast<X10GRawFrameHeader*>(frame_hdr)->frame_number;
     }
 
-    const uint64_t get_frame_number(PacketHeader* packet_hdr) const {
+    const uint64_t get_frame_number(PacketHeader* packet_hdr) const
+    {
         return reinterpret_cast<X10GPacketHeader*>(packet_hdr)->frame_number;
     }
 
     void set_frame_start_time(RawFrameHeader* frame_hdr, uint64_t frame_start_time)
     {
-        (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->frame_start_time = frame_start_time;
+        (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->frame_start_time = frame_start_time;
     }
 
     const uint64_t get_image_size(RawFrameHeader* frame_hdr) const
     {
-        return (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->image_size;
+        return (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->image_size;
     }
 
     void set_image_size(RawFrameHeader* frame_hdr, uint64_t image_size) const
     {
-        (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->image_size = image_size;
+        (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->image_size = image_size;
     }
 
     const uint64_t get_frame_start_time(RawFrameHeader* frame_hdr) const
     {
-         return (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->frame_start_time;
+        return (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->frame_start_time;
     }
 
     void set_frame_complete_time(RawFrameHeader* frame_hdr, uint64_t frame_complete_time)
     {
-        (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->frame_complete_time =
-            frame_complete_time;
+        (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->frame_complete_time = frame_complete_time;
     }
 
     const uint64_t get_frame_complete_time(RawFrameHeader* frame_hdr) const
     {
-         return (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->frame_complete_time;
+        return (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->frame_complete_time;
     }
 
     bool set_packet_received(RawFrameHeader* frame_hdr, uint32_t packet_number)
     {
 
-        if (packet_number >= packets_per_frame_)
-        {
+        if (packet_number >= packets_per_frame_) {
             return false;
-        }
-        else
-        {
-            X10GRawFrameHeader* x10g_hdr = reinterpret_cast<X10GRawFrameHeader *>(frame_hdr);
+        } else {
+            X10GRawFrameHeader* x10g_hdr = reinterpret_cast<X10GRawFrameHeader*>(frame_hdr);
             x10g_hdr->packet_state[packet_number] = 1;
             x10g_hdr->packets_received++;
 
@@ -243,23 +237,22 @@ public:
 
     const uint32_t get_packets_received(RawFrameHeader* frame_hdr) const
     {
-        return (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->packets_received;
+        return (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->packets_received;
     }
 
     const uint32_t get_packets_dropped(RawFrameHeader* frame_hdr) const
     {
-        return packets_per_frame_ -
-            (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->packets_received;
+        return packets_per_frame_ - (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->packets_received;
     }
 
     const uint8_t get_packet_state(RawFrameHeader* frame_hdr, uint32_t packet_number) const
     {
-        return (reinterpret_cast<X10GRawFrameHeader *>(frame_hdr))->packet_state[packet_number];
+        return (reinterpret_cast<X10GRawFrameHeader*>(frame_hdr))->packet_state[packet_number];
     }
 
     const uint32_t get_packet_number(PacketHeader* packet_hdr) const
     {
-        return rte_be_to_cpu_32(reinterpret_cast<X10GPacketHeader *>(packet_hdr)->packet_number);
+        return rte_be_to_cpu_32(reinterpret_cast<X10GPacketHeader*>(packet_hdr)->packet_number);
     }
 
     bool set_packet_number(PacketHeader* packet_hdr, uint32_t packet_number)
@@ -278,58 +271,50 @@ public:
 
     void* prepare_frame(void* raw_frame, void* prepared_frame) override
     {
-        if (mode_config_.needs_reordering)
-        {
+        if (mode_config_.needs_reordering) {
             return prepare_16bit_test_mode(raw_frame, prepared_frame);
         }
 
         return prepared_frame;
     }
 
-    SuperFrameHeader* reorder_frame(
-        SuperFrameHeader* frame_hdr,
-        SuperFrameHeader* reordered_frame)
+    SuperFrameHeader* reorder_frame(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame)
     {
-        if (mode_config_.needs_reordering)
-        {
+        if (mode_config_.needs_reordering) {
             return reorder_16bit_test_mode(frame_hdr, reordered_frame);
         }
 
         return frame_hdr;
     }
 
-    SuperFrameHeader* reorder_frame(
-        SuperFrameHeader* frame_hdr,
-        boost::shared_ptr<FrameProcessor::Frame> reordered_frame
-    )
+    SuperFrameHeader*
+    reorder_frame(SuperFrameHeader* frame_hdr, boost::shared_ptr<FrameProcessor::Frame> reordered_frame)
     {
-        rte_memcpy(
-            reordered_frame->get_data_ptr(),
-            get_image_data_start(frame_hdr),
-            get_frame_data_size()
-        );
+        rte_memcpy(reordered_frame->get_data_ptr(), get_image_data_start(frame_hdr), get_frame_data_size());
 
         return NULL;
     }
 
 private:
-
     DummyDpdkMode current_mode_;
     DummyModeConfiguration mode_config_;
 
     static const std::map<DummyDpdkMode, DummyModeConfiguration>& get_mode_configs()
     {
-        static const std::map<DummyDpdkMode, DummyModeConfiguration> mode_configs = {
-            //                                packets  payload  chunk  bit_depth                             reorder, x     y
-            {DummyDpdkMode::FRAME_1000x1000, {250,     8000,    10,     FrameProcessor::DataType::raw_16bit, false, 1000, 1000}},
-            {DummyDpdkMode::FRAME_512x512,   {64,      4096,    10,     FrameProcessor::DataType::raw_16bit, false, 512,  512}},
-            {DummyDpdkMode::FRAME_256x256,   {16,      2048,    10,     FrameProcessor::DataType::raw_16bit, false, 256,  256}},
-            {DummyDpdkMode::TEST_8BIT,       {8,       1024,    1,      FrameProcessor::DataType::raw_8bit,  false, 128,  64}},
-            {DummyDpdkMode::TEST_16BIT,      {32,      5120,    100,    FrameProcessor::DataType::raw_16bit, true,  320,  256}},
-            {DummyDpdkMode::TEST_32BIT,      {64,      5120,    1,      FrameProcessor::DataType::raw_32bit, false, 320,  256}},
-            {DummyDpdkMode::TEST_64BIT,      {128,     5120,    1,      FrameProcessor::DataType::raw_64bit, false, 320,  256}}
+        static const std::map<DummyDpdkMode, DummyModeConfiguration> mode_configs
+            = { //                                packets  payload  chunk  bit_depth reorder, x     y
+                { DummyDpdkMode::FRAME_1000x1000,
+                  { 250, 8000, 10, FrameProcessor::DataType::raw_16bit, false, 1000, 1000 } },
+                { DummyDpdkMode::FRAME_512x512,
+                  { 64, 4096, 10, FrameProcessor::DataType::raw_16bit, false, 512, 512 } },
+                { DummyDpdkMode::FRAME_256x256,
+                  { 16, 2048, 10, FrameProcessor::DataType::raw_16bit, false, 256, 256 } },
+                { DummyDpdkMode::TEST_8BIT, { 8, 1024, 1, FrameProcessor::DataType::raw_8bit, false, 128, 64 } },
+                { DummyDpdkMode::TEST_16BIT, { 32, 5120, 100, FrameProcessor::DataType::raw_16bit, true, 320, 256 } },
+                { DummyDpdkMode::TEST_32BIT, { 64, 5120, 1, FrameProcessor::DataType::raw_32bit, false, 320, 256 } },
+                { DummyDpdkMode::TEST_64BIT, { 128, 5120, 1, FrameProcessor::DataType::raw_64bit, false, 320, 256 } }
 
-        };
+              };
         return mode_configs;
     }
 
@@ -337,12 +322,12 @@ private:
     {
         mode_config_ = get_mode_configs().at(mode);
 
-        packets_per_frame_      = mode_config_.packets_per_frame;
-        payload_size_           = mode_config_.payload_size;
+        packets_per_frame_ = mode_config_.packets_per_frame;
+        payload_size_ = mode_config_.payload_size;
         frames_per_super_frame_ = mode_config_.frame_outer_chunk_size;
-        frame_bit_depth_        = mode_config_.bit_depth;
-        frame_x_resolution_     = mode_config_.x_resolution;
-        frame_y_resolution_     = mode_config_.y_resolution;
+        frame_bit_depth_ = mode_config_.bit_depth;
+        frame_x_resolution_ = mode_config_.x_resolution;
+        frame_y_resolution_ = mode_config_.y_resolution;
     }
 
     void* prepare_16bit_test_mode(void* raw_frame, void* prepared_frame)
@@ -350,58 +335,41 @@ private:
         uint16_t* raw = static_cast<uint16_t*>(raw_frame);
         uint16_t* prepared = static_cast<uint16_t*>(prepared_frame);
 
-        const std::size_t total_pixels =
-            frame_x_resolution_ * frame_y_resolution_;
+        const std::size_t total_pixels = frame_x_resolution_ * frame_y_resolution_;
 
-        for (std::size_t i = 0; i < total_pixels; i++)
-        {
+        for (std::size_t i = 0; i < total_pixels; i++) {
             prepared[i] = raw[total_pixels - 1 - i];
         }
 
         return prepared_frame;
     }
 
-    SuperFrameHeader* reorder_16bit_test_mode(
-        SuperFrameHeader* frame_hdr,
-        SuperFrameHeader* reordered_frame)
+    SuperFrameHeader* reorder_16bit_test_mode(SuperFrameHeader* frame_hdr, SuperFrameHeader* reordered_frame)
     {
         // Copy the super-frame header and all frame headers.
         rte_memcpy(
-            reordered_frame,
-            frame_hdr,
-            get_super_frame_header_size() +
-            (get_frame_header_size() * frames_per_super_frame_)
+            reordered_frame, frame_hdr,
+            get_super_frame_header_size() + (get_frame_header_size() * frames_per_super_frame_)
         );
 
-        const std::size_t total_pixels =
-            frame_x_resolution_ * frame_y_resolution_;
+        const std::size_t total_pixels = frame_x_resolution_ * frame_y_resolution_;
 
-        uint16_t* packed_data =
-            reinterpret_cast<uint16_t*>(get_image_data_start(frame_hdr));
+        uint16_t* packed_data = reinterpret_cast<uint16_t*>(get_image_data_start(frame_hdr));
 
-        uint16_t* output_memory =
-            reinterpret_cast<uint16_t*>(get_image_data_start(reordered_frame));
+        uint16_t* output_memory = reinterpret_cast<uint16_t*>(get_image_data_start(reordered_frame));
 
-        for (std::size_t frame = 0;
-            frame < frames_per_super_frame_;
-            frame++)
-        {
-            uint16_t* frame_input =
-                packed_data + (frame * total_pixels);
+        for (std::size_t frame = 0; frame < frames_per_super_frame_; frame++) {
+            uint16_t* frame_input = packed_data + (frame * total_pixels);
 
-            uint16_t* frame_output =
-                output_memory + (frame * total_pixels);
+            uint16_t* frame_output = output_memory + (frame * total_pixels);
 
-            for (std::size_t i = 0; i < total_pixels; i++)
-            {
-                frame_output[i] =
-                    frame_input[total_pixels - 1 - i];
+            for (std::size_t i = 0; i < total_pixels; i++) {
+                frame_output[i] = frame_input[total_pixels - 1 - i];
             }
         }
 
         return reordered_frame;
     }
-
 };
 
 #endif // INCLUDE_DUMMY_DPDK_PROTOCOL_DECODER_H_

@@ -10,13 +10,10 @@ using namespace log4cxx::helpers;
 #include "DataBlockFrame.h"
 #include "PacketProtocolDecoder.h"
 
-namespace FrameProcessor
-{
+namespace FrameProcessor {
 
-class DataSource
-{
+class DataSource {
 public:
-
     explicit DataSource(PacketProtocolDecoder* decoder, FrameProcessor::DataType data_type);
 
     virtual ~DataSource();
@@ -24,7 +21,6 @@ public:
     virtual void getData(void* destination) = 0;
 
 protected:
-
     LoggerPtr logger_;
 
     PacketProtocolDecoder* decoder_;

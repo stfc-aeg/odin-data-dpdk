@@ -7,42 +7,39 @@ namespace FrameProcessor {
 
 class DpdkSharedBufferFrame : public Frame {
 
-    public:
+public:
     /**
      * @brief Construct a new Dpdk Shared Buffer Frame object
-     * 
-     * @param meta_data 
-     * @param data_src 
-     * @param nbytes 
-     * @param frame_processed 
-     * @param image_offset 
+     *
+     * @param meta_data
+     * @param data_src
+     * @param nbytes
+     * @param frame_processed
+     * @param image_offset
      */
-    DpdkSharedBufferFrame(const FrameMetaData & meta_data,
-                            void *data_src,
-                            size_t nbytes,
-                            rte_ring *frame_processed,
-                            const int& image_offset = 0);
+    DpdkSharedBufferFrame(
+        const FrameMetaData& meta_data, void* data_src, size_t nbytes, rte_ring* frame_processed,
+        const int& image_offset = 0
+    );
 
     /**
-     * @brief Shallow-copy copy 
-     * 
-     * @param DpdkSharedBufferFrame 
+     * @brief Shallow-copy copy
+     *
+     * @param DpdkSharedBufferFrame
      */
-    DpdkSharedBufferFrame(const DpdkSharedBufferFrame &frame);
+    DpdkSharedBufferFrame(const DpdkSharedBufferFrame& frame);
 
     /** Destructor */
     ~DpdkSharedBufferFrame();
 
     /** Return the address of start of frame data*/
-    virtual void *get_data_ptr() const;
+    virtual void* get_data_ptr() const;
 
-  private:
+private:
+    void* image_ptr_;
+    void* data_ptr_;
 
-  void *image_ptr_;
-  void *data_ptr_;
-
-  rte_ring *frame_processed_;  
-
+    rte_ring* frame_processed_;
 };
 
 }

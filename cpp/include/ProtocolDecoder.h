@@ -9,23 +9,20 @@
 
 struct RawFrameHeader { };
 
-struct __rte_packed_begin SuperFrameHeader
-{
+struct __rte_packed_begin SuperFrameHeader {
     uint64_t super_frame_number; // Chunk number
     uint64_t super_frame_start_time; // counter for timing out super frame
     uint64_t super_frame_complete_time;
     uint64_t super_frame_image_size;
     uint64_t super_frame_x_resolution; // Actual frame width, set by the decoder mode and
-                                        // overwritten by any core that resizes the frame (e.g. cropping)
+                                       // overwritten by any core that resizes the frame (e.g. cropping)
     uint64_t super_frame_y_resolution; // Actual frame height, see super_frame_x_resolution
     uint32_t frames_received; // Counter for number of frames copied into the super frame
-    uint8_t frame_state[];   //!< Flexible array member - length depends on number of frames
+    uint8_t frame_state[]; //!< Flexible array member - length depends on number of frames
 } __rte_packed_end;
 
-class ProtocolDecoder
-{
+class ProtocolDecoder {
 public:
-
     ProtocolDecoder(const std::size_t payload_size = 0, unsigned int frames_per_super_frame = 1) :
         payload_size_(payload_size),
         frames_per_super_frame_(frames_per_super_frame),
@@ -33,10 +30,11 @@ public:
         frame_x_resolution_(0),
         frame_y_resolution_(0)
     {
-
     }
 
-    virtual ~ProtocolDecoder() { }
+    virtual ~ProtocolDecoder()
+    {
+    }
 
     virtual void set_payload_size(const std::size_t payload_size)
     {
@@ -53,23 +51,23 @@ public:
         const std::size_t frame_state_size = sizeof(SuperFrameHeader().frame_state[0]);
         return sizeof(SuperFrameHeader) + (frame_state_size * (frames_per_super_frame_ - 1));
     }
-    
+
     virtual const std::size_t get_super_frame_buffer_size(const std::string& mode = "") const
     {
-        return get_super_frame_header_size() +
-            ((get_frame_header_size(mode) + get_frame_data_size(mode)) * frames_per_super_frame_);
+        return get_super_frame_header_size()
+            + ((get_frame_header_size(mode) + get_frame_data_size(mode)) * frames_per_super_frame_);
     }
 
     virtual const uint64_t get_super_frame_number(SuperFrameHeader* super_frame_hdr) const
     {
         return super_frame_hdr->super_frame_number;
-    } 
+    }
 
     virtual void set_super_frame_number(SuperFrameHeader* super_frame_hdr, uint64_t super_frame_number)
     {
         super_frame_hdr->super_frame_number = super_frame_number;
     }
-    
+
     virtual const uint64_t get_super_frame_start_time(SuperFrameHeader* super_frame_hdr) const
     {
         return super_frame_hdr->super_frame_start_time;
@@ -79,7 +77,7 @@ public:
     {
         super_frame_hdr->super_frame_start_time = start_time;
     }
-    
+
     virtual const uint64_t get_super_frame_complete_time(SuperFrameHeader* super_frame_hdr) const
     {
         return super_frame_hdr->super_frame_complete_time;
@@ -89,7 +87,7 @@ public:
     {
         super_frame_hdr->super_frame_complete_time = complete_time;
     }
-    
+
     virtual const uint64_t get_super_frame_image_size(SuperFrameHeader* super_frame_hdr) const
     {
         return super_frame_hdr->super_frame_image_size;
@@ -127,8 +125,7 @@ public:
 
     virtual bool set_super_frame_frames_received(SuperFrameHeader* super_frame_hdr, uint32_t frame_number)
     {
-        if (frame_number >= frames_per_super_frame_)
-        {
+        if (frame_number >= frames_per_super_frame_) {
             return false;
         }
         super_frame_hdr->frame_state[frame_number] = 1;
@@ -136,23 +133,20 @@ public:
 
         return true;
     }
-    
+
     virtual const uint8_t get_super_frame_frame_state(SuperFrameHeader* super_frame_hdr, uint32_t frame_number)
     {
-        if (frame_number >= frames_per_super_frame_)
-        {
+        if (frame_number >= frames_per_super_frame_) {
             return 0;
-        }
-        else
-        {
+        } else {
             return super_frame_hdr->frame_state[frame_number];
         }
     }
 
     const std::size_t get_frame_buffer_size(const std::string& mode = "") const
     {
-        return get_super_frame_header_size() +
-            ((get_frame_header_size(mode) + get_frame_data_size(mode)) * frames_per_super_frame_);
+        return get_super_frame_header_size()
+            + ((get_frame_header_size(mode) + get_frame_data_size(mode)) * frames_per_super_frame_);
     }
 
     virtual const uint64_t get_frame_outer_chunk_size(const std::string& mode = "") const
@@ -175,19 +169,18 @@ public:
         return frame_y_resolution_;
     }
 
-    virtual RawFrameHeader* get_frame_header(SuperFrameHeader* super_frame_hdr, uint32_t frame_number,
-                                              const std::string& mode = "")
+    virtual RawFrameHeader*
+    get_frame_header(SuperFrameHeader* super_frame_hdr, uint32_t frame_number, const std::string& mode = "")
     {
         return reinterpret_cast<RawFrameHeader*>(
-            reinterpret_cast<char *>(super_frame_hdr) +
-            get_super_frame_header_size() + (get_frame_header_size(mode) * frame_number)
+            reinterpret_cast<char*>(super_frame_hdr) + get_super_frame_header_size()
+            + (get_frame_header_size(mode) * frame_number)
         );
     }
 
-    virtual char* get_image_data_start(SuperFrameHeader* super_frame_hdr,
-                                        const std::string& mode = "")
+    virtual char* get_image_data_start(SuperFrameHeader* super_frame_hdr, const std::string& mode = "")
     {
-        return reinterpret_cast<char *>(super_frame_hdr) + get_image_data_offset(mode);
+        return reinterpret_cast<char*>(super_frame_hdr) + get_image_data_offset(mode);
     }
 
     virtual std::size_t get_image_data_offset(const std::string& mode = "")
@@ -198,7 +191,7 @@ public:
     // Abstract frame methods that must be implemented by application-specific decoders
     virtual const std::size_t get_frame_header_size(const std::string& mode = "") const = 0;
     virtual const std::size_t get_frame_data_size(const std::string& mode = "") const = 0;
-    
+
     virtual void set_frame_number(RawFrameHeader* frame_hdr, uint64_t frame_number) = 0;
     virtual const uint64_t get_frame_number(RawFrameHeader* frame_hdr) const = 0;
 
@@ -217,12 +210,11 @@ public:
     }
 
 protected:
-    std::size_t payload_size_;    
+    std::size_t payload_size_;
     unsigned int frames_per_super_frame_;
     FrameProcessor::DataType frame_bit_depth_;
     std::size_t frame_x_resolution_;
     std::size_t frame_y_resolution_;
 };
-
 
 #endif // INCLUDE_PROTOCOL_DECODER_H_
